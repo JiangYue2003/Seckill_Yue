@@ -6,6 +6,8 @@ replace seckill-mall/common => ../common
 
 replace seckill-mall/product-service => ../product-service
 
+replace seckill-mall/seckill-service => ../seckill-service
+
 require (
 	github.com/rabbitmq/amqp091-go v1.10.0
 	github.com/zeromicro/go-zero v1.10.0
@@ -15,6 +17,7 @@ require (
 	gorm.io/gorm v1.31.1
 	seckill-mall/common v0.0.0-00010101000000-000000000000
 	seckill-mall/product-service v0.0.0-00010101000000-000000000000
+	seckill-mall/seckill-service v0.0.0-00010101000000-000000000000
 )
 
 require (

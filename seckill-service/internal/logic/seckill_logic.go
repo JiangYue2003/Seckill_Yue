@@ -20,17 +20,17 @@ const (
 	SeckillCodeAlreadyPurchased = "ALREADY_PURCHASED"
 	SeckillCodeNotStarted       = "SECKILL_NOT_STARTED"
 	SeckillCodeEnded            = "SECKILL_ENDED"
-	SeckillCodePerLimitExceeded = "PER_LIMIT_EXCEEDED"
 	SeckillCodeSystemError      = "SYSTEM_ERROR"
 
 	// 秒杀订单号前缀
 	OrderIdPrefix = "S"
 
-	// 默认每人限购数量
-	DefaultPerLimit = 1
-
 	// 订单状态过期时间（秒）
-	OrderStatusTTL = 86400 // 24小时
+	OrderStatusTTL = 86400 // 24小时，用于 seckill:order:{orderId}
+
+	// 用户预占过期时间（秒）：MQ 处理超时兜底，消息失败时库存自动归还 Redis
+	// 5分钟 = 300秒，足够 MQ 正常重试 3 次（每次 < 2 分钟）
+	UserPreemptTTL = 300
 )
 
 type SeckillLogic struct {
@@ -75,17 +75,30 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		quantity = in.Quantity
 	}
 
-	// ========== 生成订单号 ==========
+	// 从 Redis 获取秒杀商品信息（含时间范围）
+	productId, seckillPrice, productName, startTime, endTime := l.getSeckillProductInfo(l.ctx, in.SeckillProductId)
+	if productId == 0 && seckillPrice == 0 {
+		return &seckill.SeckillResponse{
+			Success: false,
+			Code:    SeckillCodeSystemError,
+			Message: "秒杀活动不存在或已过期",
+		}, nil
+	}
+
+	// 生成订单号
 	orderId := utils.GenerateOrderId(OrderIdPrefix)
 
-	// ========== 秒杀 Lua 脚本执行 ==========
+	// 秒杀 Lua 脚本执行（携带时间校验参数）
+	// 注意：TTL 用于用户预占 Key，设置为 5 分钟（UserPreemptTTL）
+	// MQ 处理超时或失败时，TTL 自动释放 Redis 库存，无需手动回滚
 	seckillReq := &redis.SeckillRequest{
 		SeckillProductId: in.SeckillProductId,
 		UserId:           in.UserId,
 		Quantity:         quantity,
-		PerLimit:         DefaultPerLimit,
 		OrderId:          orderId,
-		TTL:              OrderStatusTTL,
+		TTL:              UserPreemptTTL,
+		StartTime:        startTime,
+		EndTime:          endTime,
 	}
 
 	// 执行 Redis Lua 脚本（原子性操作）
@@ -102,6 +115,20 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 	// ========== 处理秒杀结果 ==========
 	switch result.Code {
+	case redis.LuaResultNotStarted:
+		return &seckill.SeckillResponse{
+			Success: false,
+			Code:    SeckillCodeNotStarted,
+			Message: "秒杀活动尚未开始",
+		}, nil
+
+	case redis.LuaResultEnded:
+		return &seckill.SeckillResponse{
+			Success: false,
+			Code:    SeckillCodeEnded,
+			Message: "秒杀活动已结束",
+		}, nil
+
 	case redis.LuaResultAlreadyBought:
 		// 用户已购买过该秒杀商品
 		l.Logger.Infof("用户已购买过该商品: userId=%d, seckillProductId=%d",
@@ -122,23 +149,11 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			Message: "商品已售罄",
 		}, nil
 
-	case redis.LuaResultPerLimitExceeded:
-		// 超出限购数量
-		l.Logger.Infof("超出限购数量: userId=%d, seckillProductId=%d",
-			in.UserId, in.SeckillProductId)
-		return &seckill.SeckillResponse{
-			Success: false,
-			Code:    SeckillCodePerLimitExceeded,
-			Message: "购买数量超出限制",
-		}, nil
-
 	case redis.LuaResultSuccess:
 		// 秒杀成功，发送 RabbitMQ 消息
 		l.Logger.Infof("秒杀成功，准备发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
 
-		// 从 Redis 获取秒杀商品信息
-		productId, seckillPrice, productName := l.getSeckillProductInfo(l.ctx, in.SeckillProductId)
 		amount := seckillPrice * quantity
 
 		// 构建秒杀成功消息
@@ -205,13 +220,13 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	}
 }
 
-// getSeckillProductInfo 从 Redis 获取秒杀商品信息（product_id、seckill_price、product_name）
+// getSeckillProductInfo 从 Redis 获取秒杀商品信息（productId, seckillPrice, productName, startTime, endTime）
 // 实际生产环境应在秒杀开始前将商品信息预加载到 Redis
-func (l *SeckillLogic) getSeckillProductInfo(ctx context.Context, seckillProductId int64) (int64, int64, string) {
-	productId, seckillPrice, productName, err := l.svcCtx.Redis.GetSeckillProductInfo(ctx, seckillProductId)
+func (l *SeckillLogic) getSeckillProductInfo(ctx context.Context, seckillProductId int64) (int64, int64, string, int64, int64) {
+	productId, seckillPrice, productName, startTime, endTime, err := l.svcCtx.Redis.GetSeckillProductInfo(ctx, seckillProductId)
 	if err != nil {
 		l.Logger.Errorf("获取秒杀商品信息失败: seckillProductId=%d, err=%v", seckillProductId, err)
-		return 0, 0, ""
+		return 0, 0, "", 0, 0
 	}
-	return productId, seckillPrice, productName
+	return productId, seckillPrice, productName, startTime, endTime
 }

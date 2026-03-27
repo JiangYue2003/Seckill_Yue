@@ -417,6 +417,111 @@ func (x *SeckillResultResponse) GetMessage() string {
 	return ""
 }
 
+// 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
+type UpdateOrderStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"` // 订单号 [required]
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                  // 新状态 [required]: "success" | "failed"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateOrderStatusRequest) Reset() {
+	*x = UpdateOrderStatusRequest{}
+	mi := &file_seckill_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateOrderStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateOrderStatusRequest) ProtoMessage() {}
+
+func (x *UpdateOrderStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_seckill_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateOrderStatusRequest.ProtoReflect.Descriptor instead.
+func (*UpdateOrderStatusRequest) Descriptor() ([]byte, []int) {
+	return file_seckill_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *UpdateOrderStatusRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *UpdateOrderStatusRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+type UpdateOrderStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateOrderStatusResponse) Reset() {
+	*x = UpdateOrderStatusResponse{}
+	mi := &file_seckill_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateOrderStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateOrderStatusResponse) ProtoMessage() {}
+
+func (x *UpdateOrderStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_seckill_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateOrderStatusResponse.ProtoReflect.Descriptor instead.
+func (*UpdateOrderStatusResponse) Descriptor() ([]byte, []int) {
+	return file_seckill_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *UpdateOrderStatusResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UpdateOrderStatusResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_seckill_proto protoreflect.FileDescriptor
 
 const file_seckill_proto_rawDesc = "" +
@@ -451,11 +556,18 @@ const file_seckill_proto_rawDesc = "" +
 	"\bquantity\x18\x05 \x01(\x03R\bquantity\x12\x16\n" +
 	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x12\x18\n" +
-	"\amessage\x18\b \x01(\tR\amessage2\xf4\x01\n" +
+	"\amessage\x18\b \x01(\tR\amessage\"M\n" +
+	"\x18UpdateOrderStatusRequest\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\"O\n" +
+	"\x19UpdateOrderStatusResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xd0\x02\n" +
 	"\x0eSeckillService\x12<\n" +
 	"\aSeckill\x12\x17.seckill.SeckillRequest\x1a\x18.seckill.SeckillResponse\x12Q\n" +
 	"\x10GetSeckillStatus\x12\x1d.seckill.SeckillStatusRequest\x1a\x1e.seckill.SeckillStatusResponse\x12Q\n" +
-	"\x10GetSeckillResult\x12\x1d.seckill.SeckillResultRequest\x1a\x1e.seckill.SeckillResultResponseB\vZ\t./seckillb\x06proto3"
+	"\x10GetSeckillResult\x12\x1d.seckill.SeckillResultRequest\x1a\x1e.seckill.SeckillResultResponse\x12Z\n" +
+	"\x11UpdateOrderStatus\x12!.seckill.UpdateOrderStatusRequest\x1a\".seckill.UpdateOrderStatusResponseB\vZ\t./seckillb\x06proto3"
 
 var (
 	file_seckill_proto_rawDescOnce sync.Once
@@ -469,24 +581,28 @@ func file_seckill_proto_rawDescGZIP() []byte {
 	return file_seckill_proto_rawDescData
 }
 
-var file_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
 var file_seckill_proto_goTypes = []any{
-	(*SeckillRequest)(nil),        // 0: seckill.SeckillRequest
-	(*SeckillResponse)(nil),       // 1: seckill.SeckillResponse
-	(*SeckillStatusRequest)(nil),  // 2: seckill.SeckillStatusRequest
-	(*SeckillStatusResponse)(nil), // 3: seckill.SeckillStatusResponse
-	(*SeckillResultRequest)(nil),  // 4: seckill.SeckillResultRequest
-	(*SeckillResultResponse)(nil), // 5: seckill.SeckillResultResponse
+	(*SeckillRequest)(nil),            // 0: seckill.SeckillRequest
+	(*SeckillResponse)(nil),           // 1: seckill.SeckillResponse
+	(*SeckillStatusRequest)(nil),      // 2: seckill.SeckillStatusRequest
+	(*SeckillStatusResponse)(nil),     // 3: seckill.SeckillStatusResponse
+	(*SeckillResultRequest)(nil),      // 4: seckill.SeckillResultRequest
+	(*SeckillResultResponse)(nil),     // 5: seckill.SeckillResultResponse
+	(*UpdateOrderStatusRequest)(nil),  // 6: seckill.UpdateOrderStatusRequest
+	(*UpdateOrderStatusResponse)(nil), // 7: seckill.UpdateOrderStatusResponse
 }
 var file_seckill_proto_depIdxs = []int32{
 	0, // 0: seckill.SeckillService.Seckill:input_type -> seckill.SeckillRequest
 	2, // 1: seckill.SeckillService.GetSeckillStatus:input_type -> seckill.SeckillStatusRequest
 	4, // 2: seckill.SeckillService.GetSeckillResult:input_type -> seckill.SeckillResultRequest
-	1, // 3: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
-	3, // 4: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
-	5, // 5: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
-	3, // [3:6] is the sub-list for method output_type
-	0, // [0:3] is the sub-list for method input_type
+	6, // 3: seckill.SeckillService.UpdateOrderStatus:input_type -> seckill.UpdateOrderStatusRequest
+	1, // 4: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
+	3, // 5: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
+	5, // 6: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
+	7, // 7: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
+	4, // [4:8] is the sub-list for method output_type
+	0, // [0:4] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -503,7 +619,7 @@ func file_seckill_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_seckill_proto_rawDesc), len(file_seckill_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   8,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

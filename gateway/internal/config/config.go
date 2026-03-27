@@ -19,6 +19,9 @@ type Config struct {
 	// Redis 缓存（用于限流）
 	Redis cache.CacheConf `json:"redis"`
 
+	// Redis 连接串（用于限流器）
+	RedisHost string `json:"redisHost"`
+
 	// gRPC 服务（通过 etcd 服务发现）
 	UserService    zrpc.RpcClientConf `json:"userService"`
 	ProductService zrpc.RpcClientConf `json:"productService"`

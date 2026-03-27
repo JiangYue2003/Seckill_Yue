@@ -40,3 +40,9 @@ func (s *SeckillServiceServer) GetSeckillResult(ctx context.Context, in *seckill
 	l := logic.NewGetSeckillResultLogic(ctx, s.svcCtx)
 	return l.GetSeckillResult(in)
 }
+
+// 更新订单状态（Order-Service 内部调用，将 pending → success）
+func (s *SeckillServiceServer) UpdateOrderStatus(ctx context.Context, in *seckill.UpdateOrderStatusRequest) (*seckill.UpdateOrderStatusResponse, error) {
+	l := logic.NewUpdateOrderStatusLogic(ctx, s.svcCtx)
+	return l.UpdateOrderStatus(in)
+}

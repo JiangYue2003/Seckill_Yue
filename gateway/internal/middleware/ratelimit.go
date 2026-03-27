@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -9,18 +8,15 @@ import (
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
 
-// RateLimiter 创建限流中间件
-// qps: 每秒请求数
+// RateLimiter 创建限流中间件（基于 IP，滑动窗口算法）
+// 每个 IP 每秒最多 qps 次请求
 func RateLimiter(redisHost string, qps int) gin.HandlerFunc {
-	// 创建限流器
-	l := limit.NewTokenLimiter(qps, qps*2, redis.New(redisHost), "ratelimit")
+	redisClient := redis.New(redisHost)
+	l := limit.NewPeriodLimit(1, qps, redisClient, "seckill-ratelimit")
 
 	return func(c *gin.Context) {
-		// 使用 IP + Path 作为限流 key
-		key := fmt.Sprintf("%s:%s", c.ClientIP(), c.Request.URL.Path)
-
-		// 检查是否允许通过
-		if !l.Allow() {
+		code, err := l.Take(c.ClientIP())
+		if err != nil || code == limit.OverQuota {
 			c.JSON(http.StatusTooManyRequests, ErrorResponse{
 				Code:    429,
 				Message: "请求过于频繁，请稍后重试",
@@ -29,18 +25,18 @@ func RateLimiter(redisHost string, qps int) gin.HandlerFunc {
 			return
 		}
 
-		// 记录限流信息
-		_ = key
 		c.Next()
 	}
 }
 
-// IPRateLimiter IP 级别限流
+// IPRateLimiter IP 级别限流（通用滑动窗口版）
 func IPRateLimiter(redisHost string, qps int) gin.HandlerFunc {
-	l := limit.NewTokenLimiter(qps, qps*2, redis.New(redisHost), "ip-ratelimit")
+	redisClient := redis.New(redisHost)
+	l := limit.NewPeriodLimit(1, qps, redisClient, "ip-ratelimit")
 
 	return func(c *gin.Context) {
-		if !l.Allow() {
+		code, err := l.Take(c.ClientIP())
+		if err != nil || code == limit.OverQuota {
 			c.JSON(http.StatusTooManyRequests, ErrorResponse{
 				Code:    429,
 				Message: "IP 请求过于频繁，请稍后重试",

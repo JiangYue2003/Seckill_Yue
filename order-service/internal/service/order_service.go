@@ -18,6 +18,7 @@ type OrderService struct {
 	orderModel        model.OrderModel
 	seckillOrderModel model.SeckillOrderModel
 	productSvcRPC     *rpc.ProductServiceClient
+	seckillSvcRPC     *rpc.SeckillServiceClient
 }
 
 func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.SeckillOrderModel) *OrderService {
@@ -30,6 +31,11 @@ func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.Seckil
 // SetProductServiceRPC 设置商品服务RPC客户端
 func (s *OrderService) SetProductServiceRPC(svc *rpc.ProductServiceClient) {
 	s.productSvcRPC = svc
+}
+
+// SetSeckillServiceRPC 设置秒杀服务RPC客户端
+func (s *OrderService) SetSeckillServiceRPC(svc *rpc.SeckillServiceClient) {
+	s.seckillSvcRPC = svc
 }
 
 // ProcessSeckillOrder 处理秒杀订单
@@ -95,6 +101,17 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	if err := s.orderModel.Insert(ctx, order); err != nil {
 		logger.Errorf("创建订单失败: orderId=%s, err=%v", msg.OrderId, err)
 		return err
+	}
+
+	// ========== 5. 回写 Redis 订单状态为 success ==========
+	// 即使 RPC 失败，订单已在 MySQL 中持久化，前端轮询时会查询 DB 确认
+	if s.seckillSvcRPC != nil {
+		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "success"); rpcErr != nil {
+			return rpcErr
+			// logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
+		} else {
+			logger.Infof("Redis 订单状态已更新为 success: orderId=%s", msg.OrderId)
+		}
 	}
 
 	logger.Infof("秒杀订单创建成功: orderId=%s, userId=%d", msg.OrderId, msg.UserId)

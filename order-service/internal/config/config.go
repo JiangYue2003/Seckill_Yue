@@ -26,4 +26,7 @@ type Config struct {
 
 	// Product Service gRPC 配置（通过 etcd 发现）
 	ProductService zrpc.RpcClientConf
+
+	// Seckill Service gRPC 配置（通过 etcd 发现）
+	SeckillService zrpc.RpcClientConf
 }

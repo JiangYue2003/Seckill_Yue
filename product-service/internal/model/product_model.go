@@ -226,16 +226,28 @@ func (m *productModel) DeductStock(ctx context.Context, id int64, quantity int, 
 	return product.Stock, nil
 }
 
-// RollbackStock 回滚库存
+// RollbackStock 回滚库存（幂等操作）
 func (m *productModel) RollbackStock(ctx context.Context, id int64, quantity int, orderId string) error {
-	result := m.db.WithContext(ctx).Model(&entity.Product{}).
+	// 幂等检查：该订单是否已回滚过（通过 stock_log 检查）
+	var existingLog entity.StockLog
+	result := m.db.WithContext(ctx).
+		Where("order_id = ? AND change_type = ?", orderId, "rollback").
+		First(&existingLog)
+	if result.Error == nil {
+		return ErrAlreadyRollback
+	}
+	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return result.Error
+	}
+
+	res := m.db.WithContext(ctx).Model(&entity.Product{}).
 		Where("id = ?", id).
 		Updates(map[string]interface{}{
 			"stock":      gorm.Expr("stock + ?", quantity),
 			"sold_count": gorm.Expr("sold_count - ?", quantity),
 		})
 
-	return result.Error
+	return res.Error
 }
 
 // GetStock 获取库存

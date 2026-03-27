@@ -17,6 +17,7 @@ type ServiceContext struct {
 	Consumer          *mq.Consumer
 	OrderService      *service.OrderService
 	ProductServiceRPC *rpc.ProductServiceClient
+	SeckillServiceRPC *rpc.SeckillServiceClient
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -35,11 +36,22 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	}
 
 	// 初始化 Product-Service RPC 客户端
-	productSvc, _ := rpc.NewProductServiceClient(c)
+	productSvc, err := rpc.NewProductServiceClient(c)
+	if err != nil {
+		logx.Errorf("failed to initialize product RPC client: %v", err)
+		panic(err)
+	}
 
-	// 初始化订单服务
+	// 初始化订单服务（注入 ProductServiceRPC + SeckillServiceRPC）
 	orderService := service.NewOrderService(orderModel, seckillOrderModel)
 	orderService.SetProductServiceRPC(productSvc)
+
+	seckillSvc, err := rpc.NewSeckillServiceClient(c)
+	if err != nil {
+		logx.Errorf("failed to initialize seckill RPC client: %v", err)
+	} else {
+		orderService.SetSeckillServiceRPC(seckillSvc)
+	}
 
 	// 初始化 RabbitMQ 消费者
 	processFunc := func(msg *mq.SeckillOrderMessage) error {
@@ -65,5 +77,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Consumer:          consumer,
 		OrderService:      orderService,
 		ProductServiceRPC: productSvc,
+		SeckillServiceRPC: seckillSvc,
 	}
 }

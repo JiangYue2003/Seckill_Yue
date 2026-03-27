@@ -100,6 +100,8 @@ func (l *CreateSeckillProductLogic) CreateSeckillProduct(in *product.CreateSecki
 			seckillProduct.SeckillPrice,
 			existingProduct.Name,
 			int64(seckillProduct.SeckillStock),
+			seckillProduct.StartTime,
+			seckillProduct.EndTime,
 			ttlSeconds,
 		); redisErr != nil {
 			// Redis 同步失败不影响主流程，只记录日志

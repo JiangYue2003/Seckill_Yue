@@ -54,6 +54,17 @@ message SeckillResultResponse {
     string message = 8;
 }
 
+// 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
+message UpdateOrderStatusRequest {
+    string order_id = 1;          // 订单号 [required]
+    string status = 2;            // 新状态 [required]: "success" | "failed"
+}
+
+message UpdateOrderStatusResponse {
+    bool success = 1;
+    string message = 2;
+}
+
 // 秒杀服务（gRPC）
 service SeckillService {
     // 秒杀下单（核心接口）
@@ -64,4 +75,7 @@ service SeckillService {
 
     // 查询秒杀结果
     rpc GetSeckillResult(SeckillResultRequest) returns (SeckillResultResponse);
+
+    // 更新订单状态（Order-Service 内部调用，将 pending → success）
+    rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse);
 }

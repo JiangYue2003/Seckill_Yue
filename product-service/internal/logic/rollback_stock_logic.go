@@ -55,8 +55,17 @@ func (l *RollbackStockLogic) RollbackStock(in *product.RollbackStockRequest) (*p
 
 	beforeStock := existingProduct.Stock
 
-	// 回滚库存
+	// 回滚库存（幂等）
 	if err := l.svcCtx.ProductModel.RollbackStock(l.ctx, in.ProductId, int(in.Quantity), in.OrderId); err != nil {
+		if errors.Is(err, model.ErrAlreadyRollback) {
+			stock, _ := l.svcCtx.ProductModel.GetStock(l.ctx, in.ProductId)
+			l.Logger.Infof("库存已回滚，跳过: orderId=%s, remainingStock=%d", in.OrderId, stock)
+			return &product.StockOperationResponse{
+				Success:        true,
+				Message:        "库存已回滚",
+				RemainingStock: int64(stock),
+			}, nil
+		}
 		l.Logger.Errorf("回滚库存失败: %v", err)
 		return nil, errors.New("回滚库存失败，请稍后重试")
 	}

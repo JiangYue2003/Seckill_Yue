@@ -12,31 +12,47 @@ import (
 
 const (
 	// Seckill Lua 脚本结果
-	LuaResultSuccess          = 1
-	LuaResultStockNotEnough   = 0
-	LuaResultAlreadyBought    = -1
-	LuaResultPerLimitExceeded = -2
+	LuaResultSuccess        = 1
+	LuaResultStockNotEnough = 0
+	LuaResultAlreadyBought  = -1
+	LuaResultNotStarted     = -3
+	LuaResultEnded          = -4
 
 	// Key 前缀
 	KeyPrefixSeckillStock       = "seckill:stock:"        // 秒杀库存
-	KeyPrefixSeckillUser        = "seckill:user:"         // 用户购买记录
+	KeyPrefixSeckillUser        = "seckill:user:"         // 用户预占记录（短期TTL，自动释放悬空库存）
 	KeyPrefixSeckillOrder       = "seckill:order:"        // 秒杀订单状态
-	KeyPrefixSeckillInfo        = "seckill:info:"         // 秒杀商品信息 (productId:seckillPrice)
+	KeyPrefixSeckillInfo        = "seckill:info:"         // 秒杀商品信息 (productId:seckillPrice:startTime:endTime)
 	KeyPrefixSeckillProductName = "seckill:product_name:" // 秒杀商品名称
 
 	// 订单状态常量（与 logic 包保持一致）
-	OrderStatusPending = "pending"
-	OrderStatusSuccess = "success"
-	OrderStatusFailed  = "failed"
+	OrderStatusPending  = "pending"
+	OrderStatusSuccess  = "success"
+	OrderStatusFailed   = "failed"
+	OrderStatusNotStart = "not_started"
+	OrderStatusEnded    = "ended"
 )
 
+// seckillLuaScript 秒杀 Lua 脚本
+// 功能：原子性完成 时间校验 + 防重 + 库存扣减 + 预锁定
+// ARGV[1]: quantity, ARGV[2]: orderId, ARGV[3]: TTL, ARGV[4]: startTime, ARGV[5]: endTime
 var seckillLuaScript = `
 local stockKey = KEYS[1]
 local userKey = KEYS[2]
 local quantity = tonumber(ARGV[1])
-local perLimit = tonumber(ARGV[2])
-local orderId = ARGV[3]
-local ttl = tonumber(ARGV[4])
+local orderId = ARGV[2]
+local ttl = tonumber(ARGV[3])
+local startTime = tonumber(ARGV[4])
+local endTime = tonumber(ARGV[5])
+local now = tonumber(ARGV[6])
+
+-- 0. 时间校验
+if startTime > 0 and now < startTime then
+    return -3  -- 秒杀未开始
+end
+if endTime > 0 and now > endTime then
+    return -4  -- 秒杀已结束
+end
 
 -- 1. 检查用户是否已购买
 local alreadyBought = redis.call('EXISTS', userKey)
@@ -57,7 +73,7 @@ if newStock < 0 then
     return 0
 end
 
--- 4. 记录用户购买记录
+-- 4. 记录用户购买记录（TTL 需足够覆盖订单处理时间）
 redis.call('SETEX', userKey, ttl, orderId)
 
 return 1
@@ -86,9 +102,10 @@ type SeckillRequest struct {
 	SeckillProductId int64
 	UserId           int64
 	Quantity         int64
-	PerLimit         int64
 	OrderId          string
 	TTL              int64 // 过期时间(秒)
+	StartTime        int64 // 秒杀开始时间戳（秒）
+	EndTime          int64 // 秒杀结束时间戳（秒）
 }
 
 // SeckillResult 秒杀结果
@@ -105,9 +122,11 @@ func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*Sec
 	keys := []string{stockKey, userKey}
 	argv := []interface{}{
 		req.Quantity,
-		req.PerLimit,
 		req.OrderId,
 		req.TTL,
+		req.StartTime,
+		req.EndTime,
+		time.Now().Unix(),
 	}
 
 	result, err := r.client.Eval(ctx, seckillLuaScript, keys, argv...).Int64()
@@ -179,11 +198,11 @@ func (r *SeckillRedis) DeleteUserKey(ctx context.Context, seckillProductId, user
 }
 
 // SetSeckillProductInfo 设置秒杀商品信息（活动开始前调用）
-// productId:seckillPrice 存储在 info key 中
+// productId:seckillPrice:startTime:endTime 存储在 info key 中
 // productName 单独存储，避免商品名称中包含冒号导致解析错误
-func (r *SeckillRedis) SetSeckillProductInfo(ctx context.Context, seckillProductId, productId, seckillPrice int64, productName string, ttlSeconds int64) error {
+func (r *SeckillRedis) SetSeckillProductInfo(ctx context.Context, seckillProductId, productId, seckillPrice int64, productName string, startTime, endTime int64, ttlSeconds int64) error {
 	infoKey := KeyPrefixSeckillInfo + strconv.FormatInt(seckillProductId, 10)
-	infoValue := fmt.Sprintf("%d:%d", productId, seckillPrice)
+	infoValue := fmt.Sprintf("%d:%d:%d:%d", productId, seckillPrice, startTime, endTime)
 	if err := r.client.Set(ctx, infoKey, infoValue, time.Duration(ttlSeconds)*time.Second).Err(); err != nil {
 		return err
 	}
@@ -192,18 +211,31 @@ func (r *SeckillRedis) SetSeckillProductInfo(ctx context.Context, seckillProduct
 	return r.client.Set(ctx, nameKey, productName, time.Duration(ttlSeconds)*time.Second).Err()
 }
 
-// GetSeckillProductInfo 获取秒杀商品信息（返回 productId, seckillPrice, productName）
-func (r *SeckillRedis) GetSeckillProductInfo(ctx context.Context, seckillProductId int64) (int64, int64, string, error) {
+// GetSeckillProductInfo 获取秒杀商品信息（返回 productId, seckillPrice, productName, startTime, endTime）
+func (r *SeckillRedis) GetSeckillProductInfo(ctx context.Context, seckillProductId int64) (int64, int64, string, int64, int64, error) {
 	infoKey := KeyPrefixSeckillInfo + strconv.FormatInt(seckillProductId, 10)
 	val, err := r.client.Get(ctx, infoKey).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return 0, 0, "", nil
+			return 0, 0, "", 0, 0, nil
 		}
-		return 0, 0, "", err
+		return 0, 0, "", 0, 0, err
 	}
-	var productId, seckillPrice int64
-	fmt.Sscanf(val, "%d:%d", &productId, &seckillPrice)
+	// 格式: productId:seckillPrice:startTime:endTime
+	parts := strings.Split(val, ":")
+	var productId, seckillPrice, startTime, endTime int64
+	if len(parts) >= 1 {
+		productId, _ = strconv.ParseInt(parts[0], 10, 64)
+	}
+	if len(parts) >= 2 {
+		seckillPrice, _ = strconv.ParseInt(parts[1], 10, 64)
+	}
+	if len(parts) >= 3 {
+		startTime, _ = strconv.ParseInt(parts[2], 10, 64)
+	}
+	if len(parts) >= 4 {
+		endTime, _ = strconv.ParseInt(parts[3], 10, 64)
+	}
 
 	nameKey := KeyPrefixSeckillProductName + strconv.FormatInt(seckillProductId, 10)
 	productName, _ := r.client.Get(ctx, nameKey).Result()
@@ -211,7 +243,7 @@ func (r *SeckillRedis) GetSeckillProductInfo(ctx context.Context, seckillProduct
 		productName = "秒杀商品"
 	}
 
-	return productId, seckillPrice, productName, nil
+	return productId, seckillPrice, productName, startTime, endTime, nil
 }
 
 // OrderInfo 订单信息（用于 GetSeckillResult 查询）

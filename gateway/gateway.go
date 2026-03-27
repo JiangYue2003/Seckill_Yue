@@ -58,10 +58,13 @@ func main() {
 		authGroup.GET("/products", productHandler.ListProducts)
 		authGroup.GET("/seckill/products", productHandler.ListSeckillProducts)
 
+		// 秒杀路由：单独加限流（200 QPS/人/IP）
 		seckillHandler := handler.NewSeckillHandler(clients.SeckillService)
-		authGroup.POST("/seckill", seckillHandler.Seckill)
-		authGroup.GET("/seckill/status", seckillHandler.GetSeckillStatus)
-		authGroup.GET("/seckill/result", seckillHandler.GetSeckillResult)
+		seckillGroup := authGroup.Group("/seckill")
+		seckillGroup.Use(middleware.RateLimiter(c.RedisHost, 200))
+		seckillGroup.POST("", seckillHandler.Seckill)
+		seckillGroup.GET("/status", seckillHandler.GetSeckillStatus)
+		seckillGroup.GET("/result", seckillHandler.GetSeckillResult)
 
 		orderHandler := handler.NewOrderHandler(clients.OrderService)
 		authGroup.POST("/order", orderHandler.CreateNormalOrder)

@@ -34,17 +34,17 @@ const KeyPrefixSeckillInfo = "seckill:info:"
 const KeyPrefixSeckillProductName = "seckill:product_name:"
 
 // InitSeckillProduct 初始化秒杀商品到 Redis（活动开始前调用）
-// 设置：库存、商品信息、商品名称
-func (r *SeckillRedis) InitSeckillProduct(ctx context.Context, seckillProductId, productId, seckillPrice int64, productName string, seckillStock int64, ttlSeconds int64) error {
+// 设置：库存、商品信息（含时间）、商品名称
+func (r *SeckillRedis) InitSeckillProduct(ctx context.Context, seckillProductId, productId, seckillPrice int64, productName string, seckillStock int64, startTime, endTime int64, ttlSeconds int64) error {
 	// 设置秒杀库存
 	stockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
 	if err := r.client.Set(ctx, stockKey, seckillStock, time.Duration(ttlSeconds)*time.Second).Err(); err != nil {
 		return fmt.Errorf("设置秒杀库存失败: %w", err)
 	}
 
-	// 设置秒杀商品信息 (productId:seckillPrice)
+	// 设置秒杀商品信息 (productId:seckillPrice:startTime:endTime)
 	infoKey := KeyPrefixSeckillInfo + strconv.FormatInt(seckillProductId, 10)
-	infoValue := fmt.Sprintf("%d:%d", productId, seckillPrice)
+	infoValue := fmt.Sprintf("%d:%d:%d:%d", productId, seckillPrice, startTime, endTime)
 	if err := r.client.Set(ctx, infoKey, infoValue, time.Duration(ttlSeconds)*time.Second).Err(); err != nil {
 		return fmt.Errorf("设置秒杀商品信息失败: %w", err)
 	}
