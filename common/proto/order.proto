@@ -1,0 +1,129 @@
+syntax = "proto3";
+
+package order;
+
+option go_package = "./order";
+
+import "proto/common.proto";
+
+// ============ 订单服务 ============
+// Order-Service 职责边界：
+// 1. 扮演 RabbitMQ 消费者（Consumer）
+// 2. 负责消费秒杀成功消息，基于 order_id 做幂等性校验
+// 3. 发起跨服务 gRPC 调用给 Product-Service 扣物理库存
+// 4. 最终将订单持久化到 MySQL
+
+// 订单状态枚举
+enum OrderStatus {
+    ORDER_STATUS_PENDING = 0;      // 待支付
+    ORDER_STATUS_PAID = 1;         // 已支付
+    ORDER_STATUS_CANCELLED = 2;    // 已取消
+    ORDER_STATUS_REFUNDED = 3;     // 已退款
+    ORDER_STATUS_COMPLETED = 4;    // 已完成
+}
+
+// 订单类型
+enum OrderType {
+    ORDER_TYPE_NORMAL = 0;         // 普通订单
+    ORDER_TYPE_SECKILL = 1;       // 秒杀订单
+}
+
+// 秒杀成功消息（RabbitMQ 消息体）
+message SeckillOrderMessage {
+    string order_id = 1;           // 订单号（雪花算法生成）
+    int64 user_id = 2;             // 用户 ID
+    int64 seckill_product_id = 3;  // 秒杀商品 ID
+    int64 product_id = 4;          // 真实商品 ID
+    int64 quantity = 5;            // 购买数量
+    int64 seckill_price = 6;       // 秒杀价格(分)
+    int64 amount = 7;              // 实付金额(分)
+    int64 created_at = 8;          // 创建时间戳
+}
+
+// 订单详情
+message OrderInfo {
+    string order_id = 1;           // 订单号
+    int64 user_id = 2;
+    int64 product_id = 3;
+    string product_name = 4;       // 商品名称（冗余）
+    int64 quantity = 5;
+    int64 amount = 6;               // 实付金额(分)
+    int64 seckill_price = 7;       // 秒杀价格(分)
+    int32 order_type = 8;          // OrderType
+    int32 status = 9;              // OrderStatus
+    string payment_id = 10;        // 支付流水号
+    int64 paid_at = 11;            // 支付时间
+    int64 created_at = 12;
+    int64 updated_at = 13;
+}
+
+// 创建普通订单请求
+message CreateNormalOrderRequest {
+    int64 user_id = 1;
+    int64 product_id = 2;
+    int64 quantity = 3;
+}
+
+// 查询订单请求
+message GetOrderRequest {
+    string order_id = 1;
+}
+
+// 用户订单列表请求
+message ListUserOrdersRequest {
+    int64 user_id = 1;
+    int32 status = 2;              // 状态过滤 [optional]
+    int64 page = 3;                // 页码
+    int64 page_size = 4;           // 每页数量
+}
+
+// 用户订单列表响应
+message ListUserOrdersResponse {
+    repeated OrderInfo orders = 1;
+    int64 total = 2;
+}
+
+// 取消订单请求
+message CancelOrderRequest {
+    string order_id = 1;
+    int64 user_id = 2;
+}
+
+// 支付订单请求
+message PayOrderRequest {
+    string order_id = 1;
+    string payment_id = 2;        // 第三方支付流水号
+}
+
+// 退款请求
+message RefundOrderRequest {
+    string order_id = 1;
+    int64 user_id = 2;
+    string reason = 3;            // 退款原因
+}
+
+// 订单服务（gRPC + RabbitMQ Consumer）
+service OrderService {
+    // ============ gRPC 接口 ============
+    // 创建普通订单
+    rpc CreateNormalOrder(CreateNormalOrderRequest) returns (OrderInfo);
+
+    // 获取订单详情
+    rpc GetOrder(GetOrderRequest) returns (OrderInfo);
+
+    // 用户订单列表
+    rpc ListUserOrders(ListUserOrdersRequest) returns (ListUserOrdersResponse);
+
+    // 取消订单
+    rpc CancelOrder(CancelOrderRequest) returns (common.BoolResponse);
+
+    // 支付订单
+    rpc PayOrder(PayOrderRequest) returns (common.BoolResponse);
+
+    // 退款
+    rpc RefundOrder(RefundOrderRequest) returns (common.BoolResponse);
+
+    // ============ RabbitMQ Consumer（内部实现）==========
+    // ConsumeSeckillOrder - 消费秒杀成功消息，创建秒杀订单
+    // 注意：这是内部方法，不对外暴露
+}

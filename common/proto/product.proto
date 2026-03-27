@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package product;
+
+option go_package = "./product";
+
+import "proto/common.proto";
+
+// 商品状态枚举
+enum ProductStatus {
+    PRODUCT_STATUS_INACTIVE = 0;  // 下架
+    PRODUCT_STATUS_ACTIVE = 1;     // 上架
+}
+
+// ============ 商品管理 ============
+
+// 创建商品请求
+message CreateProductRequest {
+    string name = 1;              // 商品名称 [required, max=200]
+    string description = 2;       // 商品描述 [optional]
+    int64 price = 3;              // 价格(分) [required, gt=0]
+    int64 stock = 4;              // 库存数量 [required, gte=0]
+    string cover_image = 5;        // 封面图 URL [optional]
+    int32 status = 6;             // 状态 [optional, default=1]
+}
+
+// 更新商品请求
+message UpdateProductRequest {
+    int64 id = 1;                 // 商品 ID [required]
+    string name = 2;              // 商品名称 [optional]
+    string description = 3;      // 商品描述 [optional]
+    int64 price = 4;              // 价格(分) [optional]
+    int64 stock = 5;              // 库存数量 [optional]
+    string cover_image = 6;       // 封面图 URL [optional]
+    int32 status = 7;             // 状态 [optional]
+}
+
+// 商品信息
+message ProductInfo {
+    int64 id = 1;
+    string name = 2;
+    string description = 3;
+    int64 price = 4;
+    int64 stock = 5;               // 当前库存
+    int64 sold_count = 6;         // 已售数量
+    string cover_image = 7;
+    int32 status = 8;
+    int64 created_at = 9;
+    int64 updated_at = 10;
+}
+
+// 获取商品详情
+message GetProductRequest {
+    int64 product_id = 1;
+}
+
+// 商品列表请求（分页）
+message ListProductsRequest {
+    string keyword = 1;           // 搜索关键词 [optional]
+    int32 status = 2;             // 状态过滤 [optional]
+    int64 page = 3;               // 页码 [default=1]
+    int64 page_size = 4;          // 每页数量 [default=20]
+}
+
+// 商品列表响应
+message ListProductsResponse {
+    repeated ProductInfo products = 1;
+    int64 total = 2;
+    int64 page = 3;
+    int64 page_size = 4;
+}
+
+// ============ 库存管理 ============
+
+// 扣减库存请求（由 Order-Service 调用）
+message DeductStockRequest {
+    int64 product_id = 1;         // 商品 ID
+    int64 quantity = 2;           // 扣减数量
+    string order_id = 3;          // 订单号（用于幂等）
+}
+
+// 回滚库存请求（用于取消订单）
+message RollbackStockRequest {
+    int64 product_id = 1;         // 商品 ID
+    int64 quantity = 2;            // 回滚数量
+    string order_id = 3;          // 订单号（用于幂等）
+}
+
+// 库存操作结果
+message StockOperationResponse {
+    bool success = 1;
+    string message = 2;
+    int64 remaining_stock = 3;    // 剩余库存
+}
+
+// ============ 秒杀商品管理 ============
+
+// 创建秒杀商品请求
+message CreateSeckillProductRequest {
+    int64 product_id = 1;         // 关联商品 ID
+    int64 seckill_price = 2;      // 秒杀价格(分)
+    int64 seckill_stock = 3;      // 秒杀库存
+    int64 start_time = 4;          // 开始时间戳
+    int64 end_time = 5;            // 结束时间戳
+    int64 per_limit = 6;           // 每人限购数量
+}
+
+// 秒杀商品信息
+message SeckillProductInfo {
+    int64 id = 1;
+    int64 product_id = 2;
+    ProductInfo product = 3;      // 关联商品详情
+    int64 seckill_price = 4;
+    int64 seckill_stock = 5;
+    int64 sold_count = 6;
+    int64 start_time = 7;
+    int64 end_time = 8;
+    int64 per_limit = 9;
+    int32 status = 10;             // 0=未开始, 1=进行中, 2=已结束
+    int64 created_at = 11;
+}
+
+// 获取秒杀商品详情
+message GetSeckillProductRequest {
+    int64 seckill_product_id = 1;
+}
+
+// 更新秒杀商品
+message UpdateSeckillProductRequest {
+    int64 id = 1;
+    int64 seckill_price = 2;
+    int64 seckill_stock = 3;
+    int64 start_time = 4;
+    int64 end_time = 5;
+    int64 per_limit = 6;
+    int32 status = 7;
+}
+
+// 商品与库存服务
+service ProductService {
+    // ============ 商品管理 ============
+    // 创建商品
+    rpc CreateProduct(CreateProductRequest) returns (ProductInfo);
+    // 更新商品
+    rpc UpdateProduct(UpdateProductRequest) returns (common.BoolResponse);
+    // 获取商品详情
+    rpc GetProduct(GetProductRequest) returns (ProductInfo);
+    // 商品列表
+    rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+    // 删除商品
+    rpc DeleteProduct(common.IdRequest) returns (common.BoolResponse);
+
+    // ============ 库存管理 ============
+    // 扣减库存（幂等操作）
+    rpc DeductStock(DeductStockRequest) returns (StockOperationResponse);
+    // 回滚库存（幂等操作）
+    rpc RollbackStock(RollbackStockRequest) returns (StockOperationResponse);
+    // 查询库存
+    rpc GetStock(common.IdRequest) returns (StockOperationResponse);
+
+    // ============ 秒杀商品管理 ============
+    // 创建秒杀商品
+    rpc CreateSeckillProduct(CreateSeckillProductRequest) returns (SeckillProductInfo);
+    // 获取秒杀商品
+    rpc GetSeckillProduct(GetSeckillProductRequest) returns (SeckillProductInfo);
+    // 更新秒杀商品
+    rpc UpdateSeckillProduct(UpdateSeckillProductRequest) returns (common.BoolResponse);
+    // 获取进行中的秒杀商品列表
+    rpc ListActiveSeckillProducts(common.Empty) returns (stream SeckillProductInfo);
+}

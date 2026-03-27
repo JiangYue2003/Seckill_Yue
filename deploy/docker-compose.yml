@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # ============================================================
+  # Etcd 服务发现
+  # ============================================================
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: seckill-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_ROOT_PASSWORD: root123456
+      ETCD_ENABLE_V2: "true"
+    ports:
+      - "2379:2379"  # etcd 客户端端口
+      - "2380:2380"  # etcd peer 端口
+    volumes:
+      - etcd_data:/etcd-data
+    command: >
+      etcd
+      --name seckill-etcd
+      --data-dir=/etcd-data
+      --listen-client-urls=http://0.0.0.0:2379
+      --advertise-client-urls=http://0.0.0.0:2379
+      --listen-peer-urls=http://0.0.0.0:2380
+      --initial-cluster-token=seckill-etcd-cluster
+      --initial-cluster=seckill-etcd=http://0.0.0.0:2380
+      --initial-cluster-state=new
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # MySQL 数据库
+  # ============================================================
+  mysql:
+    image: mysql:8.0
+    container_name: seckill-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: seckill_mall
+      MYSQL_USER: seckill
+      MYSQL_PASSWORD: seckill123
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================
+  # Redis 缓存
+  # ============================================================
+  redis:
+    image: redis:7-alpine
+    container_name: seckill-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy volatile-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ============================================================
+  # RabbitMQ 消息队列
+  # ============================================================
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: seckill-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"   # AMQP 协议端口
+      - "15672:15672" # Management UI 端口
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_VHOST: /
+      TZ: Asia/Shanghai
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    command: >
+      bash -c "rabbitmq-plugins enable --offline rabbitmq_management &&
+               rabbitmq-server"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  etcd_data:
+    driver: local
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local

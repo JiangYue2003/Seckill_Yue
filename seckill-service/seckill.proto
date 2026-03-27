@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package seckill;
+
+option go_package = "./seckill";
+
+// ============ 秒杀服务 (核心高并发节点) ============
+// Seckill-Service 职责边界：
+// 1. 只操作 Redis 和 RabbitMQ，绝对禁止直接连接 MySQL
+// 2. 通过 Redis Lua 脚本原子性完成"校验库存+用户防重+预扣减库存"
+// 3. 成功后，将抢购成功消息 Push 到 RabbitMQ，立即返回响应
+
+// 秒杀请求
+message SeckillRequest {
+    int64 user_id = 1;            // 用户 ID [required]
+    int64 seckill_product_id = 2;  // 秒杀商品 ID [required]
+    int64 quantity = 3;            // 购买数量 [required, default=1]
+}
+
+// 秒杀结果（同步返回）
+message SeckillResponse {
+    bool success = 1;
+    string code = 2;               // 结果码: SUCCESS, SOLD_OUT, ALREADY_PURCHASED, SECKILL_NOT_STARTED, SECKILL_ENDED
+    string message = 3;           // 结果描述
+    string order_id = 4;          // 订单号（仅成功时返回）
+}
+
+// 秒杀状态查询
+message SeckillStatusRequest {
+    int64 user_id = 1;
+    int64 seckill_product_id = 2;
+}
+
+message SeckillStatusResponse {
+    string status = 1;             // pending=排队中, success=成功, failed=失败
+    string order_id = 2;          // 订单号
+    int64 product_id = 3;
+    int64 quantity = 4;
+}
+
+// 秒杀结果查询
+message SeckillResultRequest {
+    string order_id = 1;          // 订单号 [required]
+}
+
+message SeckillResultResponse {
+    bool success = 1;
+    string order_id = 2;
+    int64 product_id = 3;
+    string product_name = 4;
+    int64 quantity = 5;
+    int64 amount = 6;              // 实付金额(分)
+    string status = 7;             // order_status=订单状态
+    string message = 8;
+}
+
+// 秒杀服务（gRPC）
+service SeckillService {
+    // 秒杀下单（核心接口）
+    rpc Seckill(SeckillRequest) returns (SeckillResponse);
+
+    // 查询秒杀状态（轮询接口）
+    rpc GetSeckillStatus(SeckillStatusRequest) returns (SeckillStatusResponse);
+
+    // 查询秒杀结果
+    rpc GetSeckillResult(SeckillResultRequest) returns (SeckillResultResponse);
+}

@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package user;
+
+option go_package = "./user";
+
+// 布尔响应
+message BoolResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// 用户注册请求
+message RegisterRequest {
+    string username = 1;   // 用户名 [required, min=3, max=50]
+    string password = 2;    // 密码 [required, min=6, max=128]
+    string email = 3;       // 邮箱 [required, email]
+    string phone = 4;       // 手机号 [optional]
+}
+
+// 用户登录请求
+message LoginRequest {
+    string username = 1;   // 用户名或邮箱 [required]
+    string password = 2;   // 密码 [required]
+}
+
+// 登录响应（包含 JWT Token）
+message LoginResponse {
+    int64 user_id = 1;
+    string username = 2;
+    string email = 3;
+    string token = 4;       // JWT Token
+    int64 expire_at = 5;    // Token 过期时间戳
+}
+
+// 用户信息响应
+message UserInfo {
+    int64 id = 1;
+    string username = 2;
+    string email = 3;
+    string phone = 4;
+    int32 status = 5;       // 状态: 1=正常, 0=禁用
+    int64 created_at = 6;
+    int64 updated_at = 7;
+}
+
+// 获取用户信息请求
+message GetUserInfoRequest {
+    int64 user_id = 1;
+}
+
+// 更新用户信息请求
+message UpdateUserInfoRequest {
+    int64 user_id = 1;
+    string email = 2;       // optional
+    string phone = 3;       // optional
+}
+
+// 修改密码请求
+message ChangePasswordRequest {
+    int64 user_id = 1;
+    string old_password = 2; // 旧密码 [required]
+    string new_password = 3; // 新密码 [required, min=6]
+}
+
+// 用户服务
+service UserService {
+    // 用户注册
+    rpc Register(RegisterRequest) returns (UserInfo);
+
+    // 用户登录
+    rpc Login(LoginRequest) returns (LoginResponse);
+
+    // 获取用户信息
+    rpc GetUserInfo(GetUserInfoRequest) returns (UserInfo);
+
+    // 更新用户信息
+    rpc UpdateUserInfo(UpdateUserInfoRequest) returns (BoolResponse);
+
+    // 修改密码
+    rpc ChangePassword(ChangePasswordRequest) returns (BoolResponse);
+}
