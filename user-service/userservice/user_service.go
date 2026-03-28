@@ -19,6 +19,8 @@ type (
 	GetUserInfoRequest    = user.GetUserInfoRequest
 	LoginRequest          = user.LoginRequest
 	LoginResponse         = user.LoginResponse
+	RefreshTokenRequest   = user.RefreshTokenRequest
+	RefreshTokenResponse  = user.RefreshTokenResponse
 	RegisterRequest       = user.RegisterRequest
 	UpdateUserInfoRequest = user.UpdateUserInfoRequest
 	UserInfo              = user.UserInfo
@@ -28,6 +30,8 @@ type (
 		Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*UserInfo, error)
 		// 用户登录
 		Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
+		// 刷新 Token
+		RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error)
 		// 获取用户信息
 		GetUserInfo(ctx context.Context, in *GetUserInfoRequest, opts ...grpc.CallOption) (*UserInfo, error)
 		// 更新用户信息
@@ -57,6 +61,12 @@ func (m *defaultUserService) Register(ctx context.Context, in *RegisterRequest, 
 func (m *defaultUserService) Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
 	client := user.NewUserServiceClient(m.cli.Conn())
 	return client.Login(ctx, in, opts...)
+}
+
+// 刷新 Token
+func (m *defaultUserService) RefreshToken(ctx context.Context, in *RefreshTokenRequest, opts ...grpc.CallOption) (*RefreshTokenResponse, error) {
+	client := user.NewUserServiceClient(m.cli.Conn())
+	return client.RefreshToken(ctx, in, opts...)
 }
 
 // 获取用户信息

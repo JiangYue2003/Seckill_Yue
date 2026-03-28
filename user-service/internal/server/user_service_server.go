@@ -35,6 +35,12 @@ func (s *UserServiceServer) Login(ctx context.Context, in *user.LoginRequest) (*
 	return l.Login(in)
 }
 
+// 刷新 Token
+func (s *UserServiceServer) RefreshToken(ctx context.Context, in *user.RefreshTokenRequest) (*user.RefreshTokenResponse, error) {
+	l := logic.NewRefreshTokenLogic(ctx, s.svcCtx)
+	return l.RefreshToken(in)
+}
+
 // 获取用户信息
 func (s *UserServiceServer) GetUserInfo(ctx context.Context, in *user.GetUserInfoRequest) (*user.UserInfo, error) {
 	l := logic.NewGetUserInfoLogic(ctx, s.svcCtx)

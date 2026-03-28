@@ -12,8 +12,10 @@ type Config struct {
 
 	// JWT 配置
 	JWT struct {
-		AccessSecret string `json:"accessSecret"`
-		AccessExpire int64  `json:"accessExpire"`
+		AccessSecret  string `json:"accessSecret"`
+		AccessExpire  int64  `json:"accessExpire"`
+		RefreshSecret string `json:"refreshSecret"`
+		RefreshExpire int64  `json:"refreshExpire"`
 	} `json:"jwt"`
 
 	// Redis 缓存（用于限流）

@@ -18,7 +18,9 @@ type Config struct {
 
 	// JWT 配置
 	JWTConfig struct {
-		AccessSecret string // JWT 签名密钥
-		AccessExpire int64  // Token 过期时间（秒）
+		AccessSecret  string // JWT 签名密钥
+		RefreshSecret string // Refresh Token 签名密钥
+		AccessExpire  int64  // Access Token 过期时间（秒）
+		RefreshExpire int64  // Refresh Token 过期时间（秒）
 	}
 }

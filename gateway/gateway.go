@@ -42,11 +42,12 @@ func main() {
 		userHandler := handler.NewUserHandler(clients.UserService)
 		userGroup.POST("/register", userHandler.Register)
 		userGroup.POST("/login", userHandler.Login)
+		userGroup.POST("/refresh", userHandler.RefreshToken)
 	}
 
 	// 需要登录的路由
 	authGroup := r.Group("/api/v1")
-	authGroup.Use(middleware.JWTAuth(c.JWT.AccessSecret))
+	authGroup.Use(middleware.JWTAuth(c.JWT.AccessSecret, c.RedisHost))
 	{
 		userHandler := handler.NewUserHandler(clients.UserService)
 		authGroup.GET("/user/info", userHandler.GetUserInfo)

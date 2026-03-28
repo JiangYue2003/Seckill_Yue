@@ -106,12 +106,49 @@ func (h *UserHandler) Login(c *gin.Context) {
 		return
 	}
 
+	logx.Infof("用户登录成功: userId=%d", resp.UserId)
+
 	middleware.Success(c, gin.H{
-		"userId":   resp.UserId,
-		"username": resp.Username,
-		"email":    resp.Email,
-		"token":    resp.Token,
-		"expireAt": resp.ExpireAt,
+		"userId":          resp.UserId,
+		"username":        resp.Username,
+		"email":           resp.Email,
+		"accessToken":     resp.AccessToken,
+		"accessExpireAt":  resp.AccessExpireAt,
+		"refreshToken":    resp.RefreshToken,
+		"refreshExpireAt": resp.RefreshExpireAt,
+	})
+}
+
+// RefreshTokenRequest 刷新 Token 请求
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refreshToken" binding:"required"`
+}
+
+// RefreshToken 刷新 Token（用 Refresh Token 换取新 Token）
+func (h *UserHandler) RefreshToken(c *gin.Context) {
+	var req RefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, "参数错误: "+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	resp, err := h.userSvc.RefreshToken(ctx, &user.RefreshTokenRequest{
+		RefreshToken: req.RefreshToken,
+	})
+	if err != nil {
+		logx.Errorf("刷新Token失败: %v", err)
+		middleware.ErrorWithStatus(c, http.StatusUnauthorized, 401, "refresh token 无效或已过期，请重新登录")
+		return
+	}
+
+	middleware.Success(c, gin.H{
+		"accessToken":     resp.AccessToken,
+		"accessExpireAt":  resp.AccessExpireAt,
+		"refreshToken":    resp.RefreshToken,
+		"refreshExpireAt": resp.RefreshExpireAt,
 	})
 }
 

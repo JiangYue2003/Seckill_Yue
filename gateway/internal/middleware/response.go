@@ -54,7 +54,8 @@ func ErrorWithStatus(c *gin.Context, httpStatus int, code int, message string) {
 
 // JWTClaims JWT 声明
 type JWTClaims struct {
-	UserId int64 `json:"userId"`
+	UserId int64  `json:"userId"`
+	Jti    string `json:"jti,omitempty"`
 }
 
 // GetUserIdFromContext 从上下文获取用户ID
@@ -108,7 +109,12 @@ func ParseToken(tokenString string, secret string) (*JWTClaims, error) {
 		userId = int64(uid)
 	}
 
-	return &JWTClaims{UserId: userId}, nil
+	jti := ""
+	if j, ok := payload["jti"].(string); ok {
+		jti = j
+	}
+
+	return &JWTClaims{UserId: userId, Jti: jti}, nil
 }
 
 // hmacSha256 计算 HMAC-SHA256

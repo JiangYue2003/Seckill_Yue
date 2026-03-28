@@ -7,14 +7,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"seckill-mall/user-service/internal/model"
 	"seckill-mall/user-service/internal/svc"
 	"seckill-mall/user-service/user"
 
+	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/stores/redis"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -32,14 +34,12 @@ func NewLoginLogic(ctx context.Context, svcCtx *svc.ServiceContext) *LoginLogic 
 	}
 }
 
-// Login 用户登录
+// Login 用户登录，签发 Access Token + Refresh Token
 func (l *LoginLogic) Login(in *user.LoginRequest) (*user.LoginResponse, error) {
-	// 参数校验
 	if in.Username == "" || in.Password == "" {
 		return nil, errors.New("用户名和密码不能为空")
 	}
 
-	// 查询用户
 	existingUser, err := l.svcCtx.UserModel.FindOneByUsername(l.ctx, in.Username)
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
@@ -49,112 +49,122 @@ func (l *LoginLogic) Login(in *user.LoginRequest) (*user.LoginResponse, error) {
 		return nil, errors.New("系统错误，请稍后重试")
 	}
 
-	// 检查用户状态
 	if existingUser.Status != 1 {
 		return nil, errors.New("账号已被禁用")
 	}
 
-	// 验证密码
 	if err := bcrypt.CompareHashAndPassword([]byte(existingUser.Password), []byte(in.Password)); err != nil {
 		l.Logger.Infof("密码错误: username=%s", in.Username)
 		return nil, errors.New("密码错误")
 	}
 
-	// 生成 JWT Token
-	token, expireAt, err := l.generateToken(existingUser.ID)
+	accessToken, accessExp, err := generateAccessToken(l.svcCtx.Config.JWTConfig.AccessSecret, existingUser.ID)
 	if err != nil {
-		l.Logger.Errorf("生成Token失败: %v", err)
+		l.Logger.Errorf("生成AccessToken失败: %v", err)
 		return nil, errors.New("系统错误，请稍后重试")
 	}
 
-	// 将 Token 加入 Redis 黑名单（用于后续登出功能）
-	tokenKey := "user:token:" + token
-	l.svcCtx.Redis.Setex(tokenKey, "1", int(l.svcCtx.Config.JWTConfig.AccessExpire))
+	refreshToken, refreshExp, err := generateRefreshToken(existingUser.ID, l.svcCtx.Config.JWTConfig.RefreshExpire)
+	if err != nil {
+		l.Logger.Errorf("生成RefreshToken失败: %v", err)
+		return nil, errors.New("系统错误，请稍后重试")
+	}
+
+	parts := splitRefreshToken(refreshToken)
+	if len(parts) != 2 {
+		return nil, errors.New("系统错误，请稍后重试")
+	}
+	refreshKey := fmt.Sprintf("user:refresh:%d:%s", existingUser.ID, parts[0])
+	l.svcCtx.Redis.Setex(refreshKey, "1", int(l.svcCtx.Config.JWTConfig.RefreshExpire))
 
 	l.Logger.Infof("用户登录成功: userId=%d, username=%s", existingUser.ID, existingUser.Username)
 
 	return &user.LoginResponse{
-		UserId:   existingUser.ID,
-		Username: existingUser.Username,
-		Email:    existingUser.Email,
-		Token:    token,
-		ExpireAt: expireAt,
+		UserId:          existingUser.ID,
+		Username:        existingUser.Username,
+		Email:           existingUser.Email,
+		AccessToken:     accessToken,
+		AccessExpireAt:  accessExp,
+		RefreshToken:    refreshToken,
+		RefreshExpireAt: refreshExp,
 	}, nil
 }
 
-// generateToken 生成 JWT Token
-// 使用简单的自定义 JWT 实现
-func (l *LoginLogic) generateToken(userId int64) (string, int64, error) {
+// generateAccessToken 生成 Access Token（HMAC-SHA256 签名，短有效期）
+func generateAccessToken(secret string, userId int64) (string, int64, error) {
 	now := time.Now().Unix()
-	expireAt := now + l.svcCtx.Config.JWTConfig.AccessExpire
+	expireAt := now + 900 // 15 分钟
 
-	// header
-	header := map[string]string{"alg": "HS256", "typ": "JWT"}
-	headerJSON, _ := json.Marshal(header)
-	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
-
-	// payload
 	payload := map[string]interface{}{
 		"userId": userId,
 		"iat":    now,
 		"exp":    expireAt,
+		"jti":    uuid.New().String(),
 	}
-	payloadJSON, _ := json.Marshal(payload)
-	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	return signPayload(payload, expireAt, secret)
+}
 
-	// signature
-	signature := hmacSha256(headerB64+"."+payloadB64, l.svcCtx.Config.JWTConfig.AccessSecret)
-	signatureB64 := base64.RawURLEncoding.EncodeToString(signature)
-
-	// token
-	token := headerB64 + "." + payloadB64 + "." + signatureB64
-
+// generateRefreshToken 生成 Refresh Token（UUID.userId 格式，存 Redis）
+func generateRefreshToken(userId int64, refreshExpire int64) (string, int64, error) {
+	token := fmt.Sprintf("%s.%d", uuid.New().String(), userId)
+	expireAt := time.Now().Unix() + refreshExpire
 	return token, expireAt, nil
 }
 
-// hmacSha256 计算 HMAC-SHA256
+// ValidateRefreshToken 验证 Refresh Token 是否在 Redis 中有效
+func ValidateRefreshToken(redisClient *redis.Redis, userId int64, refreshToken string) error {
+	parts := splitRefreshToken(refreshToken)
+	if len(parts) != 2 {
+		return errors.New("invalid refresh token format")
+	}
+	refreshKey := fmt.Sprintf("user:refresh:%d:%s", userId, parts[0])
+	exists, err := redisClient.Exists(refreshKey)
+	if err != nil {
+		return fmt.Errorf("redis error: %w", err)
+	}
+	if !exists {
+		return errors.New("refresh token 已失效或已被吊销")
+	}
+	return nil
+}
+
+// RevokeRefreshToken 删除 Redis 中的 Refresh Token（登出/强制注销）
+func RevokeRefreshToken(redisClient *redis.Redis, userId int64, refreshToken string) error {
+	parts := splitRefreshToken(refreshToken)
+	if len(parts) != 2 {
+		return errors.New("invalid refresh token format")
+	}
+	refreshKey := fmt.Sprintf("user:refresh:%d:%s", userId, parts[0])
+	_, err := redisClient.Del(refreshKey)
+	return err
+}
+
+// splitRefreshToken 拆分 refresh token: "uuid.userId" → [uuid, userId]
+func splitRefreshToken(token string) []string {
+	for i := len(token) - 1; i >= 0; i-- {
+		if token[i] == '.' {
+			return []string{token[:i], token[i+1:]}
+		}
+	}
+	return nil
+}
+
+// signPayload 将 payload HMAC-SHA256 签名后返回 token 和过期时间
+// expireAt 直接传入，避免 json.Marshal 不改变 Go 运行时类型导致 int64→float64 断言失败
+func signPayload(payload map[string]interface{}, expireAt int64, secret string) (string, int64, error) {
+	header := map[string]string{"alg": "HS256", "typ": "JWT"}
+	headerJSON, _ := json.Marshal(header)
+	payloadJSON, _ := json.Marshal(payload)
+
+	headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	signatureB64 := base64.RawURLEncoding.EncodeToString(hmacSha256(headerB64+"."+payloadB64, secret))
+
+	return headerB64 + "." + payloadB64 + "." + signatureB64, expireAt, nil
+}
+
 func hmacSha256(message, secret string) []byte {
 	h := hmac.New(sha256.New, []byte(secret))
 	h.Write([]byte(message))
 	return h.Sum(nil)
-}
-
-// parseToken 解析并验证 JWT Token
-func parseToken(tokenString, secret string) (map[string]interface{}, error) {
-	parts := strings.Split(tokenString, ".")
-	if len(parts) != 3 {
-		return nil, errors.New("invalid token format")
-	}
-
-	headerB64, payloadB64, signatureB64 := parts[0], parts[1], parts[2]
-
-	// 验证签名
-	expectedSig := hmacSha256(headerB64+"."+payloadB64, secret)
-	actualSig, err := base64.RawURLEncoding.DecodeString(signatureB64)
-	if err != nil {
-		return nil, errors.New("invalid signature encoding")
-	}
-	if !hmac.Equal(expectedSig, actualSig) {
-		return nil, errors.New("invalid signature")
-	}
-
-	// 解析 payload
-	payloadJSON, err := base64.RawURLEncoding.DecodeString(payloadB64)
-	if err != nil {
-		return nil, errors.New("invalid payload encoding")
-	}
-
-	var payload map[string]interface{}
-	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
-		return nil, errors.New("invalid payload format")
-	}
-
-	// 检查过期时间
-	if exp, ok := payload["exp"].(float64); ok {
-		if int64(exp) < time.Now().Unix() {
-			return nil, errors.New("token expired")
-		}
-	}
-
-	return payload, nil
 }
