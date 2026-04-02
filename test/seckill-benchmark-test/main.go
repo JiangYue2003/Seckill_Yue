@@ -36,6 +36,9 @@ var scenarios = []struct {
 	{"基准测试 (100用户/50库存)", 100, 50, 50},
 	{"极限压测 (500用户/200库存)", 500, 200, 200},
 	{"热点测试 (1000用户/500库存)", 1000, 500, 500},
+	{"大规模压测 (2000用户/800库存)", 2000, 800, 800},
+	{"超高并发 (3000用户/1000库存)", 3000, 1000, 1000},
+	{"极端压力 (5000用户/2000库存)", 5000, 2000, 2000},
 }
 
 // SeckillServiceClient gRPC 客户端封装
@@ -232,8 +235,13 @@ func runBenchmark(client *SeckillServiceClient, scenario struct {
 // cleanupProductData 清理商品测试数据
 func cleanupProductData(seckillProductId int64) {
 	ctx := context.Background()
-	rollbackStock(ctx, seckillProductId, 10000)
-	for i := int64(0); i < 2000; i++ {
-		deleteUserKey(ctx, seckillProductId, 10000+i)
+	rollbackStock(ctx, seckillProductId, 100000)
+
+	// 用 pipeline 批量删除 user keys (10000 ~ 20000)
+	pipe := redisClient.Pipeline()
+	for i := int64(0); i < 10000; i++ {
+		key := fmt.Sprintf("%s%d:%d", keyPrefixSeckillUser, seckillProductId, 10000+i)
+		pipe.Del(ctx, key)
 	}
+	pipe.Exec(ctx)
 }

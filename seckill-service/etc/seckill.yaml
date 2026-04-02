@@ -17,3 +17,9 @@ RabbitMQ:
   URL: amqp://guest:guest@localhost:5672/
   Exchange: seckill_exchange
   RoutingKey: seckill.order
+
+AsyncProducer:
+  BufferSize: 10000
+  WorkerCount: 4
+  RetryCount: 3
+  RetryInterval: 1

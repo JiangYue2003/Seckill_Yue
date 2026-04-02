@@ -150,8 +150,9 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultSuccess:
-		// 秒杀成功，发送 RabbitMQ 消息
-		l.Logger.Infof("秒杀成功，准备发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
+		// 秒杀成功，异步发送 RabbitMQ 消息（不阻塞用户响应）
+		// 注意：异步模式下 MQ 投递失败不再触发同步回滚，依赖 UserPreemptTTL（300s）自动兜底
+		l.Logger.Infof("秒杀成功，准备异步发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
 
 		amount := seckillPrice * quantity
@@ -168,25 +169,12 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			CreatedAt:        time.Now().Unix(),
 		}
 
-		// 发送 RabbitMQ 消息
-		if err := l.svcCtx.Producer.SendSeckillOrder(l.ctx, seckillMsg); err != nil {
-			// RabbitMQ 发送失败，回滚 Redis 库存
-			l.Logger.Errorf("发送RabbitMQ消息失败，回滚库存: orderId=%s, err=%v", orderId, err)
-			if rollbackErr := l.svcCtx.Redis.RollbackStock(l.ctx, in.SeckillProductId, quantity); rollbackErr != nil {
-				l.Logger.Errorf("回滚库存失败: seckillProductId=%d, quantity=%d, err=%v",
-					in.SeckillProductId, quantity, rollbackErr)
-			}
-			// 删除用户购买记录
-			if delErr := l.svcCtx.Redis.DeleteUserKey(l.ctx, in.SeckillProductId, in.UserId); delErr != nil {
-				l.Logger.Errorf("删除用户购买记录失败: userId=%d, seckillProductId=%d, err=%v",
-					in.UserId, in.SeckillProductId, delErr)
-			}
-
-			return &seckill.SeckillResponse{
-				Success: false,
-				Code:    SeckillCodeSystemError,
-				Message: "系统繁忙，请稍后重试",
-			}, nil
+		// 异步投递消息，立即返回（不等待 MQ 确认）
+		if err := l.svcCtx.AsyncProducer.SendAsync(l.ctx, seckillMsg); err != nil {
+			// 缓冲区满，说明系统严重过载（Channel 积压超过阈值）
+			// 此时 Lua 已扣减库存，但无法异步投递消息，降级处理：
+			// 不触发库存回滚（避免雪崩），依赖 UserPreemptTTL 300s 自然归还
+			l.Logger.Errorf("异步MQ缓冲区满，降级处理（库存依赖TTL自然归还）: orderId=%s, err=%v", orderId, err)
 		}
 
 		// 设置订单状态为处理中（存储完整订单信息用于后续查询）

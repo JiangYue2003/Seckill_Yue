@@ -18,4 +18,12 @@ type Config struct {
 		Exchange   string // 交换机名称
 		RoutingKey string // 路由键
 	}
+
+	// 异步 MQ 生产者配置
+	AsyncProducer struct {
+		BufferSize    int // 缓冲队列大小，默认 10000
+		WorkerCount   int // 后台 Worker 协程数量，默认 4
+		RetryCount    int // 最大重试次数，默认 3
+		RetryInterval int // 基础重试间隔(秒)，默认 1（实际退避：1s, 3s, 10s...）
+	}
 }
