@@ -1,0 +1,43 @@
+Name: gateway
+Host: 0.0.0.0
+Port: 8888
+
+JWT:
+  AccessSecret: seckill-mall-jwt-secret-key-2026
+  AccessExpire: 900
+  RefreshSecret: seckill-mall-jwt-refresh-secret-key-2026
+  RefreshExpire: 604800
+
+Redis:
+  - Host: localhost:6379
+
+RedisHost: localhost:6379
+
+# gRPC 服务（通过 etcd 服务发现，NonBlock=false 确保启动时等待连接就绪）
+UserService:
+  NonBlock: false
+  Etcd:
+    Hosts:
+      - 127.0.0.1:2379
+    Key: user.rpc
+
+ProductService:
+  NonBlock: false
+  Etcd:
+    Hosts:
+      - 127.0.0.1:2379
+    Key: product.rpc
+
+SeckillService:
+  NonBlock: false
+  Etcd:
+    Hosts:
+      - 127.0.0.1:2379
+    Key: seckill.rpc
+
+OrderService:
+  NonBlock: false
+  Etcd:
+    Hosts:
+      - 127.0.0.1:2379
+    Key: order.rpc

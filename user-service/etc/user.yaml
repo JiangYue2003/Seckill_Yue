@@ -1,0 +1,20 @@
+Name: user.rpc
+ListenOn: 127.0.0.1:8081
+Mode: dev
+Etcd:
+  Hosts:
+  - 127.0.0.1:2379
+  Key: user.rpc
+
+MySQL:
+  DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
+
+MyCache:
+  - Host: localhost:6379
+    Type: node
+
+JWTConfig:
+  AccessSecret: seckill-mall-jwt-secret-key-2026
+  RefreshSecret: seckill-mall-jwt-refresh-secret-key-2026
+  AccessExpire: 900
+  RefreshExpire: 604800

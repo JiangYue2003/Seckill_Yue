@@ -1,0 +1,17 @@
+Name: product.rpc
+ListenOn: 127.0.0.1:8082
+Mode: dev
+Etcd:
+  Hosts:
+    - 127.0.0.1:2379
+  Key: product.rpc
+
+Redis:
+  Host: localhost:6379
+  Key: product.rpc.auth
+
+MySQL:
+  DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
+
+SeckillRedis:
+  Host: localhost:6379

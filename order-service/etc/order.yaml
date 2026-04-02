@@ -1,0 +1,36 @@
+Name: order.rpc
+ListenOn: 127.0.0.1:8084
+Mode: dev
+Etcd:
+  Hosts:
+  - 127.0.0.1:2379
+  Key: order.rpc
+
+MySQL:
+  DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
+
+MyCache:
+  - Host: localhost:6379
+    Type: node
+
+RabbitMQ:
+  URL: amqp://guest:guest@localhost:5672/
+  Exchange: seckill_exchange
+  RoutingKey: seckill.order
+  ConsumerTag: order_service_consumer
+
+# Product Service gRPC（通过 etcd发现）
+ProductService:
+  NonBlock: false
+  Etcd:
+    Hosts:
+      - 127.0.0.1:2379
+    Key: product.rpc
+
+# Seckill Service gRPC（通过 etcd发现）
+SeckillService:
+  NonBlock: false
+  Etcd:
+    Hosts:
+      - 127.0.0.1:2379
+    Key: seckill.rpc

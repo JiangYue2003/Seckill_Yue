@@ -1,0 +1,19 @@
+Name: seckill.rpc
+ListenOn: 127.0.0.1:8083
+Mode: dev
+Etcd:
+  Hosts:
+    - 127.0.0.1:2379
+  Key: seckill.rpc
+
+Redis:
+  Host: localhost:6379
+  Key: seckill.rpc.auth
+
+SeckillRedis:
+  Host: localhost:6379
+
+RabbitMQ:
+  URL: amqp://guest:guest@localhost:5672/
+  Exchange: seckill_exchange
+  RoutingKey: seckill.order
