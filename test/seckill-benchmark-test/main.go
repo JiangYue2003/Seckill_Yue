@@ -29,16 +29,22 @@ var (
 // 测试场景配置
 var scenarios = []struct {
 	name          string
+	productId     int64
 	totalRequests int64
 	concurrency   int
 	stock         int64
 }{
-	{"基准测试 (100用户/50库存)", 100, 50, 50},
-	{"极限压测 (500用户/200库存)", 500, 200, 200},
-	{"热点测试 (1000用户/500库存)", 1000, 500, 500},
-	{"大规模压测 (2000用户/800库存)", 2000, 800, 800},
-	{"超高并发 (3000用户/1000库存)", 3000, 1000, 1000},
-	{"极端压力 (5000用户/2000库存)", 5000, 2000, 2000},
+	{"基准测试 (100用户/50库存)", 2001, 100, 50, 50},
+	{"小规模压测 (1000用户/500库存)", 2011, 1000, 500, 500},
+	{"中规模压测 (3000用户/1500库存)", 2031, 3000, 1000, 1500},
+	{"大规模压测 (5000用户/2000库存)", 2061, 5000, 1500, 2000},
+	{"超高并发 (8000用户/3000库存)", 2101, 8000, 2000, 3000},
+	{"万级并发 (10000用户/4000库存)", 2201, 10000, 2500, 4000},
+	{"1.5万并发 (15000用户/5000库存)", 2401, 15000, 3000, 5000},
+	{"2万并发 (20000用户/6000库存)", 2701, 20000, 4000, 6000},
+	{"3万并发 (30000用户/8000库存)", 3101, 30000, 5000, 8000},
+	{"5万并发 (50000用户/10000库存)", 3501, 50000, 6000, 10000},
+	{"10万并发 (100000用户/15000库存)", 4101, 100000, 8000, 15000},
 }
 
 // SeckillServiceClient gRPC 客户端封装
@@ -152,6 +158,7 @@ func setSeckillProductInfo(ctx context.Context, seckillProductId, productId, pri
 // runBenchmark 运行单个压测场景
 func runBenchmark(client *SeckillServiceClient, scenario struct {
 	name          string
+	productId     int64
 	totalRequests int64
 	concurrency   int
 	stock         int64
@@ -161,7 +168,7 @@ func runBenchmark(client *SeckillServiceClient, scenario struct {
 	fmt.Printf("   总请求: %d | 并发: %d | 库存: %d\n", scenario.totalRequests, scenario.concurrency, scenario.stock)
 	fmt.Println("----------------------------------------")
 
-	seckillProductId := int64(2001)
+	seckillProductId := scenario.productId
 	now := time.Now().Unix()
 	ttl := int64(86400)
 	startTime := now - 3600
@@ -170,9 +177,9 @@ func runBenchmark(client *SeckillServiceClient, scenario struct {
 	ctx := context.Background()
 
 	// 清理旧数据并初始化
-	cleanupProductData(seckillProductId)
+	cleanupProductData(seckillProductId, scenario.totalRequests)
 
-	if err := setSeckillProductInfo(ctx, seckillProductId, seckillProductId, 999, "压测商品", startTime, endTime, ttl); err != nil {
+	if err := setSeckillProductInfo(ctx, seckillProductId, 1, 999, "压测商品", startTime, endTime, ttl); err != nil {
 		log.Printf("初始化商品信息失败: %v", err)
 		return
 	}
@@ -226,20 +233,21 @@ func runBenchmark(client *SeckillServiceClient, scenario struct {
 	actualSold := scenario.stock - finalStock
 
 	// 清理数据
-	cleanupProductData(seckillProductId)
+	cleanupProductData(seckillProductId, totalRequests)
 
 	// 打印报告
 	metrics.Report(totalDuration, scenario.stock, actualSold)
 }
 
 // cleanupProductData 清理商品测试数据
-func cleanupProductData(seckillProductId int64) {
+// userId 从 10000 开始，总量为 totalRequests
+func cleanupProductData(seckillProductId int64, totalRequests int64) {
 	ctx := context.Background()
 	rollbackStock(ctx, seckillProductId, 100000)
 
-	// 用 pipeline 批量删除 user keys (10000 ~ 20000)
+	// 用 pipeline 批量删除 user keys
 	pipe := redisClient.Pipeline()
-	for i := int64(0); i < 10000; i++ {
+	for i := int64(0); i < totalRequests; i++ {
 		key := fmt.Sprintf("%s%d:%d", keyPrefixSeckillUser, seckillProductId, 10000+i)
 		pipe.Del(ctx, key)
 	}

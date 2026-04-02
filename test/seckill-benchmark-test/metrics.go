@@ -26,7 +26,7 @@ type Metrics struct {
 
 func NewMetrics() *Metrics {
 	return &Metrics{
-		latencies: make([]int64, 0, 10000),
+		latencies: make([]int64, 0, 200000),
 	}
 }
 

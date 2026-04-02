@@ -64,7 +64,9 @@ func testSeckillSuccess(client *SeckillServiceClient) TestResult {
 
 	ctx := context.Background()
 
-	if err := setSeckillProductInfo(ctx, seckillProductId, seckillProductId, 999, "测试秒杀商品", startTime, endTime, ttl); err != nil {
+	// 注意：productId 必须是数据库 products 表中真实存在的商品ID
+	// schema.sql 中插入了 id=1(iPhone), id=2(小米), id=3(MacBook)
+	if err := setSeckillProductInfo(ctx, seckillProductId, 1, 999, "测试秒杀商品", startTime, endTime, ttl); err != nil {
 		return TestResult{TC: "TC-01", Name: "秒杀成功", Pass: false, Message: fmt.Sprintf("初始化商品信息失败: %v", err)}
 	}
 
@@ -117,7 +119,7 @@ func testStockNotEnough(client *SeckillServiceClient) TestResult {
 
 	ctx := context.Background()
 
-	if err := setSeckillProductInfo(ctx, seckillProductId, seckillProductId, 999, "测试库存不足", startTime, endTime, ttl); err != nil {
+	if err := setSeckillProductInfo(ctx, seckillProductId, 2, 999, "测试库存不足", startTime, endTime, ttl); err != nil {
 		return TestResult{TC: "TC-02", Name: "库存不足", Pass: false, Message: fmt.Sprintf("初始化商品信息失败: %v", err)}
 	}
 
@@ -181,7 +183,7 @@ func testUserDuplicate(client *SeckillServiceClient) TestResult {
 
 	ctx := context.Background()
 
-	if err := setSeckillProductInfo(ctx, seckillProductId, seckillProductId, 999, "测试用户防重", startTime, endTime, ttl); err != nil {
+	if err := setSeckillProductInfo(ctx, seckillProductId, 1, 999, "测试用户防重", startTime, endTime, ttl); err != nil {
 		return TestResult{TC: "TC-03", Name: "用户防重", Pass: false, Message: fmt.Sprintf("初始化商品信息失败: %v", err)}
 	}
 
@@ -245,7 +247,7 @@ func testOrderStatusQuery(client *SeckillServiceClient) TestResult {
 
 	ctx := context.Background()
 
-	if err := setSeckillProductInfo(ctx, seckillProductId, seckillProductId, 999, "测试订单查询", startTime, endTime, ttl); err != nil {
+	if err := setSeckillProductInfo(ctx, seckillProductId, 2, 999, "测试订单查询", startTime, endTime, ttl); err != nil {
 		return TestResult{TC: "TC-04", Name: "订单状态查询", Pass: false, Message: fmt.Sprintf("初始化商品信息失败: %v", err)}
 	}
 
