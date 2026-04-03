@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -173,6 +176,8 @@ func NewRateLimitStrategy(redisHost string, cfg RateLimitConfig) (RateLimitStrat
 }
 
 // extractProductId 从 query string 或 JSON body 中提取 seckillProductId
+// 注意：不能使用 ShouldBindJSON，因为它会消耗请求体，导致后续 handler 无法读取
+// 解决方案：使用 c.Request.Body.Seek 来重置读取位置
 func extractProductId(c *gin.Context) int64 {
 	// 先从 query 取
 	if pidStr := c.Query("seckillProductId"); pidStr != "" {
@@ -180,12 +185,28 @@ func extractProductId(c *gin.Context) int64 {
 			return pid
 		}
 	}
-	// 从 body 取（POST 请求走这里）
+
+	// 从 body 取（POST 请求），需要先备份 body 再恢复
+	if c.Request.Body == nil || c.Request.ContentLength == 0 {
+		return 0
+	}
+
+	// 读取 body
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return 0
+	}
+
+	// 恢复 body，让后续 handler 可以再次读取
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// 解析 JSON
 	var body struct {
 		SeckillProductId int64 `json:"seckillProductId"`
 	}
-	// 只尝试解析，不影响已有的 body binding
-	_ = c.ShouldBindJSON(&body)
+	if err := json.Unmarshal(bodyBytes, &body); err != nil {
+		return 0
+	}
 	return body.SeckillProductId
 }
 
