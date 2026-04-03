@@ -13,6 +13,16 @@ Redis:
 
 RedisHost: localhost:6379
 
+# 限流配置（秒杀接口）
+# Strategy 可选值:
+#   - token_bucket:    令牌桶(userId:productId维度,秒杀推荐)
+#   - sliding_window:  滑动窗口(IP维度,原逻辑)
+#   - ip_token_bucket: IP维度令牌桶(降级用)
+RateLimit:
+  Strategy: token_bucket  # 切换策略: token_bucket | sliding_window | ip_token_bucket
+  QPS: 200                # 每秒放行速率
+  Capacity: 500           # 令牌桶容量(突发上限)，滑动窗口忽略
+
 # gRPC 服务（通过 etcd 服务发现，NonBlock=false 确保启动时等待连接就绪）
 UserService:
   NonBlock: false

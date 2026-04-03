@@ -59,10 +59,18 @@ func main() {
 		authGroup.GET("/products", productHandler.ListProducts)
 		authGroup.GET("/seckill/products", productHandler.ListSeckillProducts)
 
-		// 秒杀路由：单独加限流（200 QPS/人/IP）
+		// 秒杀路由：工厂模式限流（策略可配置，yaml 中切换）
 		seckillHandler := handler.NewSeckillHandler(clients.SeckillService)
 		seckillGroup := authGroup.Group("/seckill")
-		seckillGroup.Use(middleware.RateLimiter(c.RedisHost, 200))
+		seckillStrategy, err := middleware.NewRateLimitStrategy(c.RedisHost, middleware.RateLimitConfig{
+			Strategy: c.RateLimit.Strategy,
+			QPS:      c.RateLimit.QPS,
+			Capacity: c.RateLimit.Capacity,
+		})
+		if err != nil {
+			panic(fmt.Sprintf("初始化限流策略失败: %v", err))
+		}
+		seckillGroup.Use(middleware.RateLimitMiddleware(seckillStrategy))
 		seckillGroup.POST("", seckillHandler.Seckill)
 		seckillGroup.GET("/status", seckillHandler.GetSeckillStatus)
 		seckillGroup.GET("/result", seckillHandler.GetSeckillResult)
