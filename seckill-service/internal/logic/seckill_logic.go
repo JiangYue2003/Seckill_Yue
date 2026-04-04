@@ -184,6 +184,11 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			CreatedAt:        time.Now().Unix(),
 		}
 
+		// 发送延迟兜底消息（5分钟后检查订单是否仍 pending，非致命）
+		if delayErr := l.svcCtx.AsyncProducer.SendDelayOrder(l.ctx, seckillMsg); delayErr != nil {
+			l.Logger.Errorf("发送延迟检查消息失败（非致命，TTL兜底）: orderId=%s, err=%v", orderId, delayErr)
+		}
+
 		// 异步投递消息，立即返回（不等待 MQ 确认）
 		if err := l.svcCtx.AsyncProducer.SendAsync(l.ctx, seckillMsg); err != nil {
 			// 缓冲区满，说明系统严重过载（Channel 积压超过阈值）

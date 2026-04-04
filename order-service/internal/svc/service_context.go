@@ -14,7 +14,8 @@ type ServiceContext struct {
 	Config            config.Config
 	OrderModel        model.OrderModel
 	SeckillOrderModel model.SeckillOrderModel
-	Consumer          *mq.Consumer
+	Consumer          *mq.Consumer // 主处理队列消费者
+	CheckConsumer     *mq.Consumer // 超时检查队列消费者
 	OrderService      *service.OrderService
 	ProductServiceRPC *rpc.ProductServiceClient
 	SeckillServiceRPC *rpc.SeckillServiceClient
@@ -70,11 +71,29 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		consumer = nil
 	}
 
+	// 初始化超时检查队列消费者（消费 seckill_order_check_queue）
+	checkProcessFunc := func(msg *mq.SeckillOrderMessage) error {
+		return orderService.ProcessOrderTimeout(msg)
+	}
+	checkConsumer, err := mq.NewConsumer(
+		c.RabbitMQ.URL,
+		c.RabbitMQ.Exchange,
+		mq.RoutingKeyCheck,
+		mq.SeckillCheckQueueName,
+		c.RabbitMQ.ConsumerTag+"_check",
+		checkProcessFunc,
+	)
+	if err != nil {
+		logx.Errorf("failed to initialize check consumer: %v", err)
+		checkConsumer = nil
+	}
+
 	return &ServiceContext{
 		Config:            c,
 		OrderModel:        orderModel,
 		SeckillOrderModel: seckillOrderModel,
 		Consumer:          consumer,
+		CheckConsumer:     checkConsumer,
 		OrderService:      orderService,
 		ProductServiceRPC: productSvc,
 		SeckillServiceRPC: seckillSvc,

@@ -25,10 +25,16 @@ func main() {
 	conf.MustLoad(*configFile, &c)
 	ctx := svc.NewServiceContext(c)
 
-	// 启动 RabbitMQ Consumer
+	// 启动主处理队列消费者
 	if ctx.Consumer != nil {
 		if err := ctx.Consumer.Start(); err != nil {
 			fmt.Printf("Warning: RabbitMQ consumer failed to start: %v\n", err)
+		}
+	}
+	// 启动超时检查队列消费者
+	if ctx.CheckConsumer != nil {
+		if err := ctx.CheckConsumer.Start(); err != nil {
+			fmt.Printf("Warning: RabbitMQ check consumer failed to start: %v\n", err)
 		}
 	}
 
@@ -42,10 +48,10 @@ func main() {
 	defer func() {
 		s.Stop()
 		if ctx.Consumer != nil {
-			err := ctx.Consumer.Stop()
-			if err != nil {
-				return
-			}
+			_ = ctx.Consumer.Stop()
+		}
+		if ctx.CheckConsumer != nil {
+			_ = ctx.CheckConsumer.Stop()
 		}
 	}()
 

@@ -11,14 +11,26 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// SeckillOrderQueueName 秒杀订单队列名称
-const SeckillOrderQueueName = "seckill_order_queue"
+// 队列/交换机名称
+const (
+	SeckillOrderQueueName = "seckill_order_queue"       // 主处理队列
+	SeckillDLXName        = "seckill_dlx"               // 死信交换机（DLX）
+	SeckillDeadQueueName  = "seckill_dead_queue"        // 死信队列（替代原 seckill_order_dlq）
+	SeckillDelayQueueName = "seckill_delay_queue"       // 延迟队列（无消费者，5min TTL）
+	SeckillCheckQueueName = "seckill_order_check_queue" // 超时检查队列
+)
 
-// SeckillDLQName 死信队列名称（用于丢弃超过最大重试次数的消息）
-const SeckillDLQName = "seckill_order_dlq"
+// 路由键
+const (
+	RoutingKeyDead  = "seckill.dead"        // 死信路由键
+	RoutingKeyDelay = "seckill.delay"       // 延迟消息路由键
+	RoutingKeyCheck = "seckill.order.check" // 超时检查路由键
+)
 
-// MaxRetryCount 最大重试次数
-const MaxRetryCount = 3
+const (
+	MaxRetryCount     = 3      // 最大重试次数
+	OrderCheckDelayMs = 300000 // 延迟队列TTL: 5分钟（毫秒）
+)
 
 // SeckillOrderMessage 秒杀成功消息
 type SeckillOrderMessage struct {
@@ -77,46 +89,73 @@ func NewConsumer(url, exchange, routingKey, queueName, consumerTag string, proce
 		return nil, fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	// 声明死信队列（DLQ）
-	_, err = ch.QueueDeclare(
-		SeckillDLQName, // 死信队列名称
-		true,           // durable
-		false,          // delete when unused
-		false,          // exclusive
-		false,          // no-wait
-		nil,            // arguments
-	)
-	if err != nil {
+	// ── 声明死信交换机（DLX）──────────────────────────────────────
+	if err = ch.ExchangeDeclare(SeckillDLXName, "direct", true, false, false, false, nil); err != nil {
 		ch.Close()
 		conn.Close()
-		return nil, fmt.Errorf("failed to declare DLQ: %w", err)
+		return nil, fmt.Errorf("failed to declare DLX exchange: %w", err)
 	}
 
-	_, err = ch.QueueDeclare(
-		queueName, // 队列名称
-		true,      // durable - 持久化
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
-	)
-	if err != nil {
+	// ── 声明死信队列并绑定到 DLX ──────────────────────────────────
+	if _, err = ch.QueueDeclare(SeckillDeadQueueName, true, false, false, false, nil); err != nil {
 		ch.Close()
 		conn.Close()
-		return nil, fmt.Errorf("failed to declare queue: %w", err)
+		return nil, fmt.Errorf("failed to declare dead queue: %w", err)
+	}
+	if err = ch.QueueBind(SeckillDeadQueueName, RoutingKeyDead, SeckillDLXName, false, nil); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind dead queue: %w", err)
 	}
 
-	err = ch.QueueBind(
-		queueName,  // 队列名称
-		routingKey, // 路由键
-		exchange,   // 交换机
-		false,      // no-wait
-		nil,        // arguments
-	)
-	if err != nil {
+	// ── 声明主处理队列（含 DLX 参数）─────────────────────────────
+	// 注意：若旧队列已存在且无 DLX 参数，需先在 RabbitMQ 控制台手动删除后重启服务
+	mainQueueArgs := amqp091.Table{
+		"x-dead-letter-exchange":    SeckillDLXName,
+		"x-dead-letter-routing-key": RoutingKeyDead,
+	}
+	if _, err = ch.QueueDeclare(queueName, true, false, false, false, mainQueueArgs); err != nil {
 		ch.Close()
 		conn.Close()
-		return nil, fmt.Errorf("failed to bind queue: %w", err)
+		return nil, fmt.Errorf("failed to declare main queue (if args conflict, delete old queue first): %w", err)
+	}
+	if err = ch.QueueBind(queueName, routingKey, exchange, false, nil); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind main queue: %w", err)
+	}
+
+	// ── 声明延迟队列（无消费者，TTL 到期后路由到 check 队列）──────
+	delayQueueArgs := amqp091.Table{
+		"x-message-ttl":             int32(OrderCheckDelayMs),
+		"x-dead-letter-exchange":    exchange,        // 过期后回到主交换机
+		"x-dead-letter-routing-key": RoutingKeyCheck, // 路由到超时检查队列
+	}
+	if _, err = ch.QueueDeclare(SeckillDelayQueueName, true, false, false, false, delayQueueArgs); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare delay queue: %w", err)
+	}
+	if err = ch.QueueBind(SeckillDelayQueueName, RoutingKeyDelay, exchange, false, nil); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind delay queue: %w", err)
+	}
+
+	// ── 声明超时检查队列（含 DLX 参数，处理失败也走死信）──────────
+	checkQueueArgs := amqp091.Table{
+		"x-dead-letter-exchange":    SeckillDLXName,
+		"x-dead-letter-routing-key": RoutingKeyDead,
+	}
+	if _, err = ch.QueueDeclare(SeckillCheckQueueName, true, false, false, false, checkQueueArgs); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to declare check queue: %w", err)
+	}
+	if err = ch.QueueBind(SeckillCheckQueueName, RoutingKeyCheck, exchange, false, nil); err != nil {
+		ch.Close()
+		conn.Close()
+		return nil, fmt.Errorf("failed to bind check queue: %w", err)
 	}
 
 	// 设置 QoS（预取数量）
@@ -223,10 +262,9 @@ func (c *Consumer) handleMessage(msg amqp091.Delivery) {
 				seckillMsg.OrderId, retryCount, err)
 
 			if retryCount >= MaxRetryCount {
-				// 超过最大重试次数，丢弃到 DLQ 并回滚 Redis 库存
-				logx.Errorf("Max retry exceeded, sending to DLQ: orderId=%s", seckillMsg.OrderId)
-				c.sendToDLQ(msg.Body, retryCount, err.Error())
-				msg.Reject(false) // 确认丢弃
+				// 超过最大重试次数，Nack(requeue=false) 触发 DLX 自动路由到 seckill_dead_queue
+				logx.Errorf("Max retry exceeded, routing to dead queue via DLX: orderId=%s", seckillMsg.OrderId)
+				msg.Nack(false, false)
 			} else {
 				// 重试次数未达上限，Nack 并 requeue
 				msg.Nack(false, true)
@@ -241,29 +279,6 @@ func (c *Consumer) handleMessage(msg amqp091.Delivery) {
 	}
 
 	logx.Infof("Successfully processed seckill order: orderId=%s", seckillMsg.OrderId)
-}
-
-// sendToDLQ 将失败消息发送到死信队列
-func (c *Consumer) sendToDLQ(body []byte, retryCount int, reason string) {
-	if c.channel == nil {
-		return
-	}
-	headers := map[string]interface{}{
-		"x-retry-count":   retryCount,
-		"x-reject-reason": reason,
-	}
-	c.channel.PublishWithContext(
-		context.Background(),
-		c.exchange, // 复用同一交换机，DLQ 通过不同路由键绑定
-		"seckill.dlq",
-		false, false,
-		amqp091.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp091.Persistent,
-			Body:         body,
-			Headers:      headers,
-		},
-	)
 }
 
 // Stop 停止消费者

@@ -64,6 +64,12 @@ func NewAsyncProducer(producer *Producer, bufferSize, workerCount, retryCount, r
 	return p
 }
 
+// SendDelayOrder 发送延迟兜底消息（直接投递，不走缓冲 channel）
+// 延迟消息低频（每次秒杀成功1条），不需要异步缓冲
+func (p *AsyncProducer) SendDelayOrder(ctx context.Context, msg *SeckillOrderMessage) error {
+	return p.producer.SendDelayOrder(ctx, msg)
+}
+
 // SendAsync 异步投递消息，立即返回不阻塞
 // 返回值:
 //   - nil: 消息已写入缓冲区，由后台 Worker 负责最终投递

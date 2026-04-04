@@ -21,6 +21,7 @@ const (
 // RoutingKey 路由键
 const (
 	SeckillOrderRoutingKey = "seckill.order"
+	SeckillDelayRoutingKey = "seckill.delay" // 延迟队列路由键
 )
 
 // SeckillOrderMessage 秒杀订单消息
@@ -75,37 +76,7 @@ func NewProducer(url, exchange, routingKey string) (*Producer, error) {
 		return nil, fmt.Errorf("failed to declare exchange: %w", err)
 	}
 
-	// 声明队列
-	queueName := "seckill_order_queue"
-	_, err = ch.QueueDeclare(
-		queueName, // 队列名称
-		true,      // durable - 持久化
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to declare queue: %w", err)
-	}
-
-	// 绑定队列到交换机
-	err = ch.QueueBind(
-		queueName,  // 队列名称
-		routingKey, // 路由键
-		exchange,   // 交换机
-		false,      // no-wait
-		nil,        // arguments
-	)
-	if err != nil {
-		ch.Close()
-		conn.Close()
-		return nil, fmt.Errorf("failed to bind queue: %w", err)
-	}
-
-	logx.Infof("RabbitMQ producer created: exchange=%s, routingKey=%s, queue=%s", exchange, routingKey, queueName)
+	logx.Infof("RabbitMQ producer created: exchange=%s, routingKey=%s", exchange, routingKey)
 
 	return &Producer{
 		conn:       conn,
@@ -147,6 +118,38 @@ func (p *Producer) SendSeckillOrder(ctx context.Context, msg *SeckillOrderMessag
 	}
 
 	logx.Infof("秒杀消息发送成功: orderId=%s, routingKey=%s", msg.OrderId, p.routingKey)
+	return nil
+}
+
+// SendDelayOrder 发送延迟兜底消息到延迟队列（5分钟后路由到超时检查队列）
+func (p *Producer) SendDelayOrder(ctx context.Context, msg *SeckillOrderMessage) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("序列化延迟消息失败: %w", err)
+	}
+
+	err = p.channel.PublishWithContext(
+		ctx,
+		p.exchange,             // 同一主交换机
+		SeckillDelayRoutingKey, // 路由到延迟队列
+		false,
+		false,
+		amqp091.Publishing{
+			ContentType:  "application/json",
+			DeliveryMode: amqp091.Persistent,
+			Timestamp:    time.Now(),
+			Body:         body,
+		},
+	)
+	if err != nil {
+		logx.Errorf("发送延迟消息失败: orderId=%s, err=%v", msg.OrderId, err)
+		return fmt.Errorf("发送延迟消息失败: %w", err)
+	}
+
+	logx.Infof("延迟兜底消息发送成功: orderId=%s, delay=5min", msg.OrderId)
 	return nil
 }
 
