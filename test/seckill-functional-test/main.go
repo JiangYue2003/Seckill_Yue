@@ -36,7 +36,7 @@ func main() {
 	initRedis("localhost:6379")
 
 	// 初始化 gRPC 客户端
-	client := initGrpcClient("127.0.0.1:8083")
+	client := initGrpcClient("127.0.0.1:9083")
 
 	// 运行测试
 	runTests(client)

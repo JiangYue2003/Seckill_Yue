@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -81,7 +83,8 @@ return 1
 
 // SeckillRedis Redis 客户端封装
 type SeckillRedis struct {
-	client *redis.Client
+	client     *redis.Client
+	localStock sync.Map // key: seckillProductId(int64) → value: *atomic.Int64，本地库存计数器
 }
 
 // NewSeckillRedis 创建 SeckillRedis 实例
@@ -331,6 +334,42 @@ func (r *SeckillRedis) GetOrderInfo(ctx context.Context, orderId string) (*Order
 	}
 
 	return info, nil
+}
+
+// GetOrInitLocalStock 懒初始化本地库存计数器
+// 若已初始化则直接返回，否则从 Redis 读取当前库存并缓存到内存
+func (r *SeckillRedis) GetOrInitLocalStock(ctx context.Context, seckillProductId int64) (*atomic.Int64, error) {
+	if v, ok := r.localStock.Load(seckillProductId); ok {
+		return v.(*atomic.Int64), nil
+	}
+	stock, err := r.GetStock(ctx, seckillProductId)
+	if err != nil {
+		return nil, err
+	}
+	counter := &atomic.Int64{}
+	counter.Store(stock)
+	actual, _ := r.localStock.LoadOrStore(seckillProductId, counter)
+	return actual.(*atomic.Int64), nil
+}
+
+// DecrLocalStock 原子扣减本地计数器，返回扣减后的值
+// 若计数器未初始化（服务重启等异常情况），保守放行（返回 1），由 Redis Lua 做最终裁决
+func (r *SeckillRedis) DecrLocalStock(seckillProductId int64, quantity int64) int64 {
+	v, ok := r.localStock.Load(seckillProductId)
+	if !ok {
+		return 1
+	}
+	return v.(*atomic.Int64).Add(-quantity)
+}
+
+// IncrLocalStock 回滚本地计数器
+// 在 Redis Lua 返回 SOLD_OUT 或本地预扣失败时调用
+func (r *SeckillRedis) IncrLocalStock(seckillProductId int64, quantity int64) {
+	v, ok := r.localStock.Load(seckillProductId)
+	if !ok {
+		return
+	}
+	v.(*atomic.Int64).Add(quantity)
 }
 
 // Close 关闭连接

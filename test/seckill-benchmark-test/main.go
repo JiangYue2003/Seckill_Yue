@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -47,19 +48,34 @@ var scenarios = []struct {
 	{"10万并发 (100000用户/15000库存)", 4101, 100000, 8000, 15000},
 }
 
-// SeckillServiceClient gRPC 客户端封装
+const poolSize = 8 // 连接池大小
+
+// SeckillServiceClient gRPC 单连接封装
 type SeckillServiceClient struct {
 	conn   *grpc.ClientConn
 	client seckill.SeckillServiceClient
 }
 
-func (c *SeckillServiceClient) Seckill(ctx context.Context, req *seckill.SeckillRequest) (*seckill.SeckillResponse, error) {
-	return c.client.Seckill(ctx, req)
-}
-
 func (c *SeckillServiceClient) Close() {
 	if c.conn != nil {
 		c.conn.Close()
+	}
+}
+
+// ConnectionPool gRPC 连接池，round-robin 分发请求
+type ConnectionPool struct {
+	clients []*SeckillServiceClient
+	counter uint64
+}
+
+func (p *ConnectionPool) Seckill(ctx context.Context, req *seckill.SeckillRequest) (*seckill.SeckillResponse, error) {
+	idx := atomic.AddUint64(&p.counter, 1) % uint64(len(p.clients))
+	return p.clients[idx].client.Seckill(ctx, req)
+}
+
+func (p *ConnectionPool) Close() {
+	for _, c := range p.clients {
+		c.Close()
 	}
 }
 
@@ -72,13 +88,13 @@ func main() {
 	// 初始化 Redis
 	initRedis("localhost:6379")
 
-	// 初始化 gRPC 客户端
-	client := initGrpcClient("127.0.0.1:8083")
-	defer client.Close()
+	// 初始化 gRPC 连接池
+	pool := initGrpcPool("127.0.0.1:9083", poolSize)
+	defer pool.Close()
 
 	// 运行所有测试场景
 	for _, scenario := range scenarios {
-		runBenchmark(client, scenario)
+		runBenchmark(pool, scenario)
 		time.Sleep(2 * time.Second)
 	}
 
@@ -109,14 +125,19 @@ func initGrpcClient(addr string) *SeckillServiceClient {
 	if err != nil {
 		log.Fatalf("连接 gRPC 服务器失败: %v", err)
 	}
-
-	client := seckill.NewSeckillServiceClient(conn)
-	fmt.Println("[OK] gRPC 客户端连接成功")
-
 	return &SeckillServiceClient{
 		conn:   conn,
-		client: client,
+		client: seckill.NewSeckillServiceClient(conn),
 	}
+}
+
+func initGrpcPool(addr string, size int) *ConnectionPool {
+	clients := make([]*SeckillServiceClient, size)
+	for i := range clients {
+		clients[i] = initGrpcClient(addr)
+	}
+	fmt.Printf("[OK] gRPC 连接池初始化完成 (size=%d)\n", size)
+	return &ConnectionPool{clients: clients}
 }
 
 // Redis 操作函数
@@ -156,7 +177,7 @@ func setSeckillProductInfo(ctx context.Context, seckillProductId, productId, pri
 }
 
 // runBenchmark 运行单个压测场景
-func runBenchmark(client *SeckillServiceClient, scenario struct {
+func runBenchmark(client *ConnectionPool, scenario struct {
 	name          string
 	productId     int64
 	totalRequests int64

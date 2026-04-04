@@ -85,6 +85,20 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 	}
 
+	// 懒初始化本地库存计数器（首次请求时从 Redis 同步库存）
+	_, _ = l.svcCtx.Redis.GetOrInitLocalStock(l.ctx, in.SeckillProductId)
+
+	// 本地原子计数器预过滤：库存耗尽时快速拒绝，不打 Redis（纳秒级）
+	remaining := l.svcCtx.Redis.DecrLocalStock(in.SeckillProductId, quantity)
+	if remaining < 0 {
+		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+		return &seckill.SeckillResponse{
+			Success: false,
+			Code:    SeckillCodeSoldOut,
+			Message: "商品已售罄",
+		}, nil
+	}
+
 	// 生成订单号
 	orderId := utils.GenerateOrderId(OrderIdPrefix)
 
@@ -140,7 +154,8 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultStockNotEnough:
-		// 库存不足
+		// Redis 是权威来源，说明本地计数器与 Redis 存在短暂偏差，回滚本地计数
+		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
 		l.Logger.Infof("秒杀库存不足: userId=%d, seckillProductId=%d, remainingStock=%d",
 			in.UserId, in.SeckillProductId, result.Stock)
 		return &seckill.SeckillResponse{
