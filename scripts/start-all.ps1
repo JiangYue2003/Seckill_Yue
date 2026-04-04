@@ -139,10 +139,10 @@ if (-not $infraOk) {
 Write-ColorOutput "`n[START] Launching RPC services...`n" "White"
 
 $services = @(
-    @{ Name = "user-service";    Dir = Join-Path $BASE_DIR "user-service";    ExeName = "user-service.exe";    Port = 8081 },
-    @{ Name = "product-service"; Dir = Join-Path $BASE_DIR "product-service"; ExeName = "product-service.exe"; Port = 8082 },
-    @{ Name = "seckill-service"; Dir = Join-Path $BASE_DIR "seckill-service"; ExeName = "seckill-service.exe"; Port = 8083 },
-    @{ Name = "order-service";  Dir = Join-Path $BASE_DIR "order-service";   ExeName = "order-service.exe";   Port = 8084 }
+    @{ Name = "user-service";    Dir = Join-Path $BASE_DIR "user-service";    ExeName = "user-service.exe";    Port = 9081 },
+    @{ Name = "product-service"; Dir = Join-Path $BASE_DIR "product-service"; ExeName = "product-service.exe"; Port = 9082 },
+    @{ Name = "seckill-service"; Dir = Join-Path $BASE_DIR "seckill-service"; ExeName = "seckill-service.exe"; Port = 9083 },
+    @{ Name = "order-service";  Dir = Join-Path $BASE_DIR "order-service";   ExeName = "order-service.exe";   Port = 9084 }
 )
 
 $runningProcesses = @()
