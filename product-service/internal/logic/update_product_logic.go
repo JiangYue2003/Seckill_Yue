@@ -71,6 +71,11 @@ func (l *UpdateProductLogic) UpdateProduct(in *product.UpdateProductRequest) (*p
 		return nil, errors.New("更新商品失败，请稍后重试")
 	}
 
+	// 主动失效缓存，保证下次读取到最新数据
+	if l.svcCtx.SeckillRedis != nil {
+		_ = l.svcCtx.SeckillRedis.DeleteProductCache(l.ctx, in.Id)
+	}
+
 	l.Logger.Infof("商品更新成功: productId=%d", in.Id)
 
 	return &product.BoolResponse{

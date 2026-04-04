@@ -6,6 +6,7 @@ import (
 	redisutil "seckill-mall/product-service/internal/redis"
 
 	"github.com/zeromicro/go-zero/core/logx"
+	"github.com/zeromicro/go-zero/core/syncx"
 )
 
 type ServiceContext struct {
@@ -14,6 +15,7 @@ type ServiceContext struct {
 	SeckillProductModel model.SeckillProductModel
 	StockLogModel       model.StockLogModel
 	SeckillRedis        *redisutil.SeckillRedis
+	SF                  syncx.SingleFlight // 防缓存击穿：同一商品并发只查一次DB
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -47,5 +49,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		SeckillProductModel: seckillProductModel,
 		StockLogModel:       stockLogModel,
 		SeckillRedis:        seckillRedis,
+		SF:                  syncx.NewSingleFlight(),
 	}
 }

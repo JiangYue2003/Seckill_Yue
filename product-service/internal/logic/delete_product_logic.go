@@ -48,6 +48,11 @@ func (l *DeleteProductLogic) DeleteProduct(in *product.IdRequest) (*product.Bool
 		return nil, errors.New("删除商品失败，请稍后重试")
 	}
 
+	// 主动失效缓存
+	if l.svcCtx.SeckillRedis != nil {
+		_ = l.svcCtx.SeckillRedis.DeleteProductCache(l.ctx, in.Id)
+	}
+
 	l.Logger.Infof("商品删除成功: productId=%d", in.Id)
 
 	return &product.BoolResponse{

@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"time"
 
@@ -80,6 +81,49 @@ func (r *SeckillRedis) DeleteSeckillProduct(ctx context.Context, seckillProductI
 		KeyPrefixSeckillProductName + idStr,
 	}
 	return r.client.Del(ctx, keys...).Err()
+}
+
+// ========== 普通商品缓存 ==========
+
+const (
+	KeyPrefixProductDetail = "product:detail:" // 商品详情缓存 key 前缀
+	ProductCacheBaseTTL    = 3600              // 基础TTL: 1小时(秒)
+	ProductCacheJitter     = 600               // 随机抖动范围: 0~600s，防雪崩
+	ProductCacheNullTTL    = 60                // 空值缓存TTL: 60s，防穿透
+	ProductCacheNullValue  = "null"            // 空值标记（表示DB中确认不存在）
+)
+
+// GetProductCache 读商品缓存
+// 返回 (value, found, err)：found=false 表示 cache miss；value="null" 表示已确认不存在
+func (r *SeckillRedis) GetProductCache(ctx context.Context, productId int64) (string, bool, error) {
+	key := KeyPrefixProductDetail + strconv.FormatInt(productId, 10)
+	val, err := r.client.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", false, nil // cache miss
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return val, true, nil
+}
+
+// SetProductCache 写商品缓存，TTL = BaseTTL + rand jitter，防缓存雪崩
+func (r *SeckillRedis) SetProductCache(ctx context.Context, productId int64, jsonValue string) error {
+	key := KeyPrefixProductDetail + strconv.FormatInt(productId, 10)
+	ttl := time.Duration(ProductCacheBaseTTL+rand.Intn(ProductCacheJitter)) * time.Second
+	return r.client.Set(ctx, key, jsonValue, ttl).Err()
+}
+
+// SetProductCacheNull 缓存空值标记，防缓存穿透（短TTL）
+func (r *SeckillRedis) SetProductCacheNull(ctx context.Context, productId int64) error {
+	key := KeyPrefixProductDetail + strconv.FormatInt(productId, 10)
+	return r.client.Set(ctx, key, ProductCacheNullValue, ProductCacheNullTTL*time.Second).Err()
+}
+
+// DeleteProductCache 删除商品缓存（写操作后主动失效）
+func (r *SeckillRedis) DeleteProductCache(ctx context.Context, productId int64) error {
+	key := KeyPrefixProductDetail + strconv.FormatInt(productId, 10)
+	return r.client.Del(ctx, key).Err()
 }
 
 // Close 关闭连接
