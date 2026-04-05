@@ -55,7 +55,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		return err
 	}
 	if exists {
-		logger.Infof("订单已存在，跳过处理: orderId=%s", msg.OrderId)
+		logger.Debugf("订单已存在，跳过处理: orderId=%s", msg.OrderId)
 		return nil
 	}
 
@@ -78,7 +78,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 			logger.Errorf("扣减物理库存失败: orderId=%s, err=%v", msg.OrderId, err)
 			return err
 		}
-		logger.Infof("扣减物理库存成功: orderId=%s, productId=%d, quantity=%d",
+		logger.Debugf("扣减物理库存成功: orderId=%s, productId=%d, quantity=%d",
 			msg.OrderId, msg.ProductId, msg.Quantity)
 	}
 
@@ -110,11 +110,11 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 			return rpcErr
 			// logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
 		} else {
-			logger.Infof("Redis 订单状态已更新为 success: orderId=%s", msg.OrderId)
+			logger.Debugf("Redis 订单状态已更新为 success: orderId=%s", msg.OrderId)
 		}
 	}
 
-	logger.Infof("秒杀订单创建成功: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
+	logger.Debugf("秒杀订单创建成功: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
 	return nil
 }
 
@@ -125,7 +125,7 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
 
-	logger.Infof("超时兜底检查触发: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
+	logger.Debugf("超时兜底检查触发: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
 
 	// 查询 MySQL 订单状态（权威来源）
 	_, err := s.orderModel.FindOneByOrderId(ctx, msg.OrderId)
@@ -136,7 +136,7 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 
 	// 订单已在 MySQL 中创建 → ProcessSeckillOrder 曾经成功执行到建单步骤，无需回滚
 	if err == nil {
-		logger.Infof("订单已创建，超时检查跳过: orderId=%s", msg.OrderId)
+		logger.Debugf("订单已创建，超时检查跳过: orderId=%s", msg.OrderId)
 		return nil
 	}
 
@@ -160,7 +160,7 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 		}
 	}
 
-	logger.Infof("超时兜底处理完成: orderId=%s", msg.OrderId)
+	logger.Debugf("超时兜底处理完成: orderId=%s", msg.OrderId)
 	return nil // 总是 Ack，避免无限重试（已记录日志，人工处理残留问题）
 }
 
@@ -188,7 +188,7 @@ func (s *OrderService) RollbackSeckillOrder(ctx context.Context, orderId string,
 			logger.Errorf("回滚物理库存失败: orderId=%s, err=%v", orderId, err)
 			return err
 		}
-		logger.Infof("回滚物理库存成功: orderId=%s, productId=%d, quantity=%d",
+		logger.Debugf("回滚物理库存成功: orderId=%s, productId=%d, quantity=%d",
 			orderId, productId, quantity)
 	}
 
@@ -211,6 +211,6 @@ func (s *OrderService) CreateNormalOrder(ctx context.Context, userId, productId,
 		}
 	}
 
-	logger.Infof("普通订单库存扣减成功: orderId=%s, productId=%d, quantity=%d", orderId, productId, quantity)
+	logger.Debugf("普通订单库存扣减成功: orderId=%s, productId=%d, quantity=%d", orderId, productId, quantity)
 	return nil
 }

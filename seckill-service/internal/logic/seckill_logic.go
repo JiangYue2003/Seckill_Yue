@@ -145,7 +145,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 	case redis.LuaResultAlreadyBought:
 		// 用户已购买过该秒杀商品
-		l.Logger.Infof("用户已购买过该商品: userId=%d, seckillProductId=%d",
+		l.Logger.Debugf("用户已购买过该商品: userId=%d, seckillProductId=%d",
 			in.UserId, in.SeckillProductId)
 		return &seckill.SeckillResponse{
 			Success: false,
@@ -156,7 +156,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	case redis.LuaResultStockNotEnough:
 		// Redis 是权威来源，说明本地计数器与 Redis 存在短暂偏差，回滚本地计数
 		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
-		l.Logger.Infof("秒杀库存不足: userId=%d, seckillProductId=%d, remainingStock=%d",
+		l.Logger.Debugf("秒杀库存不足: userId=%d, seckillProductId=%d, remainingStock=%d",
 			in.UserId, in.SeckillProductId, result.Stock)
 		return &seckill.SeckillResponse{
 			Success: false,
@@ -167,7 +167,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	case redis.LuaResultSuccess:
 		// 秒杀成功，异步发送 RabbitMQ 消息（不阻塞用户响应）
 		// 注意：异步模式下 MQ 投递失败不再触发同步回滚，依赖 UserPreemptTTL（300s）自动兜底
-		l.Logger.Infof("秒杀成功，准备异步发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
+		l.Logger.Debugf("秒杀成功，准备异步发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
 
 		amount := seckillPrice * quantity
@@ -208,7 +208,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			l.Logger.Errorf("设置订单状态失败: orderId=%s, err=%v", orderId, setErr)
 		}
 
-		l.Logger.Infof("秒杀成功: userId=%d, seckillProductId=%d, orderId=%s",
+		l.Logger.Debugf("秒杀成功: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
 
 		return &seckill.SeckillResponse{

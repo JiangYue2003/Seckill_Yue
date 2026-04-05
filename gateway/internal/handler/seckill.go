@@ -25,7 +25,7 @@ func NewSeckillHandler(svc seckill.SeckillServiceClient) *SeckillHandler {
 
 // SeckillRequest 秒杀请求
 type SeckillRequest struct {
-	SeckillProductId int64 `json:"seckillProductId" binding:"required"`
+	SeckillProductId int64 `json:"seckillProductId"`
 	Quantity         int64 `json:"quantity" binding:"min=1"`
 }
 
@@ -38,16 +38,34 @@ func (h *SeckillHandler) Seckill(c *gin.Context) {
 	}
 
 	var req SeckillRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, "参数错误: "+err.Error())
-		return
+
+	// 优先从 query 取 seckillProductId（限流中间件也走 query，避免 body 被解析两次）
+	if pidStr := c.Query("seckillProductId"); pidStr != "" {
+		if pid, err := strconv.ParseInt(pidStr, 10, 64); err == nil {
+			req.SeckillProductId = pid
+		}
 	}
 
+	// 解析 body（quantity 必须从 body 取；seckillProductId 未从 query 取到时也从 body 取）
+	var bodyReq SeckillRequest
+	if err := c.ShouldBindJSON(&bodyReq); err == nil {
+		if req.SeckillProductId == 0 {
+			req.SeckillProductId = bodyReq.SeckillProductId
+		}
+		if bodyReq.Quantity > 0 {
+			req.Quantity = bodyReq.Quantity
+		}
+	}
+
+	if req.SeckillProductId <= 0 {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, "参数错误: seckillProductId 不能为空")
+		return
+	}
 	if req.Quantity <= 0 {
 		req.Quantity = 1
 	}
 
-	logx.Infof("秒杀请求: userId=%d, seckillProductId=%d, quantity=%d",
+	logx.Debugf("秒杀请求: userId=%d, seckillProductId=%d, quantity=%d",
 		userId, req.SeckillProductId, req.Quantity)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
@@ -86,7 +104,7 @@ func (h *SeckillHandler) GetSeckillStatus(c *gin.Context) {
 		return
 	}
 
-	logx.Infof("查询秒杀状态: userId=%d, seckillProductId=%d", userId, seckillProductId)
+	logx.Debugf("查询秒杀状态: userId=%d, seckillProductId=%d", userId, seckillProductId)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
@@ -117,7 +135,7 @@ func (h *SeckillHandler) GetSeckillResult(c *gin.Context) {
 		return
 	}
 
-	logx.Infof("查询秒杀结果: orderId=%s", orderId)
+	logx.Debugf("查询秒杀结果: orderId=%s", orderId)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
