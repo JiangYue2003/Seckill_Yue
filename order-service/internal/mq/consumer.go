@@ -33,6 +33,7 @@ const (
 	OrderCheckDelayMs  = 300000           // 延迟队列TTL: 5分钟（毫秒）
 	consumerReconnBase = time.Second      // 消费者重连基础等待
 	consumerReconnMax  = 30 * time.Second // 消费者重连最大等待
+	workerPoolSize     = 50               // 并发消费 worker 数量
 )
 
 // SeckillOrderMessage 秒杀成功消息
@@ -110,7 +111,7 @@ func (c *Consumer) setupConnection() error {
 		return err
 	}
 
-	if err = ch.Qos(10, 0, false); err != nil {
+	if err = ch.Qos(workerPoolSize, 0, false); err != nil {
 		ch.Close()
 		conn.Close()
 		return fmt.Errorf("failed to set QoS: %w", err)
@@ -209,9 +210,9 @@ func (c *Consumer) Start() error {
 func (c *Consumer) consume() {
 	defer c.wg.Done()
 	backoff := consumerReconnBase
+	semaphore := make(chan struct{}, workerPoolSize) // 控制最大并发数
 
 	for {
-		// 检查是否已请求关闭
 		select {
 		case <-c.ctx.Done():
 			logx.Infof("Consumer stopping: queue=%s", c.queueName)
@@ -226,7 +227,7 @@ func (c *Consumer) consume() {
 			continue
 		}
 
-		backoff = consumerReconnBase // 注册成功，退避重置
+		backoff = consumerReconnBase
 		logx.Infof("Consumer 开始消费: queue=%s", c.queueName)
 
 	innerLoop:
@@ -243,7 +244,12 @@ func (c *Consumer) consume() {
 					c.reconnect(&backoff)
 					break innerLoop
 				}
-				c.handleMessage(msg)
+				// 获取 semaphore slot，控制并发上限
+				semaphore <- struct{}{}
+				go func(m amqp091.Delivery) {
+					defer func() { <-semaphore }()
+					c.handleMessage(m)
+				}(msg)
 			}
 		}
 	}

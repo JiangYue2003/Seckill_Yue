@@ -64,10 +64,18 @@ func NewAsyncProducer(producer *Producer, bufferSize, workerCount, retryCount, r
 	return p
 }
 
-// SendDelayOrder 发送延迟兜底消息（直接投递，不走缓冲 channel）
-// 延迟消息低频（每次秒杀成功1条），不需要异步缓冲
+// SendDelayOrder 异步发送延迟兜底消息（写入 buffer channel，不阻塞关键路径）
 func (p *AsyncProducer) SendDelayOrder(ctx context.Context, msg *SeckillOrderMessage) error {
-	return p.producer.SendDelayOrder(ctx, msg)
+	// 复制一份，打上 delay 标记，避免修改原始消息
+	delayMsg := *msg
+	delayMsg.IsDelay = true
+	select {
+	case p.channel <- &delayMsg:
+		return nil
+	default:
+		logx.Errorf("AsyncProducer delay buffer full, message dropped: orderId=%s", msg.OrderId)
+		return &BufferFullError{OrderId: msg.OrderId, BufferSize: p.bufferSize}
+	}
 }
 
 // SendAsync 异步投递消息，立即返回不阻塞
@@ -130,7 +138,12 @@ func (p *AsyncProducer) sendWithRetry(msg *SeckillOrderMessage) {
 			time.Sleep(backoff)
 		}
 
-		if err := p.producer.SendSeckillOrder(context.Background(), msg); err != nil {
+		if err := func() error {
+			if msg.IsDelay {
+				return p.producer.SendDelayOrder(context.Background(), msg)
+			}
+			return p.producer.SendSeckillOrder(context.Background(), msg)
+		}(); err != nil {
 			lastErr = err
 			logx.Errorf("AsyncProducer send failed: orderId=%s, attempt=%d/%d, err=%v",
 				msg.OrderId, attempt+1, p.retryCount, err)
