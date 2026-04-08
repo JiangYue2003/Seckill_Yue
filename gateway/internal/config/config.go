@@ -2,6 +2,7 @@ package config
 
 import (
 	"github.com/zeromicro/go-zero/core/stores/cache"
+	"github.com/zeromicro/go-zero/core/trace"
 	"github.com/zeromicro/go-zero/zrpc"
 )
 
@@ -33,6 +34,9 @@ type Config struct {
 
 	// 限流配置
 	RateLimit RateLimitConfig `json:"rateLimit"`
+
+	// 链路追踪配置
+	Telemetry trace.Config `json:"telemetry"`
 
 	// gRPC 服务（通过 etcd 服务发现）
 	UserService    zrpc.RpcClientConf `json:"userService"`

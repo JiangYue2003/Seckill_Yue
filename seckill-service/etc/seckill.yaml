@@ -6,6 +6,19 @@ Etcd:
     - 127.0.0.1:2379
   Key: seckill.rpc
 
+# 链路追踪（上报到 Jaeger OTLP gRPC）
+Telemetry:
+  Name: seckill.rpc
+  Endpoint: localhost:4317
+  Sampler: 0.1
+  Batcher: otlpgrpc
+
+# Prometheus 指标暴露
+Prometheus:
+  Host: 0.0.0.0
+  Port: 9183
+  Path: /metrics
+
 Redis:
   Host: localhost:6379
   Key: seckill.rpc.auth

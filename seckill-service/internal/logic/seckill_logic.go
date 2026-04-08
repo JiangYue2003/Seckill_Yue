@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"seckill-mall/common/utils"
+	"seckill-mall/seckill-service/internal/metrics"
 	"seckill-mall/seckill-service/internal/mq"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
@@ -53,8 +54,16 @@ func NewSeckillLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SeckillLo
 // 2. 通过 Redis Lua 脚本原子性完成"校验库存+用户防重+预扣减库存"
 // 3. 成功后，将抢购成功消息 Push 到 RabbitMQ，立即返回响应
 func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResponse, error) {
+	start := time.Now()
+	resultLabel := "system_error"
+	defer func() {
+		metrics.SeckillRequestsTotal.WithLabelValues(resultLabel).Inc()
+		metrics.SeckillRequestDurationSeconds.WithLabelValues(resultLabel).Observe(time.Since(start).Seconds())
+	}()
+
 	// ========== 参数校验 ==========
 	if in.UserId <= 0 {
+		resultLabel = "invalid_user"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSystemError,
@@ -62,6 +71,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 	}
 	if in.SeckillProductId <= 0 {
+		resultLabel = "invalid_product"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSystemError,
@@ -78,6 +88,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	// 从 Redis 获取秒杀商品信息（含时间范围）
 	productId, seckillPrice, productName, startTime, endTime := l.getSeckillProductInfo(l.ctx, in.SeckillProductId)
 	if productId == 0 && seckillPrice == 0 {
+		resultLabel = "product_not_found"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSystemError,
@@ -92,6 +103,8 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	remaining := l.svcCtx.Redis.DecrLocalStock(in.SeckillProductId, quantity)
 	if remaining < 0 {
 		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+		metrics.SeckillLocalStockRejectTotal.Inc()
+		resultLabel = "sold_out_local"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSoldOut,
@@ -120,6 +133,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	if err != nil {
 		l.Logger.Errorf("执行秒杀失败: userId=%d, seckillProductId=%d, err=%v",
 			in.UserId, in.SeckillProductId, err)
+		resultLabel = "redis_error"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSystemError,
@@ -130,6 +144,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	// ========== 处理秒杀结果 ==========
 	switch result.Code {
 	case redis.LuaResultNotStarted:
+		resultLabel = "not_started"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeNotStarted,
@@ -137,6 +152,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultEnded:
+		resultLabel = "ended"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeEnded,
@@ -147,6 +163,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		// 用户已购买过该秒杀商品
 		l.Logger.Debugf("用户已购买过该商品: userId=%d, seckillProductId=%d",
 			in.UserId, in.SeckillProductId)
+		resultLabel = "already_purchased"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeAlreadyPurchased,
@@ -158,6 +175,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
 		l.Logger.Debugf("秒杀库存不足: userId=%d, seckillProductId=%d, remainingStock=%d",
 			in.UserId, in.SeckillProductId, result.Stock)
+		resultLabel = "sold_out"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSoldOut,
@@ -186,15 +204,21 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 		// 发送延迟兜底消息（5分钟后检查订单是否仍 pending，非致命）
 		if delayErr := l.svcCtx.AsyncProducer.SendDelayOrder(l.ctx, seckillMsg); delayErr != nil {
+			metrics.SeckillMQEnqueueTotal.WithLabelValues("delay", "failed").Inc()
 			l.Logger.Errorf("发送延迟检查消息失败（非致命，TTL兜底）: orderId=%s, err=%v", orderId, delayErr)
+		} else {
+			metrics.SeckillMQEnqueueTotal.WithLabelValues("delay", "ok").Inc()
 		}
 
 		// 异步投递消息，立即返回（不等待 MQ 确认）
 		if err := l.svcCtx.AsyncProducer.SendAsync(l.ctx, seckillMsg); err != nil {
+			metrics.SeckillMQEnqueueTotal.WithLabelValues("async", "failed").Inc()
 			// 缓冲区满，说明系统严重过载（Channel 积压超过阈值）
 			// 此时 Lua 已扣减库存，但无法异步投递消息，降级处理：
 			// 不触发库存回滚（避免雪崩），依赖 UserPreemptTTL 300s 自然归还
 			l.Logger.Errorf("异步MQ缓冲区满，降级处理（库存依赖TTL自然归还）: orderId=%s, err=%v", orderId, err)
+		} else {
+			metrics.SeckillMQEnqueueTotal.WithLabelValues("async", "ok").Inc()
 		}
 
 		// 设置订单状态为处理中（存储完整订单信息用于后续查询）
@@ -210,6 +234,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 		l.Logger.Debugf("秒杀成功: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
+		resultLabel = "success"
 
 		return &seckill.SeckillResponse{
 			Success: true,
@@ -220,6 +245,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 	default:
 		l.Logger.Errorf("未知的秒杀结果: code=%d", result.Code)
+		resultLabel = "unknown_result"
 		return &seckill.SeckillResponse{
 			Success: false,
 			Code:    SeckillCodeSystemError,

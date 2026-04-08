@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zeromicro/go-zero/core/conf"
+	goprometheus "github.com/zeromicro/go-zero/core/prometheus"
+	"github.com/zeromicro/go-zero/core/trace"
 )
 
 var configFile = flag.String("f", "etc/gateway.yaml", "the config file")
@@ -21,6 +23,19 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+
+	// 初始化链路追踪（上报到 Jaeger）
+	if !c.Telemetry.Disabled {
+		trace.StartAgent(c.Telemetry)
+		defer trace.StopAgent()
+	}
+
+	// 初始化 Prometheus 指标暴露（/metrics 端口 9180）
+	goprometheus.StartAgent(goprometheus.Config{
+		Host: "0.0.0.0",
+		Port: 9180,
+		Path: "/metrics",
+	})
 
 	// 初始化 gRPC 客户端
 	clients, err := client.NewClientManager(c)

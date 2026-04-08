@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Gateway（Gin HTTP，单独暴露 /metrics）
+  - job_name: 'gateway'
+    static_configs:
+      - targets: ['host.docker.internal:9180']
+
+  # User Service（gRPC，go-zero 内置 Prometheus）
+  - job_name: 'user-service'
+    static_configs:
+      - targets: ['host.docker.internal:9181']
+
+  # Product Service
+  - job_name: 'product-service'
+    static_configs:
+      - targets: ['host.docker.internal:9182']
+
+  # Seckill Service（核心服务，重点监控）
+  - job_name: 'seckill-service'
+    static_configs:
+      - targets: ['host.docker.internal:9183']
+
+  # Order Service
+  - job_name: 'order-service'
+    static_configs:
+      - targets: ['host.docker.internal:9184']

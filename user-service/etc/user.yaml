@@ -6,6 +6,19 @@ Etcd:
   - 127.0.0.1:2379
   Key: user.rpc
 
+# 链路追踪
+Telemetry:
+  Name: user.rpc
+  Endpoint: localhost:4317
+  Sampler: 0.1
+  Batcher: otlpgrpc
+
+# Prometheus 指标暴露
+Prometheus:
+  Host: 0.0.0.0
+  Port: 9181
+  Path: /metrics
+
 MySQL:
   DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
 

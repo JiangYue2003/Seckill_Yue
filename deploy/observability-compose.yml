@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # ============================================================
+  # Prometheus 指标采集
+  # ============================================================
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: seckill-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - observability
+
+  # ============================================================
+  # Grafana 可视化面板
+  # ============================================================
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: seckill-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - observability
+
+  # ============================================================
+  # Jaeger 分布式链路追踪
+  # ============================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.48
+    container_name: seckill-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC 接收端口
+      - "4318:4318"    # OTLP HTTP 接收端口
+      - "14268:14268"  # Jaeger Agent HTTP 接收
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: badger
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_KEY: /badger/key
+      BADGER_DIRECTORY_VALUE: /badger/value
+    volumes:
+      - jaeger_data:/badger
+    networks:
+      - observability
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  jaeger_data:
+
+networks:
+  observability:
+    driver: bridge

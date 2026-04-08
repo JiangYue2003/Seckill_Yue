@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"seckill-mall/order-service/internal/metrics"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/mq"
@@ -47,15 +48,23 @@ func (s *OrderService) SetSeckillServiceRPC(svc *rpc.SeckillServiceClient) {
 func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
+	start := time.Now()
+	resultLabel := "failed"
+	defer func() {
+		metrics.OrderSeckillProcessTotal.WithLabelValues(resultLabel).Inc()
+		metrics.OrderSeckillProcessDurationSeconds.WithLabelValues(resultLabel).Observe(time.Since(start).Seconds())
+	}()
 
 	// ========== 1. 幂等性校验 ==========
 	exists, err := s.orderModel.CheckIdempotency(ctx, msg.OrderId)
 	if err != nil {
 		logger.Errorf("检查幂等性失败: orderId=%s, err=%v", msg.OrderId, err)
+		resultLabel = "idempotency_error"
 		return err
 	}
 	if exists {
 		logger.Debugf("订单已存在，跳过处理: orderId=%s", msg.OrderId)
+		resultLabel = "idempotent_skip"
 		return nil
 	}
 
@@ -76,6 +85,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	if s.productSvcRPC != nil {
 		if err := s.productSvcRPC.DeductStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); err != nil {
 			logger.Errorf("扣减物理库存失败: orderId=%s, err=%v", msg.OrderId, err)
+			resultLabel = "deduct_stock_error"
 			return err
 		}
 		logger.Debugf("扣减物理库存成功: orderId=%s, productId=%d, quantity=%d",
@@ -100,6 +110,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 
 	if err := s.orderModel.Insert(ctx, order); err != nil {
 		logger.Errorf("创建订单失败: orderId=%s, err=%v", msg.OrderId, err)
+		resultLabel = "create_order_error"
 		return err
 	}
 
@@ -107,6 +118,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	// 即使 RPC 失败，订单已在 MySQL 中持久化，前端轮询时会查询 DB 确认
 	if s.seckillSvcRPC != nil {
 		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "success"); rpcErr != nil {
+			resultLabel = "update_status_error"
 			return rpcErr
 			// logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
 		} else {
@@ -115,6 +127,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	}
 
 	logger.Debugf("秒杀订单创建成功: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
+	resultLabel = "success"
 	return nil
 }
 
@@ -124,6 +137,10 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
+	timeoutResult := "unknown"
+	defer func() {
+		metrics.OrderSeckillTimeoutTotal.WithLabelValues(timeoutResult).Inc()
+	}()
 
 	logger.Debugf("超时兜底检查触发: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
 
@@ -131,12 +148,14 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	_, err := s.orderModel.FindOneByOrderId(ctx, msg.OrderId)
 	if err != nil && !errors.Is(err, model.ErrNotFound) {
 		logger.Errorf("查询订单状态失败: orderId=%s, err=%v", msg.OrderId, err)
+		timeoutResult = "query_error"
 		return err // 返回 error → Nack → DLX（可能是临时故障，走死信队列人工处理）
 	}
 
 	// 订单已在 MySQL 中创建 → ProcessSeckillOrder 曾经成功执行到建单步骤，无需回滚
 	if err == nil {
 		logger.Debugf("订单已创建，超时检查跳过: orderId=%s", msg.OrderId)
+		timeoutResult = "skip_existing"
 		return nil
 	}
 
@@ -147,6 +166,7 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	if s.seckillSvcRPC != nil {
 		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "failed"); rpcErr != nil {
 			logger.Errorf("更新Redis订单状态失败: orderId=%s, err=%v", msg.OrderId, rpcErr)
+			timeoutResult = "redis_update_failed"
 			// 非致命，继续回滚库存
 		}
 	}
@@ -156,11 +176,15 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 		if rpcErr := s.productSvcRPC.RollbackStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); rpcErr != nil {
 			logger.Errorf("回滚物理库存失败: orderId=%s, productId=%d, err=%v",
 				msg.OrderId, msg.ProductId, rpcErr)
+			timeoutResult = "rollback_failed"
 			// 非致命，记录日志供人工处理
 		}
 	}
 
 	logger.Debugf("超时兜底处理完成: orderId=%s", msg.OrderId)
+	if timeoutResult == "unknown" {
+		timeoutResult = "compensated_ok"
+	}
 	return nil // 总是 Ack，避免无限重试（已记录日志，人工处理残留问题）
 }
 

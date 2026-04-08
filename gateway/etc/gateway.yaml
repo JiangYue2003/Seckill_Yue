@@ -2,6 +2,13 @@ Name: gateway
 Host: 0.0.0.0
 Port: 8888
 
+# 链路追踪（上报到 Jaeger OTLP gRPC）
+Telemetry:
+  Name: gateway
+  Endpoint: localhost:4317
+  Sampler: 0.1
+  Batcher: otlpgrpc
+
 JWT:
   AccessSecret: seckill-mall-jwt-secret-key-2026
   AccessExpire: 900
