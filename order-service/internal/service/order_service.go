@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"seckill-mall/order-service/internal/batch"
 	"seckill-mall/order-service/internal/metrics"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/model/entity"
@@ -20,12 +21,14 @@ type OrderService struct {
 	seckillOrderModel model.SeckillOrderModel
 	productSvcRPC     *rpc.ProductServiceClient
 	seckillSvcRPC     *rpc.SeckillServiceClient
+	batchWriter       *batch.BatchWriter
 }
 
-func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.SeckillOrderModel) *OrderService {
+func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.SeckillOrderModel, batchWriter *batch.BatchWriter) *OrderService {
 	return &OrderService{
 		orderModel:        orderModel,
 		seckillOrderModel: seckillOrderModel,
+		batchWriter:       batchWriter,
 	}
 }
 
@@ -42,9 +45,8 @@ func (s *OrderService) SetSeckillServiceRPC(svc *rpc.SeckillServiceClient) {
 // ProcessSeckillOrder 处理秒杀订单
 // 职责边界：
 // 1. 消费秒杀成功消息，基于 order_id 做幂等性校验
-// 2. 写入 seckill_orders 表（用户秒杀购买记录）
-// 3. 调用 Product-Service 扣减物理库存
-// 4. 将订单持久化到 MySQL
+// 2. 调用 Product-Service 扣减物理库存
+// 3. 将订单加入批量写入缓冲区（异步写入 MySQL）
 func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
@@ -68,20 +70,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		return nil
 	}
 
-	// ========== 2. 写入秒杀购买记录 ==========
-	seckillRecord := &entity.SeckillOrder{
-		UserId:           msg.UserId,
-		SeckillProductId: msg.SeckillProductId,
-		OrderId:          msg.OrderId,
-		Quantity:         int(msg.Quantity),
-		CreatedAt:        time.Now().Unix(),
-	}
-	if err := s.seckillOrderModel.Insert(ctx, seckillRecord); err != nil {
-		logger.Errorf("写入秒杀购买记录失败: orderId=%s, err=%v", msg.OrderId, err)
-		// 不阻塞，继续处理
-	}
-
-	// ========== 3. 调用 Product-Service 扣减物理库存 ==========
+	// ========== 2. 调用 Product-Service 扣减物理库存（同步，必须成功）==========
 	if s.productSvcRPC != nil {
 		if err := s.productSvcRPC.DeductStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); err != nil {
 			logger.Errorf("扣减物理库存失败: orderId=%s, err=%v", msg.OrderId, err)
@@ -92,7 +81,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 			msg.OrderId, msg.ProductId, msg.Quantity)
 	}
 
-	// ========== 4. 创建订单 ==========
+	// ========== 3. 构造订单对象 ==========
 	now := time.Now().Unix()
 	order := &entity.Order{
 		OrderId:      msg.OrderId,
@@ -108,25 +97,39 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		UpdatedAt:    now,
 	}
 
-	if err := s.orderModel.Insert(ctx, order); err != nil {
-		logger.Errorf("创建订单失败: orderId=%s, err=%v", msg.OrderId, err)
-		resultLabel = "create_order_error"
-		return err
+	seckillRecord := &entity.SeckillOrder{
+		UserId:           msg.UserId,
+		SeckillProductId: msg.SeckillProductId,
+		OrderId:          msg.OrderId,
+		Quantity:         int(msg.Quantity),
+		CreatedAt:        now,
 	}
 
-	// ========== 5. 回写 Redis 订单状态为 success ==========
-	// 即使 RPC 失败，订单已在 MySQL 中持久化，前端轮询时会查询 DB 确认
+	// ========== 4. 加入批量写入缓冲区（异步）==========
+	if s.batchWriter != nil {
+		s.batchWriter.AddOrder(order, seckillRecord)
+	} else {
+		// 降级：BatchWriter 未初始化时，回退到同步写入
+		if err := s.orderModel.Insert(ctx, order); err != nil {
+			logger.Errorf("创建订单失败: orderId=%s, err=%v", msg.OrderId, err)
+			resultLabel = "create_order_error"
+			return err
+		}
+		if err := s.seckillOrderModel.Insert(ctx, seckillRecord); err != nil {
+			logger.Errorf("写入秒杀购买记录失败: orderId=%s, err=%v", msg.OrderId, err)
+		}
+	}
+
+	// ========== 5. 回写 Redis 订单状态为 success（降级：失败只记录日志）==========
 	if s.seckillSvcRPC != nil {
 		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "success"); rpcErr != nil {
-			resultLabel = "update_status_error"
-			return rpcErr
-			// logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
+			logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
 		} else {
 			logger.Debugf("Redis 订单状态已更新为 success: orderId=%s", msg.OrderId)
 		}
 	}
 
-	logger.Debugf("秒杀订单创建成功: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
+	logger.Debugf("秒杀订单处理成功（已加入批量写入队列）: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
 	resultLabel = "success"
 	return nil
 }

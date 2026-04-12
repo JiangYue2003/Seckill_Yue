@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -24,6 +25,9 @@ type OrderModel interface {
 
 	// Insert 创建订单
 	Insert(ctx context.Context, order *entity.Order) error
+
+	// BatchInsert 批量插入订单（幂等）
+	BatchInsert(ctx context.Context, orders []*entity.Order) (int64, error)
 
 	// Update 更新订单
 	Update(ctx context.Context, order *entity.Order) error
@@ -109,6 +113,18 @@ func (m *orderModel) FindByUserId(ctx context.Context, userId int64, status int3
 // Insert 创建订单
 func (m *orderModel) Insert(ctx context.Context, order *entity.Order) error {
 	return m.db.WithContext(ctx).Create(order).Error
+}
+
+// BatchInsert 批量插入订单（幂等）
+// 使用 INSERT IGNORE 语法，遇到重复 order_id 自动跳过
+func (m *orderModel) BatchInsert(ctx context.Context, orders []*entity.Order) (int64, error) {
+	if len(orders) == 0 {
+		return 0, nil
+	}
+
+	// MySQL 使用 INSERT IGNORE，遇到主键冲突跳过
+	result := m.db.WithContext(ctx).Clauses(clause.Insert{Modifier: "IGNORE"}).Create(orders)
+	return result.RowsAffected, result.Error
 }
 
 // Update 更新订单

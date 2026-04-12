@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -18,6 +19,9 @@ import (
 type SeckillOrderModel interface {
 	// Insert 创建秒杀订单记录
 	Insert(ctx context.Context, record *entity.SeckillOrder) error
+
+	// BatchInsert 批量插入秒杀订单记录
+	BatchInsert(ctx context.Context, records []*entity.SeckillOrder) error
 
 	// FindByUserAndSeckillProduct 根据用户ID和秒杀商品ID查询
 	FindByUserAndSeckillProduct(ctx context.Context, userId, seckillProductId int64) (*entity.SeckillOrder, error)
@@ -54,6 +58,18 @@ type seckillOrderModel struct {
 // Insert 创建秒杀订单记录
 func (m *seckillOrderModel) Insert(ctx context.Context, record *entity.SeckillOrder) error {
 	result := m.db.WithContext(ctx).Create(record)
+	return result.Error
+}
+
+// BatchInsert 批量插入秒杀订单记录（幂等）
+// 使用 INSERT IGNORE，遇到唯一索引冲突（uk_user_seckill）自动跳过
+func (m *seckillOrderModel) BatchInsert(ctx context.Context, records []*entity.SeckillOrder) error {
+	if len(records) == 0 {
+		return nil
+	}
+
+	// MySQL 使用 INSERT IGNORE
+	result := m.db.WithContext(ctx).Clauses(clause.Insert{Modifier: "IGNORE"}).Create(records)
 	return result.Error
 }
 

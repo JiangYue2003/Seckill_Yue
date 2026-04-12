@@ -46,13 +46,21 @@ func main() {
 		}
 	})
 	defer func() {
-		s.Stop()
+		// 1. 停止消费新消息
 		if ctx.Consumer != nil {
 			_ = ctx.Consumer.Stop()
 		}
 		if ctx.CheckConsumer != nil {
 			_ = ctx.CheckConsumer.Stop()
 		}
+
+		// 2. 刷完 BatchWriter 缓冲区
+		if ctx.BatchWriter != nil {
+			ctx.BatchWriter.Shutdown()
+		}
+
+		// 3. 停止 gRPC 服务
+		s.Stop()
 	}()
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)

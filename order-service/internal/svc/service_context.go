@@ -1,6 +1,7 @@
 package svc
 
 import (
+	"seckill-mall/order-service/internal/batch"
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/mq"
@@ -19,6 +20,7 @@ type ServiceContext struct {
 	OrderService      *service.OrderService
 	ProductServiceRPC *rpc.ProductServiceClient
 	SeckillServiceRPC *rpc.SeckillServiceClient
+	BatchWriter       *batch.BatchWriter
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -36,6 +38,14 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 
+	// 初始化 BatchWriter（批量写入优化）
+	batchWriter := batch.NewBatchWriter(
+		orderModel,
+		seckillOrderModel,
+		100, // maxBatchSize
+		500, // flushTimeoutMs
+	)
+
 	// 初始化 Product-Service RPC 客户端
 	productSvc, err := rpc.NewProductServiceClient(c)
 	if err != nil {
@@ -43,8 +53,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 
-	// 初始化订单服务（注入 ProductServiceRPC + SeckillServiceRPC）
-	orderService := service.NewOrderService(orderModel, seckillOrderModel)
+	// 初始化订单服务（注入 BatchWriter）
+	orderService := service.NewOrderService(orderModel, seckillOrderModel, batchWriter)
 	orderService.SetProductServiceRPC(productSvc)
 
 	seckillSvc, err := rpc.NewSeckillServiceClient(c)
@@ -97,5 +107,6 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		OrderService:      orderService,
 		ProductServiceRPC: productSvc,
 		SeckillServiceRPC: seckillSvc,
+		BatchWriter:       batchWriter,
 	}
 }
