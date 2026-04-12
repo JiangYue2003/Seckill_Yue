@@ -44,8 +44,8 @@ func (s *OrderService) SetSeckillServiceRPC(svc *rpc.SeckillServiceClient) {
 
 // ProcessSeckillOrder 处理秒杀订单
 // 职责边界：
-// 1. 调用 Product-Service 扣减物理库存
-// 2. 将订单加入批量写入缓冲区（幂等检查在 BatchWriter 内部批量执行）
+// 1. 将订单加入批量写入缓冲区（幂等检查在 BatchWriter 内部批量执行）
+// 注意：秒杀场景下，Redis 库存是权威来源，不再扣减 Product 表的物理库存
 func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
@@ -56,18 +56,20 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		metrics.OrderSeckillProcessDurationSeconds.WithLabelValues(resultLabel).Observe(time.Since(start).Seconds())
 	}()
 
-	// ========== 1. 调用 Product-Service 扣减物理库存（同步，必须成功）==========
-	if s.productSvcRPC != nil {
-		if err := s.productSvcRPC.DeductStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); err != nil {
-			logger.Errorf("扣减物理库存失败: orderId=%s, err=%v", msg.OrderId, err)
-			resultLabel = "deduct_stock_error"
-			return err
-		}
-		logger.Debugf("扣减物理库存成功: orderId=%s, productId=%d, quantity=%d",
-			msg.OrderId, msg.ProductId, msg.Quantity)
-	}
+	// ========== 优化：去掉 Product-Service 扣库存调用 ==========
+	// 秒杀场景下，Redis 库存已经在 seckill-service 中扣减
+	// Product 表的 stock 字段是冗余的，秒杀结束后通过定时任务批量同步
+	//
+	// 原代码（已注释）：
+	// if s.productSvcRPC != nil {
+	//     if err := s.productSvcRPC.DeductStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); err != nil {
+	//         logger.Errorf("扣减物理库存失败: orderId=%s, err=%v", msg.OrderId, err)
+	//         resultLabel = "deduct_stock_error"
+	//         return err
+	//     }
+	// }
 
-	// ========== 2. 构造订单对象 ==========
+	// ========== 1. 构造订单对象 ==========
 	now := time.Now().Unix()
 	order := &entity.Order{
 		OrderId:      msg.OrderId,
@@ -91,7 +93,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		CreatedAt:        now,
 	}
 
-	// ========== 3. 加入批量写入缓冲区（幂等检查在 BatchWriter 内部）==========
+	// ========== 2. 加入批量写入缓冲区（幂等检查在 BatchWriter 内部）==========
 	if s.batchWriter != nil {
 		s.batchWriter.AddOrder(order, seckillRecord)
 	} else {
@@ -118,7 +120,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		}
 	}
 
-	// ========== 4. 回写 Redis 订单状态为 success（降级：失败只记录日志）==========
+	// ========== 3. 回写 Redis 订单状态为 success（降级：失败只记录日志）==========
 	if s.seckillSvcRPC != nil {
 		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "success"); rpcErr != nil {
 			logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
