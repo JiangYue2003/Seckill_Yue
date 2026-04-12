@@ -1,6 +1,6 @@
 Name: seckill.rpc
 ListenOn: 127.0.0.1:9083
-Mode: dev
+Mode: pro
 Etcd:
   Hosts:
     - 127.0.0.1:2379
@@ -33,6 +33,6 @@ RabbitMQ:
 
 AsyncProducer:
   BufferSize: 10000
-  WorkerCount: 4
+  WorkerCount: 16
   RetryCount: 3
   RetryInterval: 1

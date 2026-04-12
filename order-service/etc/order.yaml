@@ -1,6 +1,6 @@
 Name: order.rpc
 ListenOn: 127.0.0.1:9084
-Mode: dev
+Mode: pro
 Etcd:
   Hosts:
   - 127.0.0.1:2379

@@ -37,6 +37,7 @@ const (
 
 // seckillLuaScript 秒杀 Lua 脚本
 // 功能：原子性完成 时间校验 + 防重 + 库存扣减 + 预锁定
+// 返回值：{结果码, 剩余库存}
 // ARGV[1]: quantity, ARGV[2]: orderId, ARGV[3]: TTL, ARGV[4]: startTime, ARGV[5]: endTime
 var seckillLuaScript = `
 local stockKey = KEYS[1]
@@ -50,35 +51,38 @@ local now = tonumber(ARGV[6])
 
 -- 0. 时间校验
 if startTime > 0 and now < startTime then
-    return -3  -- 秒杀未开始
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {-3, currentStock}  -- 秒杀未开始
 end
 if endTime > 0 and now > endTime then
-    return -4  -- 秒杀已结束
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {-4, currentStock}  -- 秒杀已结束
 end
 
 -- 1. 检查用户是否已购买
 local alreadyBought = redis.call('EXISTS', userKey)
 if alreadyBought == 1 then
-    return -1
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {-1, currentStock}
 end
 
 -- 2. 检查库存
 local currentStock = tonumber(redis.call('GET', stockKey) or 0)
 if currentStock < quantity then
-    return 0
+    return {0, currentStock}
 end
 
 -- 3. 扣减库存
 local newStock = redis.call('DECRBY', stockKey, quantity)
 if newStock < 0 then
     redis.call('INCRBY', stockKey, quantity)
-    return 0
+    return {0, currentStock}
 end
 
 -- 4. 记录用户购买记录（TTL 需足够覆盖订单处理时间）
 redis.call('SETEX', userKey, ttl, orderId)
 
-return 1
+return {1, newStock}
 `
 
 // SeckillRedis Redis 客户端封装
@@ -132,20 +136,26 @@ func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*Sec
 		time.Now().Unix(),
 	}
 
-	result, err := r.client.Eval(ctx, seckillLuaScript, keys, argv...).Int64()
+	// Lua 脚本返回 {code, stock}
+	result, err := r.client.Eval(ctx, seckillLuaScript, keys, argv...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("执行秒杀Lua脚本失败: %w", err)
 	}
 
-	// 获取剩余库存
-	stockStr, err := r.client.Get(ctx, stockKey).Result()
-	var stock int64
-	if err == nil {
-		stock, _ = strconv.ParseInt(stockStr, 10, 64)
+	// 解析返回值：Redis Lua 返回数组为 []interface{}
+	arr, ok := result.([]interface{})
+	if !ok || len(arr) != 2 {
+		return nil, fmt.Errorf("Lua脚本返回值格式错误: %v", result)
+	}
+
+	code, ok1 := arr[0].(int64)
+	stock, ok2 := arr[1].(int64)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("Lua脚本返回值类型错误: code=%v, stock=%v", arr[0], arr[1])
 	}
 
 	return &SeckillResult{
-		Code:  int(result),
+		Code:  int(code),
 		Stock: stock,
 	}, nil
 }
