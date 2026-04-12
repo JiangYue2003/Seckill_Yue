@@ -9,4 +9,5 @@ var (
 	ErrInvalidParams   = errors.New("invalid params")
 	ErrStockNotEnough  = errors.New("stock not enough")
 	ErrAlreadyRollback = errors.New("stock already rolled back")
+	ErrAlreadyDeducted = errors.New("stock already deducted")
 )

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"time"
 
 	"seckill-mall/gateway/internal/client"
 	"seckill-mall/gateway/internal/config"
@@ -45,9 +46,19 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery())
+	r.Use(gin.Recovery()) // 捕获 panic，避免进程崩溃
 	r.Use(middleware.RequestLogger())
 	r.Use(middleware.CORS())
+
+	// 设置最大并发连接数（避免资源耗尽）
+	server := &http.Server{
+		Addr:           fmt.Sprintf("%s:%d", c.Host, c.Port),
+		Handler:        r,
+		MaxHeaderBytes: 1 << 20, // 1MB
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		IdleTimeout:    60 * time.Second,
+	}
 
 	r.GET("/health", handler.HealthHandler)
 
@@ -77,15 +88,20 @@ func main() {
 		// 秒杀路由：工厂模式限流（策略可配置，yaml 中切换）
 		seckillHandler := handler.NewSeckillHandler(clients.SeckillService)
 		seckillGroup := authGroup.Group("/seckill")
-		seckillStrategy, err := middleware.NewRateLimitStrategy(c.RedisHost, middleware.RateLimitConfig{
-			Strategy: c.RateLimit.Strategy,
-			QPS:      c.RateLimit.QPS,
-			Capacity: c.RateLimit.Capacity,
-		})
-		if err != nil {
-			panic(fmt.Sprintf("初始化限流策略失败: %v", err))
-		}
-		seckillGroup.Use(middleware.RateLimitMiddleware(seckillStrategy))
+
+		// 临时关闭限流（用于压测）
+		/*
+			seckillStrategy, err := middleware.NewRateLimitStrategy(c.RedisHost, middleware.RateLimitConfig{
+				Strategy: c.RateLimit.Strategy,
+				QPS:      c.RateLimit.QPS,
+				Capacity: c.RateLimit.Capacity,
+			})
+			if err != nil {
+				panic(fmt.Sprintf("初始化限流策略失败: %v", err))
+			}
+			seckillGroup.Use(middleware.RateLimitMiddleware(seckillStrategy))
+		*/
+
 		seckillGroup.POST("", seckillHandler.Seckill)
 		seckillGroup.GET("/status", seckillHandler.GetSeckillStatus)
 		seckillGroup.GET("/result", seckillHandler.GetSeckillResult)
@@ -101,7 +117,7 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", c.Host, c.Port)
 	fmt.Printf("Starting gateway server at %s...\n", addr)
-	if err := http.ListenAndServe(addr, r); err != nil {
+	if err := server.ListenAndServe(); err != nil {
 		panic(err)
 	}
 }

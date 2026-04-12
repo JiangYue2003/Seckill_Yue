@@ -3,10 +3,8 @@ package logic
 import (
 	"context"
 	"errors"
-	"time"
 
 	"seckill-mall/product-service/internal/model"
-	"seckill-mall/product-service/internal/model/entity"
 	"seckill-mall/product-service/internal/svc"
 	"seckill-mall/product-service/product"
 
@@ -41,7 +39,7 @@ func (l *RollbackStockLogic) RollbackStock(in *product.RollbackStockRequest) (*p
 	}
 
 	// 查询商品
-	existingProduct, err := l.svcCtx.ProductModel.FindOneById(l.ctx, in.ProductId)
+	_, err := l.svcCtx.ProductModel.FindOneById(l.ctx, in.ProductId)
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
 			return &product.StockOperationResponse{
@@ -53,9 +51,7 @@ func (l *RollbackStockLogic) RollbackStock(in *product.RollbackStockRequest) (*p
 		return nil, errors.New("系统错误，请稍后重试")
 	}
 
-	beforeStock := existingProduct.Stock
-
-	// 回滚库存（幂等）
+	// 回滚库存（幂等 + 日志写入在 model 事务内完成）
 	if err := l.svcCtx.ProductModel.RollbackStock(l.ctx, in.ProductId, int(in.Quantity), in.OrderId); err != nil {
 		if errors.Is(err, model.ErrAlreadyRollback) {
 			stock, _ := l.svcCtx.ProductModel.GetStock(l.ctx, in.ProductId)
@@ -75,20 +71,6 @@ func (l *RollbackStockLogic) RollbackStock(in *product.RollbackStockRequest) (*p
 	if err != nil {
 		l.Logger.Errorf("查询库存失败: %v", err)
 		return nil, errors.New("系统错误，请稍后重试")
-	}
-
-	// 写入库存流水
-	stockLog := &entity.StockLog{
-		ProductID:   in.ProductId,
-		OrderID:     in.OrderId,
-		ChangeType:  entity.StockChangeTypeRollback,
-		Quantity:    int(in.Quantity),
-		BeforeStock: beforeStock,
-		AfterStock:  stock,
-		CreatedAt:   time.Now().Unix(),
-	}
-	if err := l.svcCtx.StockLogModel.Insert(l.ctx, stockLog); err != nil {
-		l.Logger.Errorf("写入库存流水失败: %v (不影响主流程)", err)
 	}
 
 	l.Logger.Infof("回滚库存成功: productId=%d, quantity=%d, orderId=%s, remainingStock=%d",

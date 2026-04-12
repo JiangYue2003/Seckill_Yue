@@ -19,6 +19,9 @@ type StockLogModel interface {
 
 	// FindByOrderId 根据订单号查询
 	FindByOrderId(ctx context.Context, orderId string) (*entity.StockLog, error)
+
+	// FindByOrderIdAndChangeType 根据订单号和变更类型查询
+	FindByOrderIdAndChangeType(ctx context.Context, orderId string, changeType int) (*entity.StockLog, error)
 }
 
 // NewStockLogModel 创建 StockLogModel 实例
@@ -53,6 +56,18 @@ func (m *stockLogModel) Insert(ctx context.Context, log *entity.StockLog) error 
 func (m *stockLogModel) FindByOrderId(ctx context.Context, orderId string) (*entity.StockLog, error) {
 	var log entity.StockLog
 	result := m.db.WithContext(ctx).Where("order_id = ?", orderId).First(&log)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	return &log, nil
+}
+
+// FindByOrderIdAndChangeType 根据订单号和变更类型查询
+func (m *stockLogModel) FindByOrderIdAndChangeType(ctx context.Context, orderId string, changeType int) (*entity.StockLog, error) {
+	var log entity.StockLog
+	result := m.db.WithContext(ctx).
+		Where("order_id = ? AND change_type = ?", orderId, changeType).
+		First(&log)
 	if result.Error != nil {
 		return nil, result.Error
 	}

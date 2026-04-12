@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(go build:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "mcp__mcp_server_mysql__mysql_query"
     ]
   }
 }

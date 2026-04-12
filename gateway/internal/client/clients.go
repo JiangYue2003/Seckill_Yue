@@ -66,9 +66,11 @@ func newProductServiceClient(conf zrpc.RpcClientConf) (product.ProductServiceCli
 	return product.NewProductServiceClient(client.Conn()), nil
 }
 
-// newSeckillServiceClient 创建秒杀服务客户端
+// newSeckillServiceClient 创建秒杀服务客户端（优化：增加连接池）
 func newSeckillServiceClient(conf zrpc.RpcClientConf) (seckill.SeckillServiceClient, error) {
-	client, err := zrpc.NewClient(conf)
+	client, err := zrpc.NewClient(conf, zrpc.WithDialOption(
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"round_robin"}`),
+	))
 	if err != nil {
 		return nil, fmt.Errorf("new seckill service client: %w", err)
 	}

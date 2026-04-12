@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"seckill-mall/seckill-service/internal/config"
 	"seckill-mall/seckill-service/internal/server"
@@ -36,19 +37,28 @@ func main() {
 			reflection.Register(grpcServer)
 		}
 	})
-	defer s.Stop()
-	defer ctx.Stop()
 
 	// 启动优雅关闭监听（捕获 SIGINT / SIGTERM）
+	shutdownDone := make(chan struct{})
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
-		logx.Info("received shutdown signal, stopping service context...")
-		ctx.Stop()
-		s.Stop()
+		logx.Info("received shutdown signal, stopping service...")
+
+		ctx.Stop() // 先停止 ServiceContext（关闭 MQ、Redis）
+		s.Stop()   // 再停止 gRPC 服务
+
+		// 等待 2 秒让 gRPC 完成清理
+		time.Sleep(2 * time.Second)
+		logx.Info("shutdown complete, exiting...")
+		close(shutdownDone)
+		os.Exit(0) // 正常退出
 	}()
 
 	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
-	s.Start()
+	s.Start() // 阻塞直到 s.Stop() 被调用
+
+	// 等待关闭完成
+	<-shutdownDone
 }

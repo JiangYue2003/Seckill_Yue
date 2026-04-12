@@ -22,6 +22,9 @@ type Metrics struct {
 	systemErrCount int64
 
 	latencies []int64 // 毫秒
+
+	firstSuccessTime time.Time // 第一个成功订单的时间
+	lastSuccessTime  time.Time // 最后一个成功订单的时间
 }
 
 func NewMetrics() *Metrics {
@@ -53,6 +56,15 @@ func (m *Metrics) Record(latencyMs int64, resp *seckill.SeckillResponse, err err
 
 	if resp.Success && resp.Code == "SUCCESS" {
 		atomic.AddInt64(&m.successCount, 1)
+
+		// 记录成功订单的时间戳
+		now := time.Now()
+		m.mu.Lock()
+		if m.firstSuccessTime.IsZero() {
+			m.firstSuccessTime = now
+		}
+		m.lastSuccessTime = now
+		m.mu.Unlock()
 	} else {
 		atomic.AddInt64(&m.failCount, 1)
 		switch resp.Code {
@@ -100,6 +112,21 @@ func (m *Metrics) Report(totalDuration time.Duration, totalStock, actualSold int
 	qps := float64(total) / totalDuration.Seconds()
 	tps := float64(success) / totalDuration.Seconds()
 
+	// 计算秒杀阶段 TPS（只看成功订单的时间窗口）
+	seckillPhaseTPS := float64(0)
+	seckillPhaseDuration := float64(0)
+	m.mu.Lock()
+	if !m.firstSuccessTime.IsZero() && !m.lastSuccessTime.IsZero() {
+		seckillPhaseDuration = m.lastSuccessTime.Sub(m.firstSuccessTime).Seconds()
+		if seckillPhaseDuration > 0 {
+			seckillPhaseTPS = float64(success) / seckillPhaseDuration
+		} else {
+			// 所有成功订单在同一毫秒内完成，使用总耗时
+			seckillPhaseTPS = tps
+		}
+	}
+	m.mu.Unlock()
+
 	// 计算成功率
 	successRate := float64(0)
 	if total > 0 {
@@ -132,7 +159,10 @@ func (m *Metrics) Report(totalDuration time.Duration, totalStock, actualSold int
 	fmt.Printf("\n  性能指标:\n")
 	fmt.Printf("    总耗时:       %.2fs\n", totalDuration.Seconds())
 	fmt.Printf("    QPS:          %.2f req/s\n", qps)
-	fmt.Printf("    TPS:          %.2f orders/s\n", tps)
+	fmt.Printf("    TPS (整体):   %.2f orders/s\n", tps)
+	if seckillPhaseTPS > 0 {
+		fmt.Printf("    TPS (秒杀阶段): %.2f orders/s (%.2fs)\n", seckillPhaseTPS, seckillPhaseDuration)
+	}
 
 	fmt.Printf("\n  延迟统计 (ms):\n")
 	fmt.Printf("    平均延迟:     %d\n", avgLatency)

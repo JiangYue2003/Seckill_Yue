@@ -47,6 +47,7 @@ ProductService:
 
 SeckillService:
   NonBlock: false
+  Timeout: 3000  # 超时时间 3 秒
   Etcd:
     Hosts:
       - 127.0.0.1:2379

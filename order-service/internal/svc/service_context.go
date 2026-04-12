@@ -42,8 +42,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	batchWriter := batch.NewBatchWriter(
 		orderModel,
 		seckillOrderModel,
-		100, // maxBatchSize
-		500, // flushTimeoutMs
+		50,  // maxBatchSize: 100 → 50，减少单次写入耗时
+		200, // flushTimeoutMs: 500ms → 200ms，减少等待延迟
 	)
 
 	// 初始化 Product-Service RPC 客户端

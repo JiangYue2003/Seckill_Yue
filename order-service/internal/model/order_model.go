@@ -65,8 +65,8 @@ func NewOrderModel(c config.Config) (OrderModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetMaxIdleConns(50)  // 10 → 50，增加空闲连接
+	sqlDB.SetMaxOpenConns(300) // 100 → 300，增加最大连接数
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return &orderModel{db: db}, nil

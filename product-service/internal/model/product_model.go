@@ -9,8 +9,10 @@ import (
 	"seckill-mall/product-service/internal/config"
 	"seckill-mall/product-service/internal/model/entity"
 
-	"gorm.io/driver/mysql"
+	mysqlDriver "github.com/go-sql-driver/mysql"
+	gormMysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 )
 
@@ -70,7 +72,7 @@ type SeckillProductModel interface {
 
 // NewProductModel 创建 ProductModel 实例
 func NewProductModel(c config.Config) (ProductModel, error) {
-	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
+	db, err := gorm.Open(gormMysql.Open(c.MySQL.DataSource), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
@@ -90,7 +92,7 @@ func NewProductModel(c config.Config) (ProductModel, error) {
 
 // NewSeckillProductModel 创建 SeckillProductModel 实例
 func NewSeckillProductModel(c config.Config) (SeckillProductModel, error) {
-	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
+	db, err := gorm.Open(gormMysql.Open(c.MySQL.DataSource), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {
@@ -197,57 +199,143 @@ func (m *productModel) Delete(ctx context.Context, id int64) error {
 	return m.db.WithContext(ctx).Delete(&entity.Product{}, id).Error
 }
 
-// DeductStock 扣减库存（乐观锁）
+// DeductStock 扣减库存（乐观锁 + 幂等）
 func (m *productModel) DeductStock(ctx context.Context, id int64, quantity int, orderId string) (int, error) {
-	// 使用乐观锁扣减库存
-	// UPDATE products SET stock = stock - quantity, sold_count = sold_count + quantity
-	// WHERE id = ? AND stock >= quantity
-	result := m.db.WithContext(ctx).Model(&entity.Product{}).
-		Where("id = ? AND stock >= ?", id, quantity).
-		Updates(map[string]interface{}{
-			"stock":      gorm.Expr("stock - ?", quantity),
-			"sold_count": gorm.Expr("sold_count + ?", quantity),
-		})
+	var remainingStock int
 
-	if result.Error != nil {
-		return 0, result.Error
-	}
+	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 幂等检查：该订单是否已扣减过
+		var existingLog entity.StockLog
+		result := tx.Where("order_id = ? AND change_type = ?", orderId, entity.StockChangeTypeDeduct).First(&existingLog)
+		if result.Error == nil {
+			return ErrAlreadyDeducted
+		}
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return result.Error
+		}
 
-	if result.RowsAffected == 0 {
-		return 0, ErrStockNotEnough
-	}
+		// 锁定商品行，避免并发下重复扣减/日志不一致
+		var beforeProduct entity.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&beforeProduct).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if beforeProduct.Stock < quantity {
+			return ErrStockNotEnough
+		}
 
-	// 获取更新后的库存
-	var product entity.Product
-	if err := m.db.WithContext(ctx).Where("id = ?", id).First(&product).Error; err != nil {
+		updateResult := tx.Model(&entity.Product{}).
+			Where("id = ? AND stock >= ?", id, quantity).
+			Updates(map[string]interface{}{
+				"stock":      gorm.Expr("stock - ?", quantity),
+				"sold_count": gorm.Expr("sold_count + ?", quantity),
+			})
+		if updateResult.Error != nil {
+			return updateResult.Error
+		}
+		if updateResult.RowsAffected == 0 {
+			return ErrStockNotEnough
+		}
+
+		var afterProduct entity.Product
+		if err := tx.Where("id = ?", id).First(&afterProduct).Error; err != nil {
+			return err
+		}
+
+		stockLog := &entity.StockLog{
+			ProductID:   id,
+			OrderID:     orderId,
+			ChangeType:  entity.StockChangeTypeDeduct,
+			Quantity:    quantity,
+			BeforeStock: beforeProduct.Stock,
+			AfterStock:  afterProduct.Stock,
+			CreatedAt:   time.Now().Unix(),
+		}
+		if err := tx.Create(stockLog).Error; err != nil {
+			if isDuplicateEntryError(err) {
+				return ErrAlreadyDeducted
+			}
+			return err
+		}
+
+		remainingStock = afterProduct.Stock
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, ErrAlreadyDeducted) {
+			stock, stockErr := m.GetStock(ctx, id)
+			if stockErr != nil {
+				return 0, stockErr
+			}
+			return stock, ErrAlreadyDeducted
+		}
 		return 0, err
 	}
 
-	return product.Stock, nil
+	return remainingStock, nil
 }
 
 // RollbackStock 回滚库存（幂等操作）
 func (m *productModel) RollbackStock(ctx context.Context, id int64, quantity int, orderId string) error {
-	// 幂等检查：该订单是否已回滚过（通过 stock_log 检查）
-	var existingLog entity.StockLog
-	result := m.db.WithContext(ctx).
-		Where("order_id = ? AND change_type = ?", orderId, "rollback").
-		First(&existingLog)
-	if result.Error == nil {
-		return ErrAlreadyRollback
-	}
-	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return result.Error
-	}
+	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 幂等检查：该订单是否已回滚过
+		var existingLog entity.StockLog
+		result := tx.Where("order_id = ? AND change_type = ?", orderId, entity.StockChangeTypeRollback).First(&existingLog)
+		if result.Error == nil {
+			return ErrAlreadyRollback
+		}
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return result.Error
+		}
 
-	res := m.db.WithContext(ctx).Model(&entity.Product{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"stock":      gorm.Expr("stock + ?", quantity),
-			"sold_count": gorm.Expr("sold_count - ?", quantity),
-		})
+		var beforeProduct entity.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", id).First(&beforeProduct).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
 
-	return res.Error
+		res := tx.Model(&entity.Product{}).
+			Where("id = ?", id).
+			Updates(map[string]interface{}{
+				"stock":      gorm.Expr("stock + ?", quantity),
+				"sold_count": gorm.Expr("sold_count - ?", quantity),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+
+		var afterProduct entity.Product
+		if err := tx.Where("id = ?", id).First(&afterProduct).Error; err != nil {
+			return err
+		}
+
+		stockLog := &entity.StockLog{
+			ProductID:   id,
+			OrderID:     orderId,
+			ChangeType:  entity.StockChangeTypeRollback,
+			Quantity:    quantity,
+			BeforeStock: beforeProduct.Stock,
+			AfterStock:  afterProduct.Stock,
+			CreatedAt:   time.Now().Unix(),
+		}
+		if err := tx.Create(stockLog).Error; err != nil {
+			if isDuplicateEntryError(err) {
+				return ErrAlreadyRollback
+			}
+			return err
+		}
+
+		return nil
+	})
+}
+
+func isDuplicateEntryError(err error) bool {
+	var mysqlErr *mysqlDriver.MySQLError
+	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }
 
 // GetStock 获取库存

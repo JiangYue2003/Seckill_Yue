@@ -25,7 +25,7 @@
 ```bash
 cd test/seckill-benchmark-test
 go mod tidy
-go run .
+go run . -users 1000 -duration 30s
 ```
 
 ## 压测场景配置

@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS `stock_logs` (
     `after_stock` INT NOT NULL COMMENT '变更后库存',
     `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
     PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_order_id` (`order_id`),
+    UNIQUE KEY `uk_order_change_type` (`order_id`, `change_type`),
     KEY `idx_product_id` (`product_id`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存流水表';

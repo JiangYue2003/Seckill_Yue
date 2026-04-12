@@ -130,12 +130,29 @@ func (s *ServiceContext) startQuotaBackgroundWorkers() {
 
 func (s *ServiceContext) Stop() {
 	s.stopOnce.Do(func() {
+		logx.Info("ServiceContext stopping...")
+
+		// 1. 停止后台 worker
 		if s.bgCancel != nil {
 			s.bgCancel()
 			s.bgWg.Wait()
+			logx.Info("Background workers stopped")
 		}
+
+		// 2. 关闭 AsyncProducer
 		if s.AsyncProducer != nil {
 			_ = s.AsyncProducer.Close()
 		}
+
+		// 3. 关闭 Redis 连接
+		if s.Redis != nil {
+			if err := s.Redis.Close(); err != nil {
+				logx.Errorf("Failed to close Redis: %v", err)
+			} else {
+				logx.Info("Redis connection closed")
+			}
+		}
+
+		logx.Info("ServiceContext stopped")
 	})
 }
