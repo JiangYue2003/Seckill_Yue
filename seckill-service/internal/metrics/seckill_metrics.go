@@ -41,4 +41,30 @@ var (
 		},
 		[]string{"queue", "result"},
 	)
+
+	// SeckillQuotaAllocateTotal counts quota allocation results.
+	SeckillQuotaAllocateTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "seckill_quota_allocate_total",
+			Help: "Total local quota allocation attempts.",
+		},
+		[]string{"result"},
+	)
+
+	// SeckillQuotaReclaimTotal counts reclaimed quota amount from expired leases.
+	SeckillQuotaReclaimTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "seckill_quota_reclaim_total",
+			Help: "Total reclaimed quota amount from expired leases.",
+		},
+	)
+
+	// SeckillQuotaLeaseRenewTotal counts lease renew attempts.
+	SeckillQuotaLeaseRenewTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "seckill_quota_lease_renew_total",
+			Help: "Total lease renew attempts for local quota.",
+		},
+		[]string{"result"},
+	)
 )

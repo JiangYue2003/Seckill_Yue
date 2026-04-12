@@ -36,3 +36,11 @@ AsyncProducer:
   WorkerCount: 16
   RetryCount: 3
   RetryInterval: 1
+
+LocalQuota:
+  Enabled: false
+  BatchSize: 200
+  LowWatermark: 40
+  LeaseTTLSeconds: 15
+  HeartbeatSeconds: 5
+  ReaperIntervalSeconds: 2

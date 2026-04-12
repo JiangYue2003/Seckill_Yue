@@ -26,4 +26,14 @@ type Config struct {
 		RetryCount    int // 最大重试次数，默认 3
 		RetryInterval int // 基础重试间隔(秒)，默认 1（实际退避：1s, 3s, 10s...）
 	}
+
+	// 本地配额（批量领取式）配置
+	LocalQuota struct {
+		Enabled               bool
+		BatchSize             int64
+		LowWatermark          int64
+		LeaseTTLSeconds       int64
+		HeartbeatSeconds      int64
+		ReaperIntervalSeconds int64
+	}
 }

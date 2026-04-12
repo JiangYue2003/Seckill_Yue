@@ -21,11 +21,15 @@ const (
 	LuaResultEnded          = -4
 
 	// Key 前缀
-	KeyPrefixSeckillStock       = "seckill:stock:"        // 秒杀库存
-	KeyPrefixSeckillUser        = "seckill:user:"         // 用户预占记录（短期TTL，自动释放悬空库存）
-	KeyPrefixSeckillOrder       = "seckill:order:"        // 秒杀订单状态
-	KeyPrefixSeckillInfo        = "seckill:info:"         // 秒杀商品信息 (productId:seckillPrice:startTime:endTime)
-	KeyPrefixSeckillProductName = "seckill:product_name:" // 秒杀商品名称
+	KeyPrefixSeckillStock       = "seckill:stock:"             // 秒杀库存
+	KeyPrefixSeckillUser        = "seckill:user:"              // 用户预占记录（短期TTL，自动释放悬空库存）
+	KeyPrefixSeckillOrder       = "seckill:order:"             // 秒杀订单状态
+	KeyPrefixSeckillInfo        = "seckill:info:"              // 秒杀商品信息 (productId:seckillPrice:startTime:endTime)
+	KeyPrefixSeckillProductName = "seckill:product_name:"      // 秒杀商品名称
+	KeyPrefixQuotaBucket        = "seckill:quota:bucket:"      // 实例配额桶前缀: seckill:quota:bucket:{spid}:{instanceId}
+	KeyPrefixQuotaLeaseZSet     = "seckill:quota:lease:zset:"  // 配额租约前缀: seckill:quota:lease:zset:{spid}
+	KeyPrefixQuotaReaperLock    = "seckill:quota:reaper:lock:" // 回收锁前缀: seckill:quota:reaper:lock:{spid}
+	KeyQuotaProductsSet         = "seckill:quota:products"     // 有活动租约的商品集合
 
 	// 订单状态常量（与 logic 包保持一致）
 	OrderStatusPending  = "pending"
@@ -83,6 +87,156 @@ end
 redis.call('SETEX', userKey, ttl, orderId)
 
 return {1, newStock}
+`
+
+// quotaAllocateLuaScript 批量领取配额并顺带回收过期租约
+// KEYS[1]: global stock key
+// KEYS[2]: current instance bucket key
+// KEYS[3]: lease zset key
+// KEYS[4]: products set key
+// ARGV[1]: instanceId
+// ARGV[2]: batchSize
+// ARGV[3]: leaseTTLSeconds
+// ARGV[4]: nowUnix
+// ARGV[5]: bucketPrefixWithProduct (seckill:quota:bucket:{spid}:)
+// ARGV[6]: seckillProductId
+// return: {allocated, currentBucket, reclaimed}
+var quotaAllocateLuaScript = `
+local globalKey = KEYS[1]
+local bucketKey = KEYS[2]
+local leaseKey = KEYS[3]
+local productsKey = KEYS[4]
+
+local instanceId = ARGV[1]
+local batchSize = tonumber(ARGV[2])
+local leaseTTL = tonumber(ARGV[3])
+local now = tonumber(ARGV[4])
+local bucketPrefix = ARGV[5]
+local productId = ARGV[6]
+
+local reclaimed = 0
+local expired = redis.call('ZRANGEBYSCORE', leaseKey, '-inf', now)
+for _, inst in ipairs(expired) do
+    local expiredBucketKey = bucketPrefix .. inst
+    local left = tonumber(redis.call('GET', expiredBucketKey) or 0)
+    if left > 0 then
+        redis.call('INCRBY', globalKey, left)
+        reclaimed = reclaimed + left
+    end
+    redis.call('DEL', expiredBucketKey)
+    redis.call('ZREM', leaseKey, inst)
+end
+
+local allocated = 0
+if batchSize > 0 then
+    local globalStock = tonumber(redis.call('GET', globalKey) or 0)
+    if globalStock > 0 then
+        allocated = math.min(batchSize, globalStock)
+        redis.call('DECRBY', globalKey, allocated)
+        redis.call('INCRBY', bucketKey, allocated)
+    end
+end
+
+local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
+if currentBucket > 0 then
+    redis.call('ZADD', leaseKey, now + leaseTTL, instanceId)
+    redis.call('SADD', productsKey, productId)
+else
+    redis.call('ZREM', leaseKey, instanceId)
+end
+
+if redis.call('ZCARD', leaseKey) == 0 then
+    redis.call('SREM', productsKey, productId)
+end
+
+return {allocated, currentBucket, reclaimed}
+`
+
+// quotaConsumeLuaScript 消费实例桶配额做秒杀裁决
+// KEYS[1]: instance bucket key
+// KEYS[2]: user preempt key
+// ARGV[1]: quantity
+// ARGV[2]: orderId
+// ARGV[3]: userKeyTTL
+// ARGV[4]: startTime
+// ARGV[5]: endTime
+// ARGV[6]: nowUnix
+// return: {code, bucketRemaining}
+var quotaConsumeLuaScript = `
+local bucketKey = KEYS[1]
+local userKey = KEYS[2]
+local quantity = tonumber(ARGV[1])
+local orderId = ARGV[2]
+local ttl = tonumber(ARGV[3])
+local startTime = tonumber(ARGV[4])
+local endTime = tonumber(ARGV[5])
+local now = tonumber(ARGV[6])
+
+if startTime > 0 and now < startTime then
+    local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
+    return {-3, currentBucket}
+end
+if endTime > 0 and now > endTime then
+    local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
+    return {-4, currentBucket}
+end
+
+local alreadyBought = redis.call('EXISTS', userKey)
+if alreadyBought == 1 then
+    local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
+    return {-1, currentBucket}
+end
+
+local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
+if currentBucket < quantity then
+    return {0, currentBucket}
+end
+
+local newBucket = redis.call('DECRBY', bucketKey, quantity)
+if newBucket < 0 then
+    redis.call('INCRBY', bucketKey, quantity)
+    return {0, currentBucket}
+end
+
+redis.call('SETEX', userKey, ttl, orderId)
+return {1, newBucket}
+`
+
+// quotaReapLuaScript 回收某商品的过期租约配额
+// KEYS[1]: global stock key
+// KEYS[2]: lease zset key
+// KEYS[3]: products set key
+// ARGV[1]: nowUnix
+// ARGV[2]: bucketPrefixWithProduct
+// ARGV[3]: seckillProductId
+// return: reclaimed
+var quotaReapLuaScript = `
+local globalKey = KEYS[1]
+local leaseKey = KEYS[2]
+local productsKey = KEYS[3]
+
+local now = tonumber(ARGV[1])
+local bucketPrefix = ARGV[2]
+local productId = ARGV[3]
+
+local reclaimed = 0
+local expired = redis.call('ZRANGEBYSCORE', leaseKey, '-inf', now)
+for _, inst in ipairs(expired) do
+    local expiredBucketKey = bucketPrefix .. inst
+    local left = tonumber(redis.call('GET', expiredBucketKey) or 0)
+    if left > 0 then
+        redis.call('INCRBY', globalKey, left)
+        reclaimed = reclaimed + left
+    end
+    redis.call('DEL', expiredBucketKey)
+    redis.call('ZREM', leaseKey, inst)
+end
+
+if redis.call('ZCARD', leaseKey) == 0 then
+    redis.call('SREM', productsKey, productId)
+end
+
+return reclaimed
 `
 
 // SeckillRedis Redis 客户端封装
@@ -380,6 +534,175 @@ func (r *SeckillRedis) IncrLocalStock(seckillProductId int64, quantity int64) {
 		return
 	}
 	v.(*atomic.Int64).Add(quantity)
+}
+
+func quotaBucketKeyPrefix(seckillProductId int64) string {
+	return KeyPrefixQuotaBucket + strconv.FormatInt(seckillProductId, 10) + ":"
+}
+
+func quotaBucketKey(seckillProductId int64, instanceID string) string {
+	return quotaBucketKeyPrefix(seckillProductId) + instanceID
+}
+
+func quotaLeaseZSetKey(seckillProductId int64) string {
+	return KeyPrefixQuotaLeaseZSet + strconv.FormatInt(seckillProductId, 10)
+}
+
+// EnsureQuota 批量领取本地配额（并回收过期租约）
+func (r *SeckillRedis) EnsureQuota(ctx context.Context, seckillProductId int64, instanceID string, batchSize int64, leaseTTLSeconds int64) (int64, int64, error) {
+	globalStockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
+	bucketKey := quotaBucketKey(seckillProductId, instanceID)
+	leaseKey := quotaLeaseZSetKey(seckillProductId)
+	bucketPrefix := quotaBucketKeyPrefix(seckillProductId)
+
+	keys := []string{globalStockKey, bucketKey, leaseKey, KeyQuotaProductsSet}
+	argv := []interface{}{
+		instanceID,
+		batchSize,
+		leaseTTLSeconds,
+		time.Now().Unix(),
+		bucketPrefix,
+		strconv.FormatInt(seckillProductId, 10),
+	}
+
+	raw, err := r.client.Eval(ctx, quotaAllocateLuaScript, keys, argv...).Result()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	arr, ok := raw.([]interface{})
+	if !ok || len(arr) != 3 {
+		return 0, 0, fmt.Errorf("invalid allocate result: %v", raw)
+	}
+	allocated, ok1 := arr[0].(int64)
+	currentBucket, ok2 := arr[1].(int64)
+	if !ok1 || !ok2 {
+		return 0, 0, fmt.Errorf("invalid allocate result type: %v", raw)
+	}
+	return allocated, currentBucket, nil
+}
+
+// DoSeckillWithQuota 使用实例配额桶执行秒杀原子裁决
+func (r *SeckillRedis) DoSeckillWithQuota(ctx context.Context, req *SeckillRequest, instanceID string) (*SeckillResult, error) {
+	bucketKey := quotaBucketKey(req.SeckillProductId, instanceID)
+	userKey := KeyPrefixSeckillUser + strconv.FormatInt(req.SeckillProductId, 10) + ":" + strconv.FormatInt(req.UserId, 10)
+
+	keys := []string{bucketKey, userKey}
+	argv := []interface{}{
+		req.Quantity,
+		req.OrderId,
+		req.TTL,
+		req.StartTime,
+		req.EndTime,
+		time.Now().Unix(),
+	}
+
+	raw, err := r.client.Eval(ctx, quotaConsumeLuaScript, keys, argv...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("execute quota consume lua failed: %w", err)
+	}
+
+	arr, ok := raw.([]interface{})
+	if !ok || len(arr) != 2 {
+		return nil, fmt.Errorf("invalid consume result: %v", raw)
+	}
+	code, ok1 := arr[0].(int64)
+	stock, ok2 := arr[1].(int64)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("invalid consume result type: %v", raw)
+	}
+
+	return &SeckillResult{Code: int(code), Stock: stock}, nil
+}
+
+// RenewLease 为当前实例续租（仅当桶内仍有配额）
+func (r *SeckillRedis) RenewLease(ctx context.Context, seckillProductId int64, instanceID string, leaseTTLSeconds int64) error {
+	bucketKey := quotaBucketKey(seckillProductId, instanceID)
+	bucketLeft, err := r.client.Get(ctx, bucketKey).Int64()
+	if err != nil && err != redis.Nil {
+		return err
+	}
+	leaseKey := quotaLeaseZSetKey(seckillProductId)
+	if bucketLeft <= 0 {
+		return r.client.ZRem(ctx, leaseKey, instanceID).Err()
+	}
+	expireAt := time.Now().Unix() + leaseTTLSeconds
+	return r.client.ZAdd(ctx, leaseKey, redis.Z{Score: float64(expireAt), Member: instanceID}).Err()
+}
+
+// RenewAllActiveLeases 遍历本地已追踪商品，为当前实例续租
+func (r *SeckillRedis) RenewAllActiveLeases(ctx context.Context, instanceID string, leaseTTLSeconds int64) error {
+	var firstErr error
+	r.localStock.Range(func(key, value any) bool {
+		spid, ok := key.(int64)
+		if !ok {
+			return true
+		}
+		counter, ok := value.(*atomic.Int64)
+		if !ok {
+			return true
+		}
+		if counter.Load() <= 0 {
+			return true
+		}
+		if err := r.RenewLease(ctx, spid, instanceID, leaseTTLSeconds); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		return true
+	})
+	return firstErr
+}
+
+// ReapExpiredQuotaForProduct 回收单个商品的过期租约配额
+func (r *SeckillRedis) ReapExpiredQuotaForProduct(ctx context.Context, seckillProductId int64) (int64, error) {
+	lockKey := KeyPrefixQuotaReaperLock + strconv.FormatInt(seckillProductId, 10)
+	lockOK, err := r.client.SetNX(ctx, lockKey, "1", 1200*time.Millisecond).Result()
+	if err != nil || !lockOK {
+		return 0, err
+	}
+	defer r.client.Del(ctx, lockKey)
+
+	globalStockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
+	leaseKey := quotaLeaseZSetKey(seckillProductId)
+	bucketPrefix := quotaBucketKeyPrefix(seckillProductId)
+	keys := []string{globalStockKey, leaseKey, KeyQuotaProductsSet}
+	argv := []interface{}{
+		time.Now().Unix(),
+		bucketPrefix,
+		strconv.FormatInt(seckillProductId, 10),
+	}
+
+	raw, err := r.client.Eval(ctx, quotaReapLuaScript, keys, argv...).Result()
+	if err != nil {
+		return 0, err
+	}
+	reclaimed, ok := raw.(int64)
+	if !ok {
+		return 0, fmt.Errorf("invalid reclaim result: %v", raw)
+	}
+	return reclaimed, nil
+}
+
+// ReapExpiredQuotaForAllProducts 扫描并回收所有有租约商品
+func (r *SeckillRedis) ReapExpiredQuotaForAllProducts(ctx context.Context) (int64, error) {
+	products, err := r.client.SMembers(ctx, KeyQuotaProductsSet).Result()
+	if err != nil && err != redis.Nil {
+		return 0, err
+	}
+	var reclaimedTotal int64
+	var firstErr error
+	for _, item := range products {
+		spid, parseErr := strconv.ParseInt(item, 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		reclaimed, reclaimErr := r.ReapExpiredQuotaForProduct(ctx, spid)
+		if reclaimErr != nil && firstErr == nil {
+			firstErr = reclaimErr
+		}
+		reclaimedTotal += reclaimed
+	}
+	return reclaimedTotal, firstErr
 }
 
 // Close 关闭连接

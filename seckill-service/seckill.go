@@ -37,14 +37,15 @@ func main() {
 		}
 	})
 	defer s.Stop()
+	defer ctx.Stop()
 
 	// 启动优雅关闭监听（捕获 SIGINT / SIGTERM）
 	go func() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
-		logx.Info("received shutdown signal, closing AsyncProducer...")
-		ctx.AsyncProducer.Close()
+		logx.Info("received shutdown signal, stopping service context...")
+		ctx.Stop()
 		s.Stop()
 	}()
 

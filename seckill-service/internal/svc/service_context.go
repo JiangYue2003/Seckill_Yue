@@ -1,7 +1,14 @@
 package svc
 
 import (
+	"context"
+	"fmt"
+	"os"
+	"sync"
+	"time"
+
 	"seckill-mall/seckill-service/internal/config"
+	"seckill-mall/seckill-service/internal/metrics"
 	"seckill-mall/seckill-service/internal/mq"
 	"seckill-mall/seckill-service/internal/redis"
 
@@ -12,6 +19,11 @@ type ServiceContext struct {
 	Config        config.Config
 	Redis         *redis.SeckillRedis
 	AsyncProducer *mq.AsyncProducer
+	InstanceID    string
+
+	bgCancel context.CancelFunc
+	bgWg     sync.WaitGroup
+	stopOnce sync.Once
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -38,9 +50,92 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		c.AsyncProducer.RetryInterval,
 	)
 
-	return &ServiceContext{
+	instanceID := buildInstanceID()
+	ctx := &ServiceContext{
 		Config:        c,
 		Redis:         redisClient,
 		AsyncProducer: asyncProducer,
+		InstanceID:    instanceID,
 	}
+
+	if c.LocalQuota.Enabled {
+		ctx.startQuotaBackgroundWorkers()
+	}
+
+	return ctx
+}
+
+func buildInstanceID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	return fmt.Sprintf("%s:%d", host, os.Getpid())
+}
+
+func (s *ServiceContext) startQuotaBackgroundWorkers() {
+	bgCtx, cancel := context.WithCancel(context.Background())
+	s.bgCancel = cancel
+
+	heartbeatInterval := time.Duration(s.Config.LocalQuota.HeartbeatSeconds) * time.Second
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 5 * time.Second
+	}
+
+	reaperInterval := time.Duration(s.Config.LocalQuota.ReaperIntervalSeconds) * time.Second
+	if reaperInterval <= 0 {
+		reaperInterval = 2 * time.Second
+	}
+
+	s.bgWg.Add(2)
+	go func() {
+		defer s.bgWg.Done()
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				if err := s.Redis.RenewAllActiveLeases(bgCtx, s.InstanceID, s.Config.LocalQuota.LeaseTTLSeconds); err != nil {
+					metrics.SeckillQuotaLeaseRenewTotal.WithLabelValues("failed").Inc()
+					logx.Errorf("renew local quota lease failed: %v", err)
+				} else {
+					metrics.SeckillQuotaLeaseRenewTotal.WithLabelValues("ok").Inc()
+				}
+			}
+		}
+	}()
+
+	go func() {
+		defer s.bgWg.Done()
+		ticker := time.NewTicker(reaperInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-bgCtx.Done():
+				return
+			case <-ticker.C:
+				reclaimed, err := s.Redis.ReapExpiredQuotaForAllProducts(bgCtx)
+				if reclaimed > 0 {
+					metrics.SeckillQuotaReclaimTotal.Add(float64(reclaimed))
+				}
+				if err != nil {
+					logx.Errorf("reap expired quota failed: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+func (s *ServiceContext) Stop() {
+	s.stopOnce.Do(func() {
+		if s.bgCancel != nil {
+			s.bgCancel()
+			s.bgWg.Wait()
+		}
+		if s.AsyncProducer != nil {
+			_ = s.AsyncProducer.Close()
+		}
+	})
 }

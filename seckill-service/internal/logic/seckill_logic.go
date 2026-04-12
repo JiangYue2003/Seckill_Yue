@@ -32,6 +32,10 @@ const (
 	// 用户预占过期时间（秒）：MQ 处理超时兜底，消息失败时库存自动归还 Redis
 	// 5分钟 = 300秒，足够 MQ 正常重试 3 次（每次 < 2 分钟）
 	UserPreemptTTL = 300
+
+	defaultQuotaBatchSize       = 200
+	defaultQuotaLowWatermark    = 40
+	defaultQuotaLeaseTTLSeconds = 15
 )
 
 type SeckillLogic struct {
@@ -96,13 +100,61 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 	}
 
-	// 懒初始化本地库存计数器（首次请求时从 Redis 同步库存）
-	_, _ = l.svcCtx.Redis.GetOrInitLocalStock(l.ctx, in.SeckillProductId)
+	quotaEnabled := l.svcCtx.Config.LocalQuota.Enabled
+	if quotaEnabled {
+		// 配额模式下，首次尝试批量领取并填充本地计数器
+		_, _ = l.svcCtx.Redis.GetOrInitLocalStock(l.ctx, in.SeckillProductId)
+		if allocated, _, err := l.svcCtx.Redis.EnsureQuota(
+			l.ctx,
+			in.SeckillProductId,
+			l.svcCtx.InstanceID,
+			l.quotaBatchSize(),
+			l.quotaLeaseTTLSeconds(),
+		); err != nil {
+			metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
+			l.Logger.Errorf("initial quota allocate failed: spid=%d, err=%v", in.SeckillProductId, err)
+		} else if allocated > 0 {
+			metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
+			l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, allocated)
+		} else {
+			metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
+		}
+	} else {
+		// 旧模式：懒初始化本地库存计数器（首次请求时从 Redis 同步库存）
+		_, _ = l.svcCtx.Redis.GetOrInitLocalStock(l.ctx, in.SeckillProductId)
+	}
 
 	// 本地原子计数器预过滤：库存耗尽时快速拒绝，不打 Redis（纳秒级）
 	remaining := l.svcCtx.Redis.DecrLocalStock(in.SeckillProductId, quantity)
 	if remaining < 0 {
 		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+
+		// 配额模式：尝试快速补一批本地配额再重试一次
+		if quotaEnabled {
+			allocated, _, err := l.svcCtx.Redis.EnsureQuota(
+				l.ctx,
+				in.SeckillProductId,
+				l.svcCtx.InstanceID,
+				l.quotaBatchSize(),
+				l.quotaLeaseTTLSeconds(),
+			)
+			if err != nil {
+				metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
+				l.Logger.Errorf("quota allocate failed: spid=%d, err=%v", in.SeckillProductId, err)
+			} else if allocated > 0 {
+				metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
+				l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, allocated)
+				remaining = l.svcCtx.Redis.DecrLocalStock(in.SeckillProductId, quantity)
+				if remaining < 0 {
+					l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+				}
+			} else {
+				metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
+			}
+		}
+	}
+
+	if remaining < 0 {
 		metrics.SeckillLocalStockRejectTotal.Inc()
 		resultLabel = "sold_out_local"
 		return &seckill.SeckillResponse{
@@ -129,7 +181,13 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	}
 
 	// 执行 Redis Lua 脚本（原子性操作）
-	result, err := l.svcCtx.Redis.DoSeckill(l.ctx, seckillReq)
+	var result *redis.SeckillResult
+	var err error
+	if quotaEnabled {
+		result, err = l.svcCtx.Redis.DoSeckillWithQuota(l.ctx, seckillReq, l.svcCtx.InstanceID)
+	} else {
+		result, err = l.svcCtx.Redis.DoSeckill(l.ctx, seckillReq)
+	}
 	if err != nil {
 		l.Logger.Errorf("执行秒杀失败: userId=%d, seckillProductId=%d, err=%v",
 			in.UserId, in.SeckillProductId, err)
@@ -144,6 +202,9 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	// ========== 处理秒杀结果 ==========
 	switch result.Code {
 	case redis.LuaResultNotStarted:
+		if quotaEnabled {
+			l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+		}
 		resultLabel = "not_started"
 		return &seckill.SeckillResponse{
 			Success: false,
@@ -152,6 +213,9 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultEnded:
+		if quotaEnabled {
+			l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+		}
 		resultLabel = "ended"
 		return &seckill.SeckillResponse{
 			Success: false,
@@ -160,6 +224,9 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultAlreadyBought:
+		if quotaEnabled {
+			l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
+		}
 		// 用户已购买过该秒杀商品
 		l.Logger.Debugf("用户已购买过该商品: userId=%d, seckillProductId=%d",
 			in.UserId, in.SeckillProductId)
@@ -183,6 +250,28 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultSuccess:
+		if quotaEnabled && remaining <= l.quotaLowWatermark() {
+			go func(spid int64) {
+				allocated, _, allocErr := l.svcCtx.Redis.EnsureQuota(
+					context.Background(),
+					spid,
+					l.svcCtx.InstanceID,
+					l.quotaBatchSize(),
+					l.quotaLeaseTTLSeconds(),
+				)
+				if allocErr != nil {
+					metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
+					return
+				}
+				if allocated > 0 {
+					metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
+					l.svcCtx.Redis.IncrLocalStock(spid, allocated)
+				} else {
+					metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
+				}
+			}(in.SeckillProductId)
+		}
+
 		// 秒杀成功，异步发送 RabbitMQ 消息（不阻塞用户响应）
 		// 注意：异步模式下 MQ 投递失败不再触发同步回滚，依赖 UserPreemptTTL（300s）自动兜底
 		l.Logger.Debugf("秒杀成功，准备异步发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
@@ -252,6 +341,27 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			Message: "系统繁忙，请稍后重试",
 		}, nil
 	}
+}
+
+func (l *SeckillLogic) quotaBatchSize() int64 {
+	if l.svcCtx.Config.LocalQuota.BatchSize > 0 {
+		return l.svcCtx.Config.LocalQuota.BatchSize
+	}
+	return defaultQuotaBatchSize
+}
+
+func (l *SeckillLogic) quotaLowWatermark() int64 {
+	if l.svcCtx.Config.LocalQuota.LowWatermark > 0 {
+		return l.svcCtx.Config.LocalQuota.LowWatermark
+	}
+	return defaultQuotaLowWatermark
+}
+
+func (l *SeckillLogic) quotaLeaseTTLSeconds() int64 {
+	if l.svcCtx.Config.LocalQuota.LeaseTTLSeconds > 0 {
+		return l.svcCtx.Config.LocalQuota.LeaseTTLSeconds
+	}
+	return defaultQuotaLeaseTTLSeconds
 }
 
 // getSeckillProductInfo 从 Redis 获取秒杀商品信息（productId, seckillPrice, productName, startTime, endTime）
