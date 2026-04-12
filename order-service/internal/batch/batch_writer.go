@@ -136,22 +136,60 @@ func (w *BatchWriter) batchInsert(orders []*entity.Order, seckillOrders []*entit
 	ctx := context.Background()
 	start := time.Now()
 
-	// 1. 批量写入 orders 表
-	affected, err := w.orderModel.BatchInsert(ctx, orders)
-	if err != nil {
-		logx.Errorf("Batch insert orders failed: count=%d, err=%v", len(orders), err)
-		// 失败时回退到单条写入（兜底）
-		w.fallbackInsertOrders(ctx, orders)
-	} else {
-		logx.Infof("Batch insert orders success: total=%d, inserted=%d, duration=%dms",
-			len(orders), affected, time.Since(start).Milliseconds())
+	// 1. 批量幂等检查
+	orderIds := make([]string, len(orders))
+	for i, order := range orders {
+		orderIds[i] = order.OrderId
 	}
 
-	// 2. 批量写入 seckill_orders 表（异步，失败不影响主流程）
-	if len(seckillOrders) > 0 {
-		if err := w.seckillOrderModel.BatchInsert(ctx, seckillOrders); err != nil {
+	existsMap, err := w.orderModel.BatchCheckIdempotency(ctx, orderIds)
+	if err != nil {
+		logx.Errorf("Batch check idempotency failed: %v", err)
+		// 失败时回退到单条检查+写入
+		w.fallbackInsertOrders(ctx, orders)
+		return
+	}
+
+	// 2. 过滤掉已存在的订单
+	validOrders := make([]*entity.Order, 0, len(orders))
+	validSeckillOrders := make([]*entity.SeckillOrder, 0, len(seckillOrders))
+	duplicateCount := 0
+
+	for i, order := range orders {
+		if existsMap[order.OrderId] {
+			duplicateCount++
+			continue // 跳过重复订单
+		}
+		validOrders = append(validOrders, order)
+		if i < len(seckillOrders) {
+			validSeckillOrders = append(validSeckillOrders, seckillOrders[i])
+		}
+	}
+
+	if duplicateCount > 0 {
+		logx.Infof("Filtered duplicate orders: %d/%d", duplicateCount, len(orders))
+	}
+
+	if len(validOrders) == 0 {
+		logx.Info("All orders are duplicates, skipping batch insert")
+		return
+	}
+
+	// 3. 批量写入有效订单
+	affected, err := w.orderModel.BatchInsert(ctx, validOrders)
+	if err != nil {
+		logx.Errorf("Batch insert orders failed: count=%d, err=%v", len(validOrders), err)
+		w.fallbackInsertOrders(ctx, validOrders)
+	} else {
+		logx.Infof("Batch insert orders success: total=%d, inserted=%d, duplicates=%d, duration=%dms",
+			len(orders), affected, duplicateCount, time.Since(start).Milliseconds())
+	}
+
+	// 4. 批量写入 seckill_orders（异步，失败不影响主流程）
+	if len(validSeckillOrders) > 0 {
+		if err := w.seckillOrderModel.BatchInsert(ctx, validSeckillOrders); err != nil {
 			logx.Errorf("Batch insert seckill_orders failed (non-critical): count=%d, err=%v",
-				len(seckillOrders), err)
+				len(validSeckillOrders), err)
 		}
 	}
 }

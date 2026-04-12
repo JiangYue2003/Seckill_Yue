@@ -46,6 +46,10 @@ type OrderModel interface {
 
 	// CheckIdempotency 检查幂等性
 	CheckIdempotency(ctx context.Context, orderId string) (bool, error)
+
+	// BatchCheckIdempotency 批量检查幂等性
+	// 返回 map[orderId]bool，true 表示已存在
+	BatchCheckIdempotency(ctx context.Context, orderIds []string) (map[string]bool, error)
 }
 
 // NewOrderModel 创建 OrderModel 实例
@@ -195,4 +199,28 @@ func (m *orderModel) CheckIdempotency(ctx context.Context, orderId string) (bool
 	}
 
 	return count > 0, nil
+}
+
+// BatchCheckIdempotency 批量检查幂等性
+// 返回 map[orderId]bool，true 表示已存在
+func (m *orderModel) BatchCheckIdempotency(ctx context.Context, orderIds []string) (map[string]bool, error) {
+	if len(orderIds) == 0 {
+		return make(map[string]bool), nil
+	}
+
+	var existingOrders []entity.Order
+	err := m.db.WithContext(ctx).
+		Select("order_id").
+		Where("order_id IN ?", orderIds).
+		Find(&existingOrders).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]bool, len(existingOrders))
+	for _, order := range existingOrders {
+		result[order.OrderId] = true
+	}
+	return result, nil
 }

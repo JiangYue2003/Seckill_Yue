@@ -44,9 +44,8 @@ func (s *OrderService) SetSeckillServiceRPC(svc *rpc.SeckillServiceClient) {
 
 // ProcessSeckillOrder 处理秒杀订单
 // 职责边界：
-// 1. 消费秒杀成功消息，基于 order_id 做幂等性校验
-// 2. 调用 Product-Service 扣减物理库存
-// 3. 将订单加入批量写入缓冲区（异步写入 MySQL）
+// 1. 调用 Product-Service 扣减物理库存
+// 2. 将订单加入批量写入缓冲区（幂等检查在 BatchWriter 内部批量执行）
 func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
@@ -57,20 +56,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		metrics.OrderSeckillProcessDurationSeconds.WithLabelValues(resultLabel).Observe(time.Since(start).Seconds())
 	}()
 
-	// ========== 1. 幂等性校验 ==========
-	exists, err := s.orderModel.CheckIdempotency(ctx, msg.OrderId)
-	if err != nil {
-		logger.Errorf("检查幂等性失败: orderId=%s, err=%v", msg.OrderId, err)
-		resultLabel = "idempotency_error"
-		return err
-	}
-	if exists {
-		logger.Debugf("订单已存在，跳过处理: orderId=%s", msg.OrderId)
-		resultLabel = "idempotent_skip"
-		return nil
-	}
-
-	// ========== 2. 调用 Product-Service 扣减物理库存（同步，必须成功）==========
+	// ========== 1. 调用 Product-Service 扣减物理库存（同步，必须成功）==========
 	if s.productSvcRPC != nil {
 		if err := s.productSvcRPC.DeductStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); err != nil {
 			logger.Errorf("扣减物理库存失败: orderId=%s, err=%v", msg.OrderId, err)
@@ -81,7 +67,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 			msg.OrderId, msg.ProductId, msg.Quantity)
 	}
 
-	// ========== 3. 构造订单对象 ==========
+	// ========== 2. 构造订单对象 ==========
 	now := time.Now().Unix()
 	order := &entity.Order{
 		OrderId:      msg.OrderId,
@@ -105,11 +91,23 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		CreatedAt:        now,
 	}
 
-	// ========== 4. 加入批量写入缓冲区（异步）==========
+	// ========== 3. 加入批量写入缓冲区（幂等检查在 BatchWriter 内部）==========
 	if s.batchWriter != nil {
 		s.batchWriter.AddOrder(order, seckillRecord)
 	} else {
-		// 降级：BatchWriter 未初始化时，回退到同步写入
+		// 降级：BatchWriter 未初始化时，回退到同步写入（需要单独检查幂等）
+		exists, err := s.orderModel.CheckIdempotency(ctx, msg.OrderId)
+		if err != nil {
+			logger.Errorf("检查幂等性失败: orderId=%s, err=%v", msg.OrderId, err)
+			resultLabel = "idempotency_error"
+			return err
+		}
+		if exists {
+			logger.Debugf("订单已存在，跳过处理: orderId=%s", msg.OrderId)
+			resultLabel = "idempotent_skip"
+			return nil
+		}
+
 		if err := s.orderModel.Insert(ctx, order); err != nil {
 			logger.Errorf("创建订单失败: orderId=%s, err=%v", msg.OrderId, err)
 			resultLabel = "create_order_error"
@@ -120,7 +118,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		}
 	}
 
-	// ========== 5. 回写 Redis 订单状态为 success（降级：失败只记录日志）==========
+	// ========== 4. 回写 Redis 订单状态为 success（降级：失败只记录日志）==========
 	if s.seckillSvcRPC != nil {
 		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "success"); rpcErr != nil {
 			logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
