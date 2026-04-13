@@ -175,8 +175,14 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	}
 
 	// 2. 回滚 MySQL 物理库存（幂等，基于 orderId 防重）
+	// 安全门禁：仅当 product-service 侧存在 deduct 日志时才允许回滚，避免“未扣先回”
 	if s.productSvcRPC != nil {
 		if rpcErr := s.productSvcRPC.RollbackStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); rpcErr != nil {
+			if rpc.IsNoDeductRecordError(rpcErr) {
+				logger.Infof("跳过库存回滚（无扣减记录）: orderId=%s, productId=%d", msg.OrderId, msg.ProductId)
+				timeoutResult = "skip_no_deduct"
+				return nil
+			}
 			logger.Errorf("回滚物理库存失败: orderId=%s, productId=%d, err=%v",
 				msg.OrderId, msg.ProductId, rpcErr)
 			timeoutResult = "rollback_failed"
@@ -212,6 +218,10 @@ func (s *OrderService) RollbackSeckillOrder(ctx context.Context, orderId string,
 	// 3. 回滚物理库存
 	if s.productSvcRPC != nil {
 		if err := s.productSvcRPC.RollbackStock(ctx, productId, quantity, orderId); err != nil {
+			if rpc.IsNoDeductRecordError(err) {
+				logger.Infof("跳过秒杀库存回滚（无扣减记录）: orderId=%s, productId=%d", orderId, productId)
+				return nil
+			}
 			logger.Errorf("回滚物理库存失败: orderId=%s, err=%v", orderId, err)
 			return err
 		}

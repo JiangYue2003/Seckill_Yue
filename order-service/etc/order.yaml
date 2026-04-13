@@ -47,3 +47,8 @@ SeckillService:
     Hosts:
       - 127.0.0.1:2379
     Key: seckill.rpc
+
+# etcd 不可用时的 fallback 直连地址（90XX 端口）
+Fallback:
+  ProductServiceEndpoint: 127.0.0.1:9082
+  SeckillServiceEndpoint: 127.0.0.1:9083

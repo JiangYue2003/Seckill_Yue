@@ -280,6 +280,16 @@ func (m *productModel) DeductStock(ctx context.Context, id int64, quantity int, 
 // RollbackStock 回滚库存（幂等操作）
 func (m *productModel) RollbackStock(ctx context.Context, id int64, quantity int, orderId string) error {
 	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 安全门禁：只有存在对应的扣减记录，才允许执行回滚
+		var deductLog entity.StockLog
+		deductResult := tx.Where("order_id = ? AND change_type = ?", orderId, entity.StockChangeTypeDeduct).First(&deductLog)
+		if errors.Is(deductResult.Error, gorm.ErrRecordNotFound) {
+			return ErrNoDeductRecord
+		}
+		if deductResult.Error != nil {
+			return deductResult.Error
+		}
+
 		// 幂等检查：该订单是否已回滚过
 		var existingLog entity.StockLog
 		result := tx.Where("order_id = ? AND change_type = ?", orderId, entity.StockChangeTypeRollback).First(&existingLog)

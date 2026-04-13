@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,7 +19,7 @@ type SeckillServiceClient struct {
 
 // NewSeckillServiceClient 创建秒杀服务客户端
 func NewSeckillServiceClient(c config.Config) (*SeckillServiceClient, error) {
-	client, err := buildSeckillClient(c.SeckillService, 8083)
+	client, err := buildSeckillClient(c.SeckillService, c.Fallback.SeckillServiceEndpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -29,9 +30,12 @@ func NewSeckillServiceClient(c config.Config) (*SeckillServiceClient, error) {
 }
 
 // buildSeckillClient 构建 seckill-service 客户端：优先 etcd，fallback 到 localhost
-func buildSeckillClient(conf zrpc.RpcClientConf, port int) (zrpc.Client, error) {
+func buildSeckillClient(conf zrpc.RpcClientConf, fallbackEndpoint string) (zrpc.Client, error) {
 	if len(conf.Etcd.Hosts) == 0 {
-		conf.Endpoints = []string{fmt.Sprintf("127.0.0.1:%d", port)}
+		if fallbackEndpoint == "" {
+			fallbackEndpoint = fmt.Sprintf("127.0.0.1:%d", 9083)
+		}
+		conf.Endpoints = []string{fallbackEndpoint}
 	}
 	client, err := zrpc.NewClient(conf)
 	if err != nil {
@@ -49,9 +53,18 @@ func (c *SeckillServiceClient) UpdateOrderStatus(ctx context.Context, orderId, s
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := c.client.UpdateOrderStatus(ctx, &seckill.UpdateOrderStatusRequest{
+	resp, err := c.client.UpdateOrderStatus(ctx, &seckill.UpdateOrderStatusRequest{
 		OrderId: orderId,
 		Status:  status,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return errors.New("update order status returned nil response")
+	}
+	if !resp.Success {
+		return fmt.Errorf("update order status rejected: %s", resp.Message)
+	}
+	return nil
 }

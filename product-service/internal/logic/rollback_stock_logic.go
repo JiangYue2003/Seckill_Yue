@@ -9,7 +9,11 @@ import (
 	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+const noDeductRecordCode = "NO_DEDUCT_RECORD"
 
 type RollbackStockLogic struct {
 	ctx    context.Context
@@ -61,6 +65,10 @@ func (l *RollbackStockLogic) RollbackStock(in *product.RollbackStockRequest) (*p
 				Message:        "库存已回滚",
 				RemainingStock: int64(stock),
 			}, nil
+		}
+		if errors.Is(err, model.ErrNoDeductRecord) {
+			l.Logger.Infof("未找到扣减记录，拒绝回滚: orderId=%s, productId=%d", in.OrderId, in.ProductId)
+			return nil, status.Error(codes.FailedPrecondition, noDeductRecordCode)
 		}
 		l.Logger.Errorf("回滚库存失败: %v", err)
 		return nil, errors.New("回滚库存失败，请稍后重试")

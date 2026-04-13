@@ -29,4 +29,10 @@ type Config struct {
 
 	// Seckill Service gRPC 配置（通过 etcd 发现）
 	SeckillService zrpc.RpcClientConf
+
+	// Fallback 直连配置（etcd 不可用时使用）
+	Fallback struct {
+		ProductServiceEndpoint string
+		SeckillServiceEndpoint string
+	}
 }

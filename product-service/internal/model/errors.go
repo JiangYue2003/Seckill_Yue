@@ -10,4 +10,5 @@ var (
 	ErrStockNotEnough  = errors.New("stock not enough")
 	ErrAlreadyRollback = errors.New("stock already rolled back")
 	ErrAlreadyDeducted = errors.New("stock already deducted")
+	ErrNoDeductRecord  = errors.New("no deduct record for rollback")
 )
