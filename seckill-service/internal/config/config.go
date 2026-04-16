@@ -9,7 +9,20 @@ type Config struct {
 
 	// Redis 配置
 	SeckillRedis struct {
-		Host string
+		Host           string
+		PoolSize       int
+		MinIdleConns   int
+		DialTimeoutMs  int
+		ReadTimeoutMs  int
+		WriteTimeoutMs int
+		PoolTimeoutMs  int
+	}
+
+	// 秒杀商品元数据本地缓存
+	ProductMetaCache struct {
+		Enabled        bool
+		RefreshSeconds int64
+		ScanCount      int64
 	}
 
 	// RabbitMQ 配置

@@ -166,6 +166,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 	// 生成订单号
 	orderId := utils.GenerateOrderId(OrderIdPrefix)
+	amount := seckillPrice * quantity
 
 	// 秒杀 Lua 脚本执行（携带时间校验参数）
 	// 注意：TTL 用于用户预占 Key，设置为 5 分钟（UserPreemptTTL）
@@ -178,6 +179,10 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		TTL:              UserPreemptTTL,
 		StartTime:        startTime,
 		EndTime:          endTime,
+		ProductId:        productId,
+		Amount:           amount,
+		ProductName:      productName,
+		OrderStatusTTL:   OrderStatusTTL,
 	}
 
 	// 执行 Redis Lua 脚本（原子性操作）
@@ -277,8 +282,6 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		l.Logger.Debugf("秒杀成功，准备异步发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
 
-		amount := seckillPrice * quantity
-
 		// 构建秒杀成功消息
 		seckillMsg := &mq.SeckillOrderMessage{
 			OrderId:          orderId,
@@ -308,17 +311,6 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			l.Logger.Errorf("异步MQ缓冲区满，降级处理（库存依赖TTL自然归还）: orderId=%s, err=%v", orderId, err)
 		} else {
 			metrics.SeckillMQEnqueueTotal.WithLabelValues("async", "ok").Inc()
-		}
-
-		// 设置订单状态为处理中（存储完整订单信息用于后续查询）
-		if setErr := l.svcCtx.Redis.SetOrderInfo(l.ctx, orderId, &redis.OrderInfo{
-			Status:      OrderStatusPending,
-			ProductId:   productId,
-			Quantity:    quantity,
-			Amount:      amount,
-			ProductName: productName,
-		}, OrderStatusTTL); setErr != nil {
-			l.Logger.Errorf("设置订单状态失败: orderId=%s, err=%v", orderId, setErr)
 		}
 
 		l.Logger.Debugf("秒杀成功: userId=%d, seckillProductId=%d, orderId=%s",
@@ -367,10 +359,13 @@ func (l *SeckillLogic) quotaLeaseTTLSeconds() int64 {
 // getSeckillProductInfo 从 Redis 获取秒杀商品信息（productId, seckillPrice, productName, startTime, endTime）
 // 实际生产环境应在秒杀开始前将商品信息预加载到 Redis
 func (l *SeckillLogic) getSeckillProductInfo(ctx context.Context, seckillProductId int64) (int64, int64, string, int64, int64) {
-	productId, seckillPrice, productName, startTime, endTime, err := l.svcCtx.Redis.GetSeckillProductInfo(ctx, seckillProductId)
+	meta, err := l.svcCtx.GetSeckillProductMeta(ctx, seckillProductId)
 	if err != nil {
-		l.Logger.Errorf("获取秒杀商品信息失败: seckillProductId=%d, err=%v", seckillProductId, err)
+		l.Logger.Errorf("获取秒杀商品元数据失败: seckillProductId=%d, err=%v", seckillProductId, err)
 		return 0, 0, "", 0, 0
 	}
-	return productId, seckillPrice, productName, startTime, endTime
+	if meta == nil {
+		return 0, 0, "", 0, 0
+	}
+	return meta.ProductId, meta.SeckillPrice, meta.ProductName, meta.StartTime, meta.EndTime
 }

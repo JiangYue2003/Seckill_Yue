@@ -25,6 +25,17 @@ Redis:
 
 SeckillRedis:
   Host: localhost:6379
+  PoolSize: 256
+  MinIdleConns: 32
+  DialTimeoutMs: 200
+  ReadTimeoutMs: 200
+  WriteTimeoutMs: 200
+  PoolTimeoutMs: 200
+
+ProductMetaCache:
+  Enabled: true
+  RefreshSeconds: 3
+  ScanCount: 500
 
 RabbitMQ:
   URL: amqp://guest:guest@localhost:5672/

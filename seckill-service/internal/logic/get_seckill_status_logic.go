@@ -51,12 +51,17 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 	now := time.Now().Unix()
 
 	// ========== 检查秒杀活动时间范围 ==========
-	_, _, _, startTime, endTime, err := l.svcCtx.Redis.GetSeckillProductInfo(l.ctx, in.SeckillProductId)
+	meta, err := l.svcCtx.GetSeckillProductMeta(l.ctx, in.SeckillProductId)
 	if err != nil {
 		l.Logger.Errorf("获取秒杀商品信息失败: seckillProductId=%d, err=%v", in.SeckillProductId, err)
 		return &seckill.SeckillStatusResponse{
 			Status: OrderStatusPending,
 		}, nil
+	}
+	var startTime, endTime int64
+	if meta != nil {
+		startTime = meta.StartTime
+		endTime = meta.EndTime
 	}
 
 	if startTime > 0 && now < startTime {

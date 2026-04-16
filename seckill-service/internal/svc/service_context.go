@@ -16,11 +16,13 @@ import (
 )
 
 type ServiceContext struct {
-	Config        config.Config
-	Redis         *redis.SeckillRedis
-	AsyncProducer *mq.AsyncProducer
-	InstanceID    string
+	Config           config.Config
+	Redis            *redis.SeckillRedis
+	AsyncProducer    *mq.AsyncProducer
+	ProductMetaCache *ProductMetaCache
+	InstanceID       string
 
+	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bgWg     sync.WaitGroup
 	stopOnce sync.Once
@@ -28,7 +30,15 @@ type ServiceContext struct {
 
 func NewServiceContext(c config.Config) *ServiceContext {
 	// 初始化 Redis
-	redisClient, err := redis.NewSeckillRedis(c.SeckillRedis.Host)
+	redisClient, err := redis.NewSeckillRedis(redis.ClientConfig{
+		Host:           c.SeckillRedis.Host,
+		PoolSize:       c.SeckillRedis.PoolSize,
+		MinIdleConns:   c.SeckillRedis.MinIdleConns,
+		DialTimeoutMs:  c.SeckillRedis.DialTimeoutMs,
+		ReadTimeoutMs:  c.SeckillRedis.ReadTimeoutMs,
+		WriteTimeoutMs: c.SeckillRedis.WriteTimeoutMs,
+		PoolTimeoutMs:  c.SeckillRedis.PoolTimeoutMs,
+	})
 	if err != nil {
 		logx.Errorf("failed to initialize redis: %v", err)
 		panic(err)
@@ -51,11 +61,27 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	)
 
 	instanceID := buildInstanceID()
+	productMetaCache := NewProductMetaCache(
+		c.ProductMetaCache.Enabled,
+		redisClient,
+		c.ProductMetaCache.RefreshSeconds,
+		c.ProductMetaCache.ScanCount,
+	)
 	ctx := &ServiceContext{
-		Config:        c,
-		Redis:         redisClient,
-		AsyncProducer: asyncProducer,
-		InstanceID:    instanceID,
+		Config:           c,
+		Redis:            redisClient,
+		AsyncProducer:    asyncProducer,
+		ProductMetaCache: productMetaCache,
+		InstanceID:       instanceID,
+	}
+
+	if productMetaCache != nil && productMetaCache.Enabled() {
+		if count, preloadErr := productMetaCache.Refresh(context.Background()); preloadErr != nil {
+			logx.Errorf("preload product meta cache failed: %v", preloadErr)
+		} else {
+			logx.Infof("product meta cache preloaded: count=%d", count)
+		}
+		ctx.startProductMetaRefreshWorker()
 	}
 
 	if c.LocalQuota.Enabled {
@@ -74,8 +100,7 @@ func buildInstanceID() string {
 }
 
 func (s *ServiceContext) startQuotaBackgroundWorkers() {
-	bgCtx, cancel := context.WithCancel(context.Background())
-	s.bgCancel = cancel
+	bgCtx := s.ensureBackgroundContext()
 
 	heartbeatInterval := time.Duration(s.Config.LocalQuota.HeartbeatSeconds) * time.Second
 	if heartbeatInterval <= 0 {
@@ -126,6 +151,16 @@ func (s *ServiceContext) startQuotaBackgroundWorkers() {
 			}
 		}
 	}()
+}
+
+func (s *ServiceContext) ensureBackgroundContext() context.Context {
+	if s.bgCtx != nil {
+		return s.bgCtx
+	}
+	bgCtx, cancel := context.WithCancel(context.Background())
+	s.bgCtx = bgCtx
+	s.bgCancel = cancel
+	return bgCtx
 }
 
 func (s *ServiceContext) Stop() {

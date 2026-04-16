@@ -46,19 +46,64 @@ const (
 	CompensateResultOrderNotFound  = -1 // 订单不存在或已过期
 )
 
+const (
+	defaultPoolSize      = 256
+	defaultMinIdleConns  = 32
+	defaultDialTimeoutMs = 200
+	defaultRWTimeoutMs   = 200
+	defaultPoolTimeoutMs = 200
+	defaultScanCount     = 500
+)
+
+type ClientConfig struct {
+	Host           string
+	Password       string
+	DB             int
+	PoolSize       int
+	MinIdleConns   int
+	DialTimeoutMs  int
+	ReadTimeoutMs  int
+	WriteTimeoutMs int
+	PoolTimeoutMs  int
+}
+
+type SeckillProductMeta struct {
+	SeckillProductId int64
+	ProductId        int64
+	SeckillPrice     int64
+	ProductName      string
+	StartTime        int64
+	EndTime          int64
+}
+
 // seckillLuaScript 秒杀 Lua 脚本
-// 功能：原子性完成 时间校验 + 防重 + 库存扣减 + 预锁定
+// 功能：原子性完成 时间校验 + 防重 + 库存扣减 + 预锁定 + 订单 pending 状态写入
 // 返回值：{结果码, 剩余库存}
-// ARGV[1]: quantity, ARGV[2]: orderId, ARGV[3]: TTL, ARGV[4]: startTime, ARGV[5]: endTime
+// KEYS[1]: stockKey, KEYS[2]: userKey, KEYS[3]: orderKey
+// ARGV[1]: quantity
+// ARGV[2]: orderId
+// ARGV[3]: userKeyTTLSeconds
+// ARGV[4]: startTime
+// ARGV[5]: endTime
+// ARGV[6]: nowUnix
+// ARGV[7]: productId
+// ARGV[8]: amount
+// ARGV[9]: productName
+// ARGV[10]: orderStatusTTLSeconds
 var seckillLuaScript = `
 local stockKey = KEYS[1]
 local userKey = KEYS[2]
+local orderKey = KEYS[3]
 local quantity = tonumber(ARGV[1])
 local orderId = ARGV[2]
 local ttl = tonumber(ARGV[3])
 local startTime = tonumber(ARGV[4])
 local endTime = tonumber(ARGV[5])
 local now = tonumber(ARGV[6])
+local productId = tonumber(ARGV[7] or "0")
+local amount = tonumber(ARGV[8] or "0")
+local productName = ARGV[9] or ""
+local orderTTL = tonumber(ARGV[10] or "0")
 
 -- 0. 时间校验
 if startTime > 0 and now < startTime then
@@ -92,6 +137,14 @@ end
 
 -- 4. 记录用户购买记录（TTL 需足够覆盖订单处理时间）
 redis.call('SETEX', userKey, ttl, orderId)
+
+-- 5. 写入订单 pending 状态（保持现有格式：status:productId:quantity:amount:productName）
+local orderValue = 'pending:' .. tostring(productId) .. ':' .. tostring(quantity) .. ':' .. tostring(amount) .. ':' .. productName
+if orderTTL > 0 then
+    redis.call('SETEX', orderKey, orderTTL, orderValue)
+else
+    redis.call('SET', orderKey, orderValue)
+end
 
 return {1, newStock}
 `
@@ -219,22 +272,32 @@ return {allocated, currentBucket, reclaimed}
 // quotaConsumeLuaScript 消费实例桶配额做秒杀裁决
 // KEYS[1]: instance bucket key
 // KEYS[2]: user preempt key
+// KEYS[3]: order status key
 // ARGV[1]: quantity
 // ARGV[2]: orderId
 // ARGV[3]: userKeyTTL
 // ARGV[4]: startTime
 // ARGV[5]: endTime
 // ARGV[6]: nowUnix
+// ARGV[7]: productId
+// ARGV[8]: amount
+// ARGV[9]: productName
+// ARGV[10]: orderStatusTTLSeconds
 // return: {code, bucketRemaining}
 var quotaConsumeLuaScript = `
 local bucketKey = KEYS[1]
 local userKey = KEYS[2]
+local orderKey = KEYS[3]
 local quantity = tonumber(ARGV[1])
 local orderId = ARGV[2]
 local ttl = tonumber(ARGV[3])
 local startTime = tonumber(ARGV[4])
 local endTime = tonumber(ARGV[5])
 local now = tonumber(ARGV[6])
+local productId = tonumber(ARGV[7] or "0")
+local amount = tonumber(ARGV[8] or "0")
+local productName = ARGV[9] or ""
+local orderTTL = tonumber(ARGV[10] or "0")
 
 if startTime > 0 and now < startTime then
     local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
@@ -263,6 +326,14 @@ if newBucket < 0 then
 end
 
 redis.call('SETEX', userKey, ttl, orderId)
+
+local orderValue = 'pending:' .. tostring(productId) .. ':' .. tostring(quantity) .. ':' .. tostring(amount) .. ':' .. productName
+if orderTTL > 0 then
+    redis.call('SETEX', orderKey, orderTTL, orderValue)
+else
+    redis.call('SET', orderKey, orderValue)
+end
+
 return {1, newBucket}
 `
 
@@ -310,12 +381,43 @@ type SeckillRedis struct {
 }
 
 // NewSeckillRedis 创建 SeckillRedis 实例
-func NewSeckillRedis(host string) (*SeckillRedis, error) {
+func NewSeckillRedis(conf ClientConfig) (*SeckillRedis, error) {
+	if conf.Host == "" {
+		conf.Host = "127.0.0.1:6379"
+	}
+	if conf.PoolSize <= 0 {
+		conf.PoolSize = defaultPoolSize
+	}
+	if conf.MinIdleConns <= 0 {
+		conf.MinIdleConns = defaultMinIdleConns
+	}
+	if conf.DialTimeoutMs <= 0 {
+		conf.DialTimeoutMs = defaultDialTimeoutMs
+	}
+	if conf.ReadTimeoutMs <= 0 {
+		conf.ReadTimeoutMs = defaultRWTimeoutMs
+	}
+	if conf.WriteTimeoutMs <= 0 {
+		conf.WriteTimeoutMs = defaultRWTimeoutMs
+	}
+	if conf.PoolTimeoutMs <= 0 {
+		conf.PoolTimeoutMs = defaultPoolTimeoutMs
+	}
+
 	client := redis.NewClient(&redis.Options{
-		Addr:     host,
-		Password: "",
-		DB:       0,
+		Addr:         conf.Host,
+		Password:     conf.Password,
+		DB:           conf.DB,
+		PoolSize:     conf.PoolSize,
+		MinIdleConns: conf.MinIdleConns,
+		DialTimeout:  time.Duration(conf.DialTimeoutMs) * time.Millisecond,
+		ReadTimeout:  time.Duration(conf.ReadTimeoutMs) * time.Millisecond,
+		WriteTimeout: time.Duration(conf.WriteTimeoutMs) * time.Millisecond,
+		PoolTimeout:  time.Duration(conf.PoolTimeoutMs) * time.Millisecond,
 	})
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		return nil, fmt.Errorf("ping redis failed: %w", err)
+	}
 
 	return &SeckillRedis{
 		client: client,
@@ -331,6 +433,10 @@ type SeckillRequest struct {
 	TTL              int64 // 过期时间(秒)
 	StartTime        int64 // 秒杀开始时间戳（秒）
 	EndTime          int64 // 秒杀结束时间戳（秒）
+	ProductId        int64
+	Amount           int64
+	ProductName      string
+	OrderStatusTTL   int64
 }
 
 // SeckillResult 秒杀结果
@@ -343,8 +449,9 @@ type SeckillResult struct {
 func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*SeckillResult, error) {
 	stockKey := KeyPrefixSeckillStock + strconv.FormatInt(req.SeckillProductId, 10)
 	userKey := KeyPrefixSeckillUser + strconv.FormatInt(req.SeckillProductId, 10) + ":" + strconv.FormatInt(req.UserId, 10)
+	orderKey := KeyPrefixSeckillOrder + req.OrderId
 
-	keys := []string{stockKey, userKey}
+	keys := []string{stockKey, userKey, orderKey}
 	argv := []interface{}{
 		req.Quantity,
 		req.OrderId,
@@ -352,6 +459,10 @@ func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*Sec
 		req.StartTime,
 		req.EndTime,
 		time.Now().Unix(),
+		req.ProductId,
+		req.Amount,
+		req.ProductName,
+		req.OrderStatusTTL,
 	}
 
 	// Lua 脚本返回 {code, stock}
@@ -475,6 +586,61 @@ func (r *SeckillRedis) GetSeckillProductInfo(ctx context.Context, seckillProduct
 	}
 
 	return productId, seckillPrice, productName, startTime, endTime, nil
+}
+
+func (r *SeckillRedis) GetSeckillProductMeta(ctx context.Context, seckillProductId int64) (*SeckillProductMeta, error) {
+	productId, seckillPrice, productName, startTime, endTime, err := r.GetSeckillProductInfo(ctx, seckillProductId)
+	if err != nil {
+		return nil, err
+	}
+	if productId == 0 && seckillPrice == 0 && startTime == 0 && endTime == 0 {
+		return nil, nil
+	}
+	return &SeckillProductMeta{
+		SeckillProductId: seckillProductId,
+		ProductId:        productId,
+		SeckillPrice:     seckillPrice,
+		ProductName:      productName,
+		StartTime:        startTime,
+		EndTime:          endTime,
+	}, nil
+}
+
+func (r *SeckillRedis) LoadAllSeckillProductMeta(ctx context.Context, scanCount int64) (map[int64]*SeckillProductMeta, error) {
+	if scanCount <= 0 {
+		scanCount = defaultScanCount
+	}
+	result := make(map[int64]*SeckillProductMeta)
+	var cursor uint64
+
+	for {
+		keys, nextCursor, err := r.client.Scan(ctx, cursor, KeyPrefixSeckillInfo+"*", scanCount).Result()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, key := range keys {
+			spidText := strings.TrimPrefix(key, KeyPrefixSeckillInfo)
+			seckillProductId, parseErr := strconv.ParseInt(spidText, 10, 64)
+			if parseErr != nil {
+				continue
+			}
+			meta, metaErr := r.GetSeckillProductMeta(ctx, seckillProductId)
+			if metaErr != nil {
+				return nil, metaErr
+			}
+			if meta != nil {
+				result[seckillProductId] = meta
+			}
+		}
+
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+
+	return result, nil
 }
 
 // OrderInfo 订单信息（用于 GetSeckillResult 查询）
@@ -691,8 +857,9 @@ func (r *SeckillRedis) EnsureQuota(ctx context.Context, seckillProductId int64, 
 func (r *SeckillRedis) DoSeckillWithQuota(ctx context.Context, req *SeckillRequest, instanceID string) (*SeckillResult, error) {
 	bucketKey := quotaBucketKey(req.SeckillProductId, instanceID)
 	userKey := KeyPrefixSeckillUser + strconv.FormatInt(req.SeckillProductId, 10) + ":" + strconv.FormatInt(req.UserId, 10)
+	orderKey := KeyPrefixSeckillOrder + req.OrderId
 
-	keys := []string{bucketKey, userKey}
+	keys := []string{bucketKey, userKey, orderKey}
 	argv := []interface{}{
 		req.Quantity,
 		req.OrderId,
@@ -700,6 +867,10 @@ func (r *SeckillRedis) DoSeckillWithQuota(ctx context.Context, req *SeckillReque
 		req.StartTime,
 		req.EndTime,
 		time.Now().Unix(),
+		req.ProductId,
+		req.Amount,
+		req.ProductName,
+		req.OrderStatusTTL,
 	}
 
 	raw, err := r.client.Eval(ctx, quotaConsumeLuaScript, keys, argv...).Result()
