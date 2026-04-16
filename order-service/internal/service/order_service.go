@@ -95,7 +95,12 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 
 	// ========== 2. 加入批量写入缓冲区（幂等检查在 BatchWriter 内部）==========
 	if s.batchWriter != nil {
-		s.batchWriter.AddOrder(order, seckillRecord)
+		s.batchWriter.AddOrder(order, seckillRecord, func(persisted bool) {
+			if !persisted {
+				return
+			}
+			s.markSeckillOrderSuccess(context.Background(), msg.OrderId)
+		})
 	} else {
 		// 降级：BatchWriter 未初始化时，回退到同步写入（需要单独检查幂等）
 		exists, err := s.orderModel.CheckIdempotency(ctx, msg.OrderId)
@@ -106,6 +111,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		}
 		if exists {
 			logger.Debugf("订单已存在，跳过处理: orderId=%s", msg.OrderId)
+			s.markSeckillOrderSuccess(ctx, msg.OrderId)
 			resultLabel = "idempotent_skip"
 			return nil
 		}
@@ -118,15 +124,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		if err := s.seckillOrderModel.Insert(ctx, seckillRecord); err != nil {
 			logger.Errorf("写入秒杀购买记录失败: orderId=%s, err=%v", msg.OrderId, err)
 		}
-	}
-
-	// ========== 3. 回写 Redis 订单状态为 success（降级：失败只记录日志）==========
-	if s.seckillSvcRPC != nil {
-		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "success"); rpcErr != nil {
-			logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", msg.OrderId, rpcErr)
-		} else {
-			logger.Debugf("Redis 订单状态已更新为 success: orderId=%s", msg.OrderId)
-		}
+		s.markSeckillOrderSuccess(ctx, msg.OrderId)
 	}
 
 	logger.Debugf("秒杀订单处理成功（已加入批量写入队列）: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
@@ -136,7 +134,8 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 
 // ProcessOrderTimeout 延迟队列超时兜底处理
 // 秒杀成功后5分钟，检查订单是否仍处于 pending 状态
-// 若 pending（MQ消费全部失败），标记订单失败并回滚MySQL库存
+// 若订单在 MySQL 不存在（主消费链路失败），触发 seckill-service 原子补偿：
+// pending -> failed + 回补 Redis 库存 + 释放 userKey
 func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
@@ -162,39 +161,53 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 		return nil
 	}
 
-	// 订单在 MySQL 中不存在 → ProcessSeckillOrder 全部重试失败，执行兜底回滚
-	logger.Errorf("订单超时未完成，执行兜底回滚: orderId=%s (not found in DB)", msg.OrderId)
-
-	// 1. 更新 Redis 订单状态为 failed
-	if s.seckillSvcRPC != nil {
-		if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, msg.OrderId, "failed"); rpcErr != nil {
-			logger.Errorf("更新Redis订单状态失败: orderId=%s, err=%v", msg.OrderId, rpcErr)
-			timeoutResult = "redis_update_failed"
-			// 非致命，继续回滚库存
-		}
+	// 订单在 MySQL 中不存在 → ProcessSeckillOrder 全部重试失败，触发 Redis 原子补偿
+	logger.Errorf("订单超时未完成，执行 failed 补偿: orderId=%s (not found in DB)", msg.OrderId)
+	if s.seckillSvcRPC == nil {
+		timeoutResult = "compensate_client_nil"
+		return errors.New("seckill rpc client is nil")
 	}
 
-	// 2. 回滚 MySQL 物理库存（幂等，基于 orderId 防重）
-	// 安全门禁：仅当 product-service 侧存在 deduct 日志时才允许回滚，避免“未扣先回”
-	if s.productSvcRPC != nil {
-		if rpcErr := s.productSvcRPC.RollbackStock(ctx, msg.ProductId, msg.Quantity, msg.OrderId); rpcErr != nil {
-			if rpc.IsNoDeductRecordError(rpcErr) {
-				logger.Infof("跳过库存回滚（无扣减记录）: orderId=%s, productId=%d", msg.OrderId, msg.ProductId)
-				timeoutResult = "skip_no_deduct"
-				return nil
-			}
-			logger.Errorf("回滚物理库存失败: orderId=%s, productId=%d, err=%v",
-				msg.OrderId, msg.ProductId, rpcErr)
-			timeoutResult = "rollback_failed"
-			// 非致命，记录日志供人工处理
-		}
+	compensateResp, rpcErr := s.seckillSvcRPC.CompensateFailedOrder(
+		ctx,
+		msg.OrderId,
+		msg.SeckillProductId,
+		msg.UserId,
+		msg.Quantity,
+		"timeout_not_found_in_db",
+	)
+	if rpcErr != nil {
+		logger.Errorf("failed compensation rpc error: orderId=%s, err=%v", msg.OrderId, rpcErr)
+		timeoutResult = "compensate_rpc_error"
+		return rpcErr
 	}
 
-	logger.Debugf("超时兜底处理完成: orderId=%s", msg.OrderId)
-	if timeoutResult == "unknown" {
+	switch compensateResp.GetResult() {
+	case "compensated":
 		timeoutResult = "compensated_ok"
+	case "idempotent_failed":
+		timeoutResult = "compensated_idempotent"
+	case "already_success":
+		timeoutResult = "skip_already_success"
+	case "order_not_found":
+		timeoutResult = "skip_order_missing"
+	default:
+		timeoutResult = "compensate_unexpected_result"
 	}
-	return nil // 总是 Ack，避免无限重试（已记录日志，人工处理残留问题）
+	logger.Debugf("超时补偿处理完成: orderId=%s, result=%s", msg.OrderId, compensateResp.GetResult())
+	return nil
+}
+
+func (s *OrderService) markSeckillOrderSuccess(ctx context.Context, orderId string) {
+	logger := logx.WithContext(ctx)
+	if s.seckillSvcRPC == nil {
+		return
+	}
+	if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, orderId, "success", true); rpcErr != nil {
+		logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", orderId, rpcErr)
+		return
+	}
+	logger.Debugf("Redis 订单状态已更新为 success: orderId=%s", orderId)
 }
 
 // RollbackSeckillOrder 回滚秒杀订单（取消时调用）

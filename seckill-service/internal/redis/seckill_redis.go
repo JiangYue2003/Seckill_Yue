@@ -37,6 +37,13 @@ const (
 	OrderStatusFailed   = "failed"
 	OrderStatusNotStart = "not_started"
 	OrderStatusEnded    = "ended"
+
+	// failed 补偿执行结果码
+	CompensateResultCompensated    = 0  // pending -> failed 并完成库存回补
+	CompensateResultAlreadyFailed  = 1  // 已是 failed，幂等返回
+	CompensateResultAlreadySuccess = 2  // 已是 success，不执行回补
+	CompensateResultInvalidStatus  = 3  // 非法中间状态
+	CompensateResultOrderNotFound  = -1 // 订单不存在或已过期
 )
 
 // seckillLuaScript 秒杀 Lua 脚本
@@ -87,6 +94,63 @@ end
 redis.call('SETEX', userKey, ttl, orderId)
 
 return {1, newStock}
+`
+
+// compensateFailedOrderLuaScript 原子执行超时失败补偿
+// KEYS[1]: order status key (seckill:order:{orderId})
+// KEYS[2]: stock key (seckill:stock:{seckillProductId})
+// KEYS[3]: user key (seckill:user:{seckillProductId}:{userId})
+// ARGV[1]: quantity
+// ARGV[2]: orderStatusTTLSeconds
+// return: {code, stock}
+var compensateFailedOrderLuaScript = `
+local orderKey = KEYS[1]
+local stockKey = KEYS[2]
+local userKey = KEYS[3]
+local quantity = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+
+local orderVal = redis.call('GET', orderKey)
+if not orderVal then
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {-1, currentStock}
+end
+
+local currentStatus = orderVal
+local idx = string.find(orderVal, ':')
+if idx then
+    currentStatus = string.sub(orderVal, 1, idx - 1)
+end
+
+if currentStatus == 'failed' then
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {1, currentStock}
+end
+
+if currentStatus == 'success' then
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {2, currentStock}
+end
+
+if currentStatus ~= 'pending' then
+    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
+    return {3, currentStock}
+end
+
+local failedVal = 'failed'
+if idx then
+    failedVal = 'failed' .. string.sub(orderVal, idx)
+end
+
+if ttl > 0 then
+    redis.call('SETEX', orderKey, ttl, failedVal)
+else
+    redis.call('SET', orderKey, failedVal)
+end
+
+local newStock = redis.call('INCRBY', stockKey, quantity)
+redis.call('DEL', userKey)
+return {0, tonumber(newStock)}
 `
 
 // quotaAllocateLuaScript 批量领取配额并顺带回收过期租约
@@ -455,6 +519,47 @@ func (r *SeckillRedis) SetOrderInfo(ctx context.Context, orderId string, info *O
 	key := KeyPrefixSeckillOrder + orderId
 	value := fmt.Sprintf("%s:%d:%d:%d:%s", info.Status, info.ProductId, info.Quantity, info.Amount, info.ProductName)
 	return r.client.Set(ctx, key, value, time.Duration(ttl)*time.Second).Err()
+}
+
+// CompensateFailedOrder 原子执行超时失败补偿：
+// 1. 仅当订单当前为 pending 时将其更新为 failed
+// 2. 回补 Redis 秒杀库存
+// 3. 删除用户占位 key（允许用户重试）
+func (r *SeckillRedis) CompensateFailedOrder(
+	ctx context.Context,
+	orderId string,
+	seckillProductId int64,
+	userId int64,
+	quantity int64,
+	orderStatusTTL int64,
+) (int, int64, error) {
+	orderKey := KeyPrefixSeckillOrder + orderId
+	stockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
+	userKey := KeyPrefixSeckillUser + strconv.FormatInt(seckillProductId, 10) + ":" + strconv.FormatInt(userId, 10)
+
+	raw, err := r.client.Eval(
+		ctx,
+		compensateFailedOrderLuaScript,
+		[]string{orderKey, stockKey, userKey},
+		quantity,
+		orderStatusTTL,
+	).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("execute compensate failed lua failed: %w", err)
+	}
+
+	arr, ok := raw.([]interface{})
+	if !ok || len(arr) != 2 {
+		return 0, 0, fmt.Errorf("invalid compensate result: %v", raw)
+	}
+
+	code, ok1 := arr[0].(int64)
+	stock, ok2 := arr[1].(int64)
+	if !ok1 || !ok2 {
+		return 0, 0, fmt.Errorf("invalid compensate result type: %v", raw)
+	}
+
+	return int(code), stock, nil
 }
 
 // GetOrderInfo 获取订单完整信息

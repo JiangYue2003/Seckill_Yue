@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,8 +18,7 @@ type BatchWriter struct {
 	orderModel        model.OrderModel
 	seckillOrderModel model.SeckillOrderModel
 
-	orderBuffer   []*entity.Order
-	seckillBuffer []*entity.SeckillOrder
+	buffer []*bufferedOrder
 
 	maxBatchSize int           // 批量大小（默认 100）
 	flushTimeout time.Duration // 超时刷盘（默认 500ms）
@@ -27,6 +27,12 @@ type BatchWriter struct {
 	timer *time.Timer
 	done  chan struct{}
 	wg    sync.WaitGroup
+}
+
+type bufferedOrder struct {
+	order       *entity.Order
+	seckill     *entity.SeckillOrder
+	persistHook func(persisted bool)
 }
 
 // NewBatchWriter 创建批量写入器
@@ -46,8 +52,7 @@ func NewBatchWriter(
 	w := &BatchWriter{
 		orderModel:        orderModel,
 		seckillOrderModel: seckillOrderModel,
-		orderBuffer:       make([]*entity.Order, 0, maxBatchSize),
-		seckillBuffer:     make([]*entity.SeckillOrder, 0, maxBatchSize),
+		buffer:            make([]*bufferedOrder, 0, maxBatchSize),
 		maxBatchSize:      maxBatchSize,
 		flushTimeout:      time.Duration(flushTimeoutMs) * time.Millisecond,
 		done:              make(chan struct{}),
@@ -60,7 +65,8 @@ func NewBatchWriter(
 }
 
 // AddOrder 添加订单到缓冲区
-func (w *BatchWriter) AddOrder(order *entity.Order, seckillOrder *entity.SeckillOrder) {
+// persistHook 会在订单确认已落库（或幂等命中已存在）后触发
+func (w *BatchWriter) AddOrder(order *entity.Order, seckillOrder *entity.SeckillOrder, persistHook func(persisted bool)) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -68,24 +74,26 @@ func (w *BatchWriter) AddOrder(order *entity.Order, seckillOrder *entity.Seckill
 	select {
 	case <-w.done:
 		logx.Errorf("BatchWriter already closed, dropping order: %s", order.OrderId)
+		triggerPersistHook(persistHook, false)
 		return
 	default:
 	}
 
 	// 添加到缓冲区
-	w.orderBuffer = append(w.orderBuffer, order)
-	if seckillOrder != nil {
-		w.seckillBuffer = append(w.seckillBuffer, seckillOrder)
-	}
+	w.buffer = append(w.buffer, &bufferedOrder{
+		order:       order,
+		seckill:     seckillOrder,
+		persistHook: persistHook,
+	})
 
 	// 满了立即刷盘
-	if len(w.orderBuffer) >= w.maxBatchSize {
+	if len(w.buffer) >= w.maxBatchSize {
 		w.flushLocked()
 		return
 	}
 
 	// 首次添加时启动超时定时器
-	if w.timer == nil && len(w.orderBuffer) > 0 {
+	if w.timer == nil && len(w.buffer) > 0 {
 		w.timer = time.AfterFunc(w.flushTimeout, func() {
 			w.mu.Lock()
 			defer w.mu.Unlock()
@@ -103,7 +111,7 @@ func (w *BatchWriter) Flush() {
 
 // flushLocked 刷盘（内部调用，已持有锁）
 func (w *BatchWriter) flushLocked() {
-	if len(w.orderBuffer) == 0 {
+	if len(w.buffer) == 0 {
 		return
 	}
 
@@ -114,75 +122,82 @@ func (w *BatchWriter) flushLocked() {
 	}
 
 	// 复制缓冲区（避免持锁时间过长）
-	orders := make([]*entity.Order, len(w.orderBuffer))
-	copy(orders, w.orderBuffer)
-	seckillOrders := make([]*entity.SeckillOrder, len(w.seckillBuffer))
-	copy(seckillOrders, w.seckillBuffer)
+	items := make([]*bufferedOrder, len(w.buffer))
+	copy(items, w.buffer)
 
 	// 清空缓冲区
-	w.orderBuffer = w.orderBuffer[:0]
-	w.seckillBuffer = w.seckillBuffer[:0]
+	w.buffer = w.buffer[:0]
 
 	// 异步批量写入（不阻塞添加操作）
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
-		w.batchInsert(orders, seckillOrders)
+		w.batchInsert(items)
 	}()
 }
 
 // batchInsert 批量写入 MySQL
-func (w *BatchWriter) batchInsert(orders []*entity.Order, seckillOrders []*entity.SeckillOrder) {
+func (w *BatchWriter) batchInsert(items []*bufferedOrder) {
 	ctx := context.Background()
 	start := time.Now()
 
 	// 1. 批量幂等检查
-	orderIds := make([]string, len(orders))
-	for i, order := range orders {
-		orderIds[i] = order.OrderId
+	orderIds := make([]string, len(items))
+	for i, item := range items {
+		orderIds[i] = item.order.OrderId
 	}
 
 	existsMap, err := w.orderModel.BatchCheckIdempotency(ctx, orderIds)
 	if err != nil {
 		logx.Errorf("Batch check idempotency failed: %v", err)
 		// 失败时回退到单条检查+写入
-		w.fallbackInsertOrders(ctx, orders)
+		w.fallbackInsertOrders(ctx, items)
 		return
 	}
 
 	// 2. 过滤掉已存在的订单
-	validOrders := make([]*entity.Order, 0, len(orders))
-	validSeckillOrders := make([]*entity.SeckillOrder, 0, len(seckillOrders))
+	validItems := make([]*bufferedOrder, 0, len(items))
 	duplicateCount := 0
 
-	for i, order := range orders {
-		if existsMap[order.OrderId] {
+	for _, item := range items {
+		if existsMap[item.order.OrderId] {
 			duplicateCount++
+			triggerPersistHook(item.persistHook, true)
 			continue // 跳过重复订单
 		}
-		validOrders = append(validOrders, order)
-		if i < len(seckillOrders) {
-			validSeckillOrders = append(validSeckillOrders, seckillOrders[i])
-		}
+		validItems = append(validItems, item)
 	}
 
 	if duplicateCount > 0 {
-		logx.Infof("Filtered duplicate orders: %d/%d", duplicateCount, len(orders))
+		logx.Infof("Filtered duplicate orders: %d/%d", duplicateCount, len(items))
 	}
 
-	if len(validOrders) == 0 {
+	if len(validItems) == 0 {
 		logx.Info("All orders are duplicates, skipping batch insert")
 		return
+	}
+
+	validOrders := make([]*entity.Order, 0, len(validItems))
+	validSeckillOrders := make([]*entity.SeckillOrder, 0, len(validItems))
+	for _, item := range validItems {
+		validOrders = append(validOrders, item.order)
+		if item.seckill != nil {
+			validSeckillOrders = append(validSeckillOrders, item.seckill)
+		}
 	}
 
 	// 3. 批量写入有效订单
 	affected, err := w.orderModel.BatchInsert(ctx, validOrders)
 	if err != nil {
 		logx.Errorf("Batch insert orders failed: count=%d, err=%v", len(validOrders), err)
-		w.fallbackInsertOrders(ctx, validOrders)
+		w.fallbackInsertOrders(ctx, validItems)
+		return
 	} else {
 		logx.Infof("Batch insert orders success: total=%d, inserted=%d, duplicates=%d, duration=%dms",
-			len(orders), affected, duplicateCount, time.Since(start).Milliseconds())
+			len(items), affected, duplicateCount, time.Since(start).Milliseconds())
+		for _, item := range validItems {
+			triggerPersistHook(item.persistHook, true)
+		}
 	}
 
 	// 4. 批量写入 seckill_orders（异步，失败不影响主流程）
@@ -195,13 +210,34 @@ func (w *BatchWriter) batchInsert(orders []*entity.Order, seckillOrders []*entit
 }
 
 // fallbackInsertOrders 单条写入兜底
-func (w *BatchWriter) fallbackInsertOrders(ctx context.Context, orders []*entity.Order) {
-	logx.Infof("Fallback to single insert: count=%d", len(orders))
-	for _, order := range orders {
-		if err := w.orderModel.Insert(ctx, order); err != nil {
-			logx.Errorf("Fallback insert failed: orderId=%s, err=%v", order.OrderId, err)
+func (w *BatchWriter) fallbackInsertOrders(ctx context.Context, items []*bufferedOrder) {
+	logx.Infof("Fallback to single insert: count=%d", len(items))
+	for _, item := range items {
+		if err := w.orderModel.Insert(ctx, item.order); err != nil {
+			if isDuplicateInsertErr(err) {
+				triggerPersistHook(item.persistHook, true)
+				continue
+			}
+			logx.Errorf("Fallback insert failed: orderId=%s, err=%v", item.order.OrderId, err)
+			triggerPersistHook(item.persistHook, false)
+			continue
 		}
+		triggerPersistHook(item.persistHook, true)
 	}
+}
+
+func isDuplicateInsertErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate")
+}
+
+func triggerPersistHook(hook func(persisted bool), persisted bool) {
+	if hook == nil {
+		return
+	}
+	go hook(persisted)
 }
 
 // Shutdown 优雅关闭（刷完所有缓冲区）

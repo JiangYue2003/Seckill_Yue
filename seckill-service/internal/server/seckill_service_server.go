@@ -46,3 +46,9 @@ func (s *SeckillServiceServer) UpdateOrderStatus(ctx context.Context, in *seckil
 	l := logic.NewUpdateOrderStatusLogic(ctx, s.svcCtx)
 	return l.UpdateOrderStatus(in)
 }
+
+// 超时失败补偿（Order-Service 内部调用）
+func (s *SeckillServiceServer) CompensateFailedOrder(ctx context.Context, in *seckill.CompensateFailedOrderRequest) (*seckill.CompensateFailedOrderResponse, error) {
+	l := logic.NewCompensateFailedOrderLogic(ctx, s.svcCtx)
+	return l.CompensateFailedOrder(in)
+}

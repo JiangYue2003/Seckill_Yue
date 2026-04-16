@@ -65,13 +65,17 @@ func (l *UpdateOrderStatusLogic) UpdateOrderStatus(in *seckill.UpdateOrderStatus
 		}, nil
 	}
 
-	// 状态已是终态时直接返回成功（幂等）
+	// 状态已是终态时默认幂等跳过，允许受控自愈 failed -> success
 	if orderInfo.Status == redis.OrderStatusSuccess || orderInfo.Status == redis.OrderStatusFailed {
-		l.Logger.Infof("订单已是终态，跳过更新: orderId=%s, status=%s", in.OrderId, orderInfo.Status)
-		return &seckill.UpdateOrderStatusResponse{
-			Success: true,
-			Message: "订单状态已是终态",
-		}, nil
+		if orderInfo.Status == redis.OrderStatusFailed && in.Status == redis.OrderStatusSuccess && in.AllowRecover {
+			// 允许从 failed 自愈到 success（仅内部补偿链路使用）
+		} else {
+			l.Logger.Infof("订单已是终态，跳过更新: orderId=%s, status=%s", in.OrderId, orderInfo.Status)
+			return &seckill.UpdateOrderStatusResponse{
+				Success: true,
+				Message: "订单状态已是终态",
+			}, nil
+		}
 	}
 
 	// 更新状态

@@ -58,11 +58,28 @@ message SeckillResultResponse {
 message UpdateOrderStatusRequest {
     string order_id = 1;          // 订单号 [required]
     string status = 2;            // 新状态 [required]: "success" | "failed"
+    bool allow_recover = 3;       // 是否允许 failed -> success 的受控自愈 [optional, default=false]
 }
 
 message UpdateOrderStatusResponse {
     bool success = 1;
     string message = 2;
+}
+
+// 超时失败补偿（Order-Service 超时检查后调用）
+// 语义：仅当当前状态为 pending 时，原子执行 pending -> failed + 回补 Redis 秒杀库存 + 释放 userKey
+message CompensateFailedOrderRequest {
+    string order_id = 1;           // 订单号 [required]
+    int64 seckill_product_id = 2;  // 秒杀商品ID [required]
+    int64 user_id = 3;             // 用户ID [required]
+    int64 quantity = 4;            // 回补数量 [required]
+    string reason = 5;             // 失败原因 [optional]
+}
+
+message CompensateFailedOrderResponse {
+    bool success = 1;
+    string message = 2;
+    string result = 3;             // compensated | idempotent_failed | already_success | order_not_found | invalid_status
 }
 
 // 秒杀服务（gRPC）
@@ -78,4 +95,7 @@ service SeckillService {
 
     // 更新订单状态（Order-Service 内部调用，将 pending → success）
     rpc UpdateOrderStatus(UpdateOrderStatusRequest) returns (UpdateOrderStatusResponse);
+
+    // 超时失败补偿（Order-Service 内部调用）
+    rpc CompensateFailedOrder(CompensateFailedOrderRequest) returns (CompensateFailedOrderResponse);
 }

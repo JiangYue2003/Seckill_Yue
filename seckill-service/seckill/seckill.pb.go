@@ -420,8 +420,9 @@ func (x *SeckillResultResponse) GetMessage() string {
 // 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
 type UpdateOrderStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"` // 订单号 [required]
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                  // 新状态 [required]: "success" | "failed"
+	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`                 // 订单号 [required]
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                  // 新状态 [required]: "success" | "failed"
+	AllowRecover  bool                   `protobuf:"varint,3,opt,name=allow_recover,json=allowRecover,proto3" json:"allow_recover,omitempty"` // 是否允许 failed -> success 的受控自愈 [optional, default=false]
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -468,6 +469,13 @@ func (x *UpdateOrderStatusRequest) GetStatus() string {
 		return x.Status
 	}
 	return ""
+}
+
+func (x *UpdateOrderStatusRequest) GetAllowRecover() bool {
+	if x != nil {
+		return x.AllowRecover
+	}
+	return false
 }
 
 type UpdateOrderStatusResponse struct {
@@ -522,6 +530,144 @@ func (x *UpdateOrderStatusResponse) GetMessage() string {
 	return ""
 }
 
+// 超时失败补偿（Order-Service 超时检查后调用）
+// 语义：仅当当前状态为 pending 时，原子执行 pending -> failed + 回补 Redis 秒杀库存 + 释放 userKey
+type CompensateFailedOrderRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	OrderId          string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`                               // 订单号 [required]
+	SeckillProductId int64                  `protobuf:"varint,2,opt,name=seckill_product_id,json=seckillProductId,proto3" json:"seckill_product_id,omitempty"` // 秒杀商品ID [required]
+	UserId           int64                  `protobuf:"varint,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                                 // 用户ID [required]
+	Quantity         int64                  `protobuf:"varint,4,opt,name=quantity,proto3" json:"quantity,omitempty"`                                           // 回补数量 [required]
+	Reason           string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                                                // 失败原因 [optional]
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CompensateFailedOrderRequest) Reset() {
+	*x = CompensateFailedOrderRequest{}
+	mi := &file_seckill_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompensateFailedOrderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompensateFailedOrderRequest) ProtoMessage() {}
+
+func (x *CompensateFailedOrderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_seckill_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompensateFailedOrderRequest.ProtoReflect.Descriptor instead.
+func (*CompensateFailedOrderRequest) Descriptor() ([]byte, []int) {
+	return file_seckill_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CompensateFailedOrderRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *CompensateFailedOrderRequest) GetSeckillProductId() int64 {
+	if x != nil {
+		return x.SeckillProductId
+	}
+	return 0
+}
+
+func (x *CompensateFailedOrderRequest) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *CompensateFailedOrderRequest) GetQuantity() int64 {
+	if x != nil {
+		return x.Quantity
+	}
+	return 0
+}
+
+func (x *CompensateFailedOrderRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type CompensateFailedOrderResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Result        string                 `protobuf:"bytes,3,opt,name=result,proto3" json:"result,omitempty"` // compensated | idempotent_failed | already_success | order_not_found | invalid_status
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompensateFailedOrderResponse) Reset() {
+	*x = CompensateFailedOrderResponse{}
+	mi := &file_seckill_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompensateFailedOrderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompensateFailedOrderResponse) ProtoMessage() {}
+
+func (x *CompensateFailedOrderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_seckill_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompensateFailedOrderResponse.ProtoReflect.Descriptor instead.
+func (*CompensateFailedOrderResponse) Descriptor() ([]byte, []int) {
+	return file_seckill_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CompensateFailedOrderResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *CompensateFailedOrderResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CompensateFailedOrderResponse) GetResult() string {
+	if x != nil {
+		return x.Result
+	}
+	return ""
+}
+
 var File_seckill_proto protoreflect.FileDescriptor
 
 const file_seckill_proto_rawDesc = "" +
@@ -556,18 +702,30 @@ const file_seckill_proto_rawDesc = "" +
 	"\bquantity\x18\x05 \x01(\x03R\bquantity\x12\x16\n" +
 	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x12\x18\n" +
-	"\amessage\x18\b \x01(\tR\amessage\"M\n" +
+	"\amessage\x18\b \x01(\tR\amessage\"r\n" +
 	"\x18UpdateOrderStatusRequest\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\"O\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12#\n" +
+	"\rallow_recover\x18\x03 \x01(\bR\fallowRecover\"O\n" +
 	"\x19UpdateOrderStatusResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xd0\x02\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xb4\x01\n" +
+	"\x1cCompensateFailedOrderRequest\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12,\n" +
+	"\x12seckill_product_id\x18\x02 \x01(\x03R\x10seckillProductId\x12\x17\n" +
+	"\auser_id\x18\x03 \x01(\x03R\x06userId\x12\x1a\n" +
+	"\bquantity\x18\x04 \x01(\x03R\bquantity\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"k\n" +
+	"\x1dCompensateFailedOrderResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +
+	"\x06result\x18\x03 \x01(\tR\x06result2\xb8\x03\n" +
 	"\x0eSeckillService\x12<\n" +
 	"\aSeckill\x12\x17.seckill.SeckillRequest\x1a\x18.seckill.SeckillResponse\x12Q\n" +
 	"\x10GetSeckillStatus\x12\x1d.seckill.SeckillStatusRequest\x1a\x1e.seckill.SeckillStatusResponse\x12Q\n" +
 	"\x10GetSeckillResult\x12\x1d.seckill.SeckillResultRequest\x1a\x1e.seckill.SeckillResultResponse\x12Z\n" +
-	"\x11UpdateOrderStatus\x12!.seckill.UpdateOrderStatusRequest\x1a\".seckill.UpdateOrderStatusResponseB\vZ\t./seckillb\x06proto3"
+	"\x11UpdateOrderStatus\x12!.seckill.UpdateOrderStatusRequest\x1a\".seckill.UpdateOrderStatusResponse\x12f\n" +
+	"\x15CompensateFailedOrder\x12%.seckill.CompensateFailedOrderRequest\x1a&.seckill.CompensateFailedOrderResponseB\vZ\t./seckillb\x06proto3"
 
 var (
 	file_seckill_proto_rawDescOnce sync.Once
@@ -581,28 +739,32 @@ func file_seckill_proto_rawDescGZIP() []byte {
 	return file_seckill_proto_rawDescData
 }
 
-var file_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_seckill_proto_goTypes = []any{
-	(*SeckillRequest)(nil),            // 0: seckill.SeckillRequest
-	(*SeckillResponse)(nil),           // 1: seckill.SeckillResponse
-	(*SeckillStatusRequest)(nil),      // 2: seckill.SeckillStatusRequest
-	(*SeckillStatusResponse)(nil),     // 3: seckill.SeckillStatusResponse
-	(*SeckillResultRequest)(nil),      // 4: seckill.SeckillResultRequest
-	(*SeckillResultResponse)(nil),     // 5: seckill.SeckillResultResponse
-	(*UpdateOrderStatusRequest)(nil),  // 6: seckill.UpdateOrderStatusRequest
-	(*UpdateOrderStatusResponse)(nil), // 7: seckill.UpdateOrderStatusResponse
+	(*SeckillRequest)(nil),                // 0: seckill.SeckillRequest
+	(*SeckillResponse)(nil),               // 1: seckill.SeckillResponse
+	(*SeckillStatusRequest)(nil),          // 2: seckill.SeckillStatusRequest
+	(*SeckillStatusResponse)(nil),         // 3: seckill.SeckillStatusResponse
+	(*SeckillResultRequest)(nil),          // 4: seckill.SeckillResultRequest
+	(*SeckillResultResponse)(nil),         // 5: seckill.SeckillResultResponse
+	(*UpdateOrderStatusRequest)(nil),      // 6: seckill.UpdateOrderStatusRequest
+	(*UpdateOrderStatusResponse)(nil),     // 7: seckill.UpdateOrderStatusResponse
+	(*CompensateFailedOrderRequest)(nil),  // 8: seckill.CompensateFailedOrderRequest
+	(*CompensateFailedOrderResponse)(nil), // 9: seckill.CompensateFailedOrderResponse
 }
 var file_seckill_proto_depIdxs = []int32{
 	0, // 0: seckill.SeckillService.Seckill:input_type -> seckill.SeckillRequest
 	2, // 1: seckill.SeckillService.GetSeckillStatus:input_type -> seckill.SeckillStatusRequest
 	4, // 2: seckill.SeckillService.GetSeckillResult:input_type -> seckill.SeckillResultRequest
 	6, // 3: seckill.SeckillService.UpdateOrderStatus:input_type -> seckill.UpdateOrderStatusRequest
-	1, // 4: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
-	3, // 5: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
-	5, // 6: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
-	7, // 7: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
+	8, // 4: seckill.SeckillService.CompensateFailedOrder:input_type -> seckill.CompensateFailedOrderRequest
+	1, // 5: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
+	3, // 6: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
+	5, // 7: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
+	7, // 8: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
+	9, // 9: seckill.SeckillService.CompensateFailedOrder:output_type -> seckill.CompensateFailedOrderResponse
+	5, // [5:10] is the sub-list for method output_type
+	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -619,7 +781,7 @@ func file_seckill_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_seckill_proto_rawDesc), len(file_seckill_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
