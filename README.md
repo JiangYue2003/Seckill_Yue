@@ -1,220 +1,222 @@
-# ============================================================
-# Seckill-Mall 微服务项目
-# 高并发秒杀系统 - Go + go-zero 微服务架构
-# ============================================================
+# Seckill-Mall（Gin + go-zero）
 
-## 项目概览
+一个前后端分离的微服务秒杀系统，核心目标是**高并发下的正确性与可用性**：
+- 秒杀请求走 Redis Lua 原子裁决（防重 + 扣减 + 状态写入）
+- 订单创建走 RabbitMQ 异步落库
+- 超时订单走延迟队列 + 补偿回滚，避免库存悬挂
 
-本项目是一个高并发电商秒杀系统，采用 Go 语言 + go-zero 微服务框架开发。
+---
 
-### 技术栈
+## 1. 技术栈
 
-| 组件 | 技术选型 |
-|------|----------|
-| 网关层 | Gin HTTP 网关 |
-| 微服务框架 | go-zero |
-| 数据库 | MySQL 8.0 + GORM |
-| 缓存 | Redis 7 (含 Lua 脚本) |
-| 消息队列 | RabbitMQ 3.12 |
-| 通信协议 | gRPC + Protobuf |
+- **网关层**：Gin（HTTP）
+- **微服务框架**：go-zero（zrpc + etcd 服务发现）
+- **通信协议**：gRPC + Protobuf
+- **缓存/原子操作**：Redis 7 + Lua
+- **消息队列**：RabbitMQ 3.12
+- **数据库**：MySQL 8.0
+- **观测性**：Prometheus + Grafana + OTLP（Jaeger）
 
-### 微服务划分
+---
 
+## 2. 微服务划分
+
+- `gateway`：统一 HTTP 入口、JWT 鉴权、路由转发
+- `user-service`：用户注册/登录/JWT 刷新/资料管理
+- `product-service`：商品与秒杀商品管理、库存/活动元数据维护
+- `seckill-service`：秒杀核心服务（Redis Lua + 异步投递）
+- `order-service`：消费秒杀消息、幂等落单、超时补偿
+- `tools/reconcile`：对账工具
+- `test/*`：功能、E2E、压测、MQ 拓扑/可靠性测试
+
+---
+
+## 3. 端口与依赖
+
+### 3.1 业务服务
+
+| 服务 | 协议 | 默认地址 |
+|---|---|---|
+| gateway | HTTP | `0.0.0.0:8888` |
+| user-service | gRPC | `127.0.0.1:9081` |
+| product-service | gRPC | `127.0.0.1:9082` |
+| seckill-service | gRPC | `127.0.0.1:9083` |
+| order-service | gRPC | `127.0.0.1:9084` |
+
+### 3.2 基础设施
+
+| 组件 | 默认端口 |
+|---|---|
+| etcd | `2379` |
+| MySQL | `3306` |
+| Redis | `6379` |
+| RabbitMQ AMQP | `5672` |
+| RabbitMQ 管理台 | `15672` |
+
+### 3.3 观测端口
+
+| 组件 | 默认端口 |
+|---|---|
+| gateway metrics | `9180` |
+| user-service metrics | `9181` |
+| product-service metrics | `9182` |
+| seckill-service metrics | `9183` |
+| order-service metrics | `9184` |
+| Prometheus | `9090` |
+| Grafana | `3000` |
+| Jaeger UI | `16686` |
+
+---
+
+## 4. 秒杀核心链路
+
+### 4.1 同步抢购链路（快速返回）
+
+1. 客户端请求 `POST /api/v1/seckill`
+2. Gateway 鉴权后调用 `seckill-service`
+3. `seckill-service` 先做本地库存快速预过滤，再执行 Redis Lua 原子脚本：
+   - 活动时间校验
+   - 用户防重校验
+   - 库存校验与扣减
+   - 写入用户抢购标记和订单状态（pending）
+4. 成功后异步投递 MQ（正常订单消息 + 延迟检查消息）
+5. 接口快速返回（避免同步阻塞 DB）
+
+### 4.2 异步订单链路（最终一致）
+
+1. `order-service` 消费秒杀消息
+2. 基于 `order_id` 做幂等校验
+3. 批量落单（失败回退单条插入）
+4. 落库成功后回调 `seckill-service`：`pending -> success`
+
+### 4.3 超时补偿链路
+
+1. 延迟队列（TTL）到期后转入检查队列
+2. `order-service` 检查订单是否已落库
+3. 若未落库，调用 `CompensateFailedOrder`：
+   - 原子 `pending -> failed`
+   - 回补 Redis 秒杀库存
+   - 释放用户防重 key
+
+---
+
+## 5. 快速启动
+
+> 建议在项目根目录执行命令。
+
+### 5.1 启动基础设施
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d
 ```
-seckill-mall/
-├── gateway/          # HTTP 网关 (路由/鉴权/限流)
-├── user-service/    # 用户服务 (注册/登录/JWT)
-├── product-service/ # 商品与库存服务 (CRUD/库存扣减)
-├── seckill-service/ # 秒杀服务 (Redis Lua/RabbitMQ)
-├── order-service/   # 订单服务 (RabbitMQ消费/订单处理)
-├── common/          # 公共模块 (Proto/Utils/Constants)
-├── deploy/          # 部署配置 (Docker Compose)
-└── docs/            # 文档与SQL脚本
+
+### 5.2 初始化数据库
+
+```bash
+mysql -h 127.0.0.1 -u root -p < docs/schema.sql
 ```
 
-## 核心流程
+### 5.3 启动微服务
 
-### 秒杀链路（高性能）
-
-```
-1. Gateway (HTTP) 
-   ↓
-2. Seckill-Service (gRPC) 
-   ↓
-3. Redis Lua (原子性校验库存 + 防重 + 预扣减)
-   ↓
-4. RabbitMQ (投递秒杀成功消息)
-   ↓
-5. 返回 HTTP 200 "抢购排队中"
-```
-
-### 异步订单链路（一致性）
-
-```
-1. Order-Service (RabbitMQ Consumer)
-   ↓
-2. 幂等性校验 (基于 order_id)
-   ↓
-3. Product-Service (gRPC 扣减 DB 库存)
-   ↓
-4. MySQL (生成真实订单)
-   ↓
-5. 更新 Redis 订单状态
-```
-
-## 服务端口
-
-| 服务 | 端口 |
-|------|------|
-| Gateway | 8888 |
-| User-Service | 8081 |
-| Product-Service | 8082 |
-| Seckill-Service | 8083 |
-| Order-Service | 8084 |
-| MySQL | 3306 |
-| Redis | 6379 |
-| RabbitMQ | 5672 |
-| RabbitMQ Management | 15672 |
-
-## 快速开始
-
-### 1. 启动基础设施
-
-```powershell
-cd deploy
-docker-compose up -d
-```
-
-### 2. 初始化数据库
-
-```powershell
-mysql -h localhost -u root -proot123456 < docs/schema.sql
-```
-
-### 3. 编译服务
-
-```powershell
-cd user-service; go build -o user.exe .
-cd product-service; go build -o product.exe .
-cd seckill-service; go build -o seckill.exe .
-cd order-service; go build -o order.exe .
-cd gateway; go build -o gateway.exe .
-```
-
-### 4. 启动服务
-
-```powershell
-go run user-service/user.go -f user-service/user/etc/user.yaml
-go run product-service/product.go -f product-service/product/etc/product.yaml
-go run seckill-service/seckill.go -f seckill-service/seckill/etc/seckill.yaml
-go run order-service/order.go -f order-service/order/etc/order.yaml
+```bash
 go run gateway/gateway.go -f gateway/etc/gateway.yaml
+go run user-service/user.go -f user-service/etc/user.yaml
+go run product-service/product.go -f product-service/etc/product.yaml
+go run seckill-service/seckill.go -f seckill-service/etc/seckill.yaml
+go run order-service/order.go -f order-service/etc/order.yaml
 ```
 
-## 已完成功能
+Windows 可使用：
 
-### Phase 1 - 基础工程体系 ✅
-- [x] Proto 定义文件
-- [x] 公共错误码与常量
-- [x] 雪花算法 ID 生成器
-- [x] SQL 初始化脚本
-- [x] Docker Compose 部署文件
-
-### Phase 2 - 基础 CRUD 服务 ✅
-- [x] User-Service 实现 (注册/登录/用户管理)
-- [x] Product-Service 实现 (商品CRUD/库存管理)
-
-### Phase 3 - 网关层 ✅
-- [x] Gin HTTP 网关
-- [x] JWT 认证中间件
-- [x] 限流中间件
-- [x] 路由配置
-- [ ] gRPC 客户端封装（待完善）
-
-### Phase 4 - 秒杀核心 ✅
-- [x] Redis Lua 脚本 (原子性扣减库存)
-- [x] RabbitMQ 生产者 (投递秒杀消息)
-- [x] 高并发防重机制
-
-### Phase 5 - 异步订单 ✅
-- [x] RabbitMQ Consumer (消费秒杀消息)
-- [x] 幂等性校验 (基于 order_id)
-- [x] 订单 CRUD
-
-## API 接口
-
-### 用户接口
-
-| 方法 | 路径 | 说明 | 认证 |
-|------|------|------|------|
-| POST | /api/v1/user/register | 用户注册 | 否 |
-| POST | /api/v1/user/login | 用户登录 | 否 |
-| GET | /api/v1/user/info | 获取用户信息 | 是 |
-
-### 商品接口
-
-| 方法 | 路径 | 说明 | 认证 |
-|------|------|------|------|
-| GET | /api/v1/product/:id | 获取商品详情 | 是 |
-| GET | /api/v1/products | 商品列表 | 是 |
-| GET | /api/v1/seckill/products | 秒杀商品列表 | 是 |
-
-### 秒杀接口
-
-| 方法 | 路径 | 说明 | 认证 |
-|------|------|------|------|
-| POST | /api/v1/seckill | 秒杀下单 | 是 |
-| GET | /api/v1/seckill/status | 查询秒杀状态 | 是 |
-| GET | /api/v1/seckill/result | 查询秒杀结果 | 是 |
-
-### 订单接口
-
-| 方法 | 路径 | 说明 | 认证 |
-|------|------|------|------|
-| GET | /api/v1/order/:orderId | 获取订单详情 | 是 |
-| GET | /api/v1/orders | 订单列表 | 是 |
-| POST | /api/v1/order/:orderId/cancel | 取消订单 | 是 |
-| POST | /api/v1/order/pay | 支付订单 | 是 |
-
-## 项目结构
-
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-all.ps1
 ```
+
+停止：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/stop-all.ps1
+```
+
+### 5.4 （可选）启动观测组件
+
+```bash
+docker compose -f deploy/observability-compose.yml up -d
+```
+
+---
+
+## 6. 主要 HTTP API（Gateway）
+
+### 用户
+- `POST /api/v1/user/register`
+- `POST /api/v1/user/login`
+- `POST /api/v1/user/refresh`
+- `GET /api/v1/user/info`
+- `PUT /api/v1/user/info`
+- `POST /api/v1/user/password`
+
+### 商品
+- `GET /api/v1/product/:id`
+- `GET /api/v1/products`
+- `GET /api/v1/seckill/products`
+
+### 秒杀
+- `POST /api/v1/seckill`
+- `GET /api/v1/seckill/status`
+- `GET /api/v1/seckill/result`
+
+### 订单
+- `POST /api/v1/order`
+- `GET /api/v1/order/:orderId`
+- `GET /api/v1/orders`
+- `POST /api/v1/order/:orderId/cancel`
+- `POST /api/v1/order/pay`
+- `POST /api/v1/order/:orderId/refund`
+
+---
+
+## 7. 测试与压测
+
+- 功能测试：`test/seckill-functional-test`
+- E2E：`test/test-e2e`
+- K6 压测：`test/k6-seckill-test`
+- 基准压测：`test/seckill-benchmark-test`
+- 失败补偿测试：`test/failed-compensation-test`
+- MQ 拓扑/可靠性测试：`test/mq-topology-test`、`test/mq-reliability-test`
+
+常用脚本：
+- `scripts/init-test-data.sh`
+- `scripts/cleanup-test-data.sh`
+
+---
+
+## 8. 已知注意事项（基于当前代码）
+
+1. **秒杀限流中间件当前在网关中被注释关闭**（用于压测场景），上线前建议恢复。  
+2. **配置文件包含本地开发用明文凭据与 JWT Secret**，生产环境必须改为安全配置（环境变量/密钥管理）。  
+3. `product-service` 更新 Redis 秒杀信息与 `seckill-service` 读取格式存在潜在不一致风险（可能影响时间窗字段）。
+
+---
+
+## 9. 项目目录
+
+```text
 seckill-mall/
+├── gateway/
+├── user-service/
+├── product-service/
+├── seckill-service/
+├── order-service/
 ├── common/
-│   ├── proto/           # .proto 定义文件
-│   ├── constants/       # Redis Key、RabbitMQ 配置等常量
-│   ├── errors/          # 全局错误码定义
-│   └── utils/           # 工具函数 (雪花算法等)
-│
-├── gateway/             # HTTP 网关
-│   ├── etc/            # 配置文件
-│   ├── internal/
-│   │   ├── config/      # 配置
-│   │   ├── handler/     # HTTP 处理器
-│   │   ├── middleware/  # 中间件 (JWT/限流)
-│   │   └── client/      # gRPC 客户端
-│   └── gateway.go       # 入口文件
-│
-├── user-service/        # 用户服务
-│   ├── user/           # Protobuf 生成代码
-│   ├── internal/
-│   │   ├── config/      # 配置
-│   │   ├── model/       # 数据模型层
-│   │   ├── logic/      # 业务逻辑层
-│   │   ├── server/     # gRPC 服务端
-│   │   └── svc/        # 服务上下文
-│   └── user.go          # 入口文件
-│
-├── product-service/    # 商品与库存服务
-├── seckill-service/    # 秒杀服务 (核心)
-├── order-service/      # 订单服务
-│
 ├── deploy/
-│   └── docker-compose.yml  # Docker 部署配置
-│
-└── docs/
-    └── schema.sql      # 数据库初始化脚本
+├── docs/
+├── scripts/
+├── test/
+└── tools/
 ```
+
+---
 
 ## License
 
