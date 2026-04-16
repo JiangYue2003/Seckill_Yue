@@ -89,16 +89,20 @@ func main() {
 		seckillHandler := handler.NewSeckillHandler(clients.SeckillService)
 		seckillGroup := authGroup.Group("/seckill")
 
-		seckillStrategy, err := middleware.NewRateLimitStrategy(c.RedisHost, middleware.RateLimitConfig{
-			Strategy: c.RateLimit.Strategy,
-			QPS:      c.RateLimit.QPS,
-			Capacity: c.RateLimit.Capacity,
-		})
-		if err != nil {
-			panic(fmt.Sprintf("初始化限流策略失败: %v", err))
+		if c.RateLimit.Enabled {
+			seckillStrategy, err := middleware.NewRateLimitStrategy(c.RedisHost, middleware.RateLimitConfig{
+				Strategy: c.RateLimit.Strategy,
+				QPS:      c.RateLimit.QPS,
+				Capacity: c.RateLimit.Capacity,
+			})
+			if err != nil {
+				panic(fmt.Sprintf("初始化限流策略失败: %v", err))
+			}
+			fmt.Printf("Seckill rate limit enabled: strategy=%s qps=%d capacity=%d\n", c.RateLimit.Strategy, c.RateLimit.QPS, c.RateLimit.Capacity)
+			seckillGroup.Use(middleware.RateLimitMiddleware(seckillStrategy))
+		} else {
+			fmt.Println("Seckill rate limit disabled by config")
 		}
-		fmt.Printf("Seckill rate limit enabled: strategy=%s qps=%d capacity=%d\n", c.RateLimit.Strategy, c.RateLimit.QPS, c.RateLimit.Capacity)
-		seckillGroup.Use(middleware.RateLimitMiddleware(seckillStrategy))
 
 		seckillGroup.POST("", seckillHandler.Seckill)
 		seckillGroup.GET("/status", seckillHandler.GetSeckillStatus)

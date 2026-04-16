@@ -8,6 +8,7 @@ import (
 
 // RateLimitConfig 限流配置
 type RateLimitConfig struct {
+	Enabled  bool   `json:"enabled"`  // 是否启用限流
 	Strategy string `json:"strategy"` // "token_bucket" | "sliding_window" | "ip_token_bucket"
 	QPS      int    `json:"qps"`      // 令牌桶: 每秒补充令牌数; 滑动窗口: 每秒最大请求数
 	Capacity int    `json:"capacity"` // 令牌桶: 桶容量(突发上限); 滑动窗口: 忽略
