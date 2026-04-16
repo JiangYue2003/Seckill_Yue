@@ -63,12 +63,12 @@ type UserInfoData struct {
 // Global state
 // ============================================================
 var (
-	client      = &http.Client{Timeout: 15 * time.Second}
+	client       = &http.Client{Timeout: 15 * time.Second}
 	accessToken  string
 	refreshToken string
-	userID      int64
+	userID       int64
 	testPassword = TestPassword
-	allPassed   = true
+	allPassed    = true
 )
 
 // ============================================================
@@ -195,8 +195,8 @@ func testRegister() {
 func testRegisterValidation() {
 	section("1.1 Registration Validation")
 	cases := []struct {
-		name    string
-		body    map[string]interface{}
+		name     string
+		body     map[string]interface{}
 		expectOk bool
 	}{
 		{"Username too short (min=3)", map[string]interface{}{"username": "ab", "password": "Test@123", "email": "a@b.com"}, false},
