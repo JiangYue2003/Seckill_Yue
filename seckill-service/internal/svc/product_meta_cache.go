@@ -89,6 +89,28 @@ func (c *ProductMetaCache) Get(seckillProductId int64) (*redis.SeckillProductMet
 	return meta, true
 }
 
+func (c *ProductMetaCache) ProductIDs() []int64 {
+	if c == nil || !c.enabled {
+		return nil
+	}
+	raw := c.data.Load()
+	if raw == nil {
+		return nil
+	}
+	metaMap, ok := raw.(map[int64]*redis.SeckillProductMeta)
+	if !ok || len(metaMap) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, 0, len(metaMap))
+	for id := range metaMap {
+		if id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func (c *ProductMetaCache) Upsert(meta *redis.SeckillProductMeta) {
 	if c == nil || !c.enabled || meta == nil {
 		return
@@ -121,6 +143,9 @@ func (s *ServiceContext) GetSeckillProductMeta(ctx context.Context, seckillProdu
 	if meta != nil && s.ProductMetaCache != nil {
 		s.ProductMetaCache.Upsert(meta)
 	}
+	if meta != nil && s.ProductFilter != nil {
+		s.ProductFilter.Add(meta.SeckillProductId)
+	}
 	return meta, nil
 }
 
@@ -149,6 +174,9 @@ func (s *ServiceContext) startProductMetaRefreshWorker() {
 				if err != nil {
 					logx.Errorf("refresh product meta cache failed: %v", err)
 					continue
+				}
+				if s.ProductFilter != nil && s.ProductFilter.Enabled() {
+					s.ProductFilter.Rebuild(s.ProductMetaCache.ProductIDs())
 				}
 				logx.Debugf("product meta cache refreshed: count=%d", count)
 			}

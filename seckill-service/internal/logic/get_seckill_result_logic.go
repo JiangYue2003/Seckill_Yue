@@ -58,6 +58,16 @@ func (l *GetSeckillResultLogic) GetSeckillResult(in *seckill.SeckillResultReques
 	// 根据状态返回结果
 	switch orderInfo.Status {
 	case redis.OrderStatusSuccess:
+		// 最小状态落点下，详情可能尚未补全到 Redis，保持 success 语义不变
+		if orderInfo.ProductId <= 0 || orderInfo.Quantity <= 0 {
+			return &seckill.SeckillResultResponse{
+				Success: true,
+				OrderId: in.OrderId,
+				Status:  orderInfo.Status,
+				Message: "订单已成功，详情同步中，请稍后重试",
+			}, nil
+		}
+
 		productName := orderInfo.ProductName
 		if productName == "" {
 			productName = "秒杀商品"

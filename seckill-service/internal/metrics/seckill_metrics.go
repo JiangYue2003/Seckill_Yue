@@ -67,4 +67,30 @@ var (
 		},
 		[]string{"result"},
 	)
+
+	// SeckillBloomCheckTotal counts bloom check results.
+	SeckillBloomCheckTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "seckill_bloom_check_total",
+			Help: "Total bloom filter checks by result.",
+		},
+		[]string{"result"},
+	)
+
+	// SeckillBloomFallbackVerifyTotal counts fallback verifications when bloom says not exist.
+	SeckillBloomFallbackVerifyTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "seckill_bloom_fallback_verify_total",
+			Help: "Total fallback verifications after bloom negative checks.",
+		},
+		[]string{"result"},
+	)
+
+	// SeckillBloomRejectTotal counts requests rejected by bloom prefilter.
+	SeckillBloomRejectTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "seckill_bloom_reject_total",
+			Help: "Total requests rejected by bloom prefilter.",
+		},
+	)
 )

@@ -20,6 +20,7 @@ type ServiceContext struct {
 	Redis            *redis.SeckillRedis
 	AsyncProducer    *mq.AsyncProducer
 	ProductMetaCache *ProductMetaCache
+	ProductFilter    *ProductIDFilter
 	InstanceID       string
 
 	bgCtx    context.Context
@@ -67,11 +68,19 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		c.ProductMetaCache.RefreshSeconds,
 		c.ProductMetaCache.ScanCount,
 	)
+	productFilter := NewProductIDFilter(ProductIDFilterConfig{
+		Enabled:                 c.Bloom.Enabled,
+		ExpectedItems:           c.Bloom.ExpectedItems,
+		FalsePositiveRate:       c.Bloom.FalsePositiveRate,
+		NegativeCacheTTLSeconds: c.Bloom.NegativeCacheTTLSeconds,
+		FallbackVerifyEnabled:   c.Bloom.FallbackVerifyEnabled,
+	})
 	ctx := &ServiceContext{
 		Config:           c,
 		Redis:            redisClient,
 		AsyncProducer:    asyncProducer,
 		ProductMetaCache: productMetaCache,
+		ProductFilter:    productFilter,
 		InstanceID:       instanceID,
 	}
 
@@ -81,7 +90,22 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		} else {
 			logx.Infof("product meta cache preloaded: count=%d", count)
 		}
+		if productFilter != nil && productFilter.Enabled() {
+			productFilter.Rebuild(productMetaCache.ProductIDs())
+		}
 		ctx.startProductMetaRefreshWorker()
+	} else if productFilter != nil && productFilter.Enabled() {
+		metaMap, loadErr := redisClient.LoadAllSeckillProductMeta(context.Background(), defaultMetaScanCount)
+		if loadErr != nil {
+			logx.Errorf("preload bloom filter from redis failed: %v", loadErr)
+		} else {
+			ids := make([]int64, 0, len(metaMap))
+			for id := range metaMap {
+				ids = append(ids, id)
+			}
+			productFilter.Rebuild(ids)
+			logx.Infof("bloom filter preloaded without meta cache: count=%d", len(ids))
+		}
 	}
 
 	if c.LocalQuota.Enabled {

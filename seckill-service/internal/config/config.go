@@ -49,4 +49,13 @@ type Config struct {
 		HeartbeatSeconds      int64
 		ReaperIntervalSeconds int64
 	}
+
+	// 秒杀商品ID布隆过滤器配置
+	Bloom struct {
+		Enabled                 bool
+		ExpectedItems           int64
+		FalsePositiveRate       float64
+		NegativeCacheTTLSeconds int64
+		FallbackVerifyEnabled   bool
+	}
 }

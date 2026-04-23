@@ -3,6 +3,7 @@ module seckill-mall/seckill-benchmark-test
 go 1.25.0
 
 require (
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/redis/go-redis/v9 v9.17.3
 	google.golang.org/grpc v1.79.3
 	seckill-mall/seckill-service/seckill v0.0.0

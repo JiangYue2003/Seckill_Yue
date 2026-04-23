@@ -37,6 +37,13 @@ ProductMetaCache:
   RefreshSeconds: 3
   ScanCount: 500
 
+Bloom:
+  Enabled: true
+  ExpectedItems: 50000
+  FalsePositiveRate: 0.001
+  NegativeCacheTTLSeconds: 5
+  FallbackVerifyEnabled: true
+
 RabbitMQ:
   URL: amqp://guest:guest@localhost:5672/
   Exchange: seckill_exchange

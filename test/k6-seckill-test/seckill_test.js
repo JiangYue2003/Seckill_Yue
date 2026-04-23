@@ -11,6 +11,7 @@ const latency = new Trend('seckill_latency');
 
 // 压测配置
 export const options = {
+  summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(50)', 'p(95)', 'p(99)'],
   scenarios: {
     // 场景 1：逐步加压（找到系统上限）
     ramp_up: {
@@ -163,23 +164,51 @@ export function handleSummary(data) {
 
 function textSummary(data, options) {
   const indent = options.indent || '';
+  const totalReqs = getMetricValue(data, 'http_reqs', 'count', 0);
+  const success = getMetricValue(data, 'seckill_success', 'count', 0);
+  const fail = getMetricValue(data, 'seckill_fail', 'count', 0);
+  const avg = getMetricValue(data, 'http_req_duration', 'avg', 0);
+  const p50 = getMetricValue(
+    data,
+    'http_req_duration',
+    'p(50)',
+    getMetricValue(data, 'http_req_duration', 'med', 0),
+  );
+  const p95 = getMetricValue(data, 'http_req_duration', 'p(95)', 0);
+  const p99 = getMetricValue(data, 'http_req_duration', 'p(99)', 0);
+  const tps = getMetricValue(data, 'http_reqs', 'rate', 0);
 
   let summary = '\n========================================\n';
   summary += '   秒杀压测报告 (k6)\n';
   summary += '========================================\n\n';
 
-  summary += `${indent}总请求数: ${data.metrics.http_reqs.values.count}\n`;
-  summary += `${indent}成功数: ${data.metrics.seckill_success ? data.metrics.seckill_success.values.count : 0}\n`;
-  summary += `${indent}失败数: ${data.metrics.seckill_fail ? data.metrics.seckill_fail.values.count : 0}\n\n`;
+  summary += `${indent}总请求数: ${formatInt(totalReqs)}\n`;
+  summary += `${indent}成功数: ${formatInt(success)}\n`;
+  summary += `${indent}失败数: ${formatInt(fail)}\n\n`;
 
   summary += `${indent}延迟统计 (ms):\n`;
-  summary += `${indent}  平均: ${data.metrics.http_req_duration.values.avg.toFixed(2)}\n`;
-  summary += `${indent}  P50: ${data.metrics.http_req_duration.values['p(50)'].toFixed(2)}\n`;
-  summary += `${indent}  P95: ${data.metrics.http_req_duration.values['p(95)'].toFixed(2)}\n`;
-  summary += `${indent}  P99: ${data.metrics.http_req_duration.values['p(99)'].toFixed(2)}\n\n`;
+  summary += `${indent}  平均: ${formatFloat(avg)}\n`;
+  summary += `${indent}  P50: ${formatFloat(p50)}\n`;
+  summary += `${indent}  P95: ${formatFloat(p95)}\n`;
+  summary += `${indent}  P99: ${formatFloat(p99)}\n\n`;
 
-  summary += `${indent}TPS: ${(data.metrics.http_reqs.values.rate).toFixed(2)}\n`;
+  summary += `${indent}TPS: ${formatFloat(tps)}\n`;
   summary += '========================================\n';
 
   return summary;
+}
+
+function getMetricValue(data, metricName, valueKey, fallback) {
+  const metric = data && data.metrics ? data.metrics[metricName] : null;
+  const values = metric && metric.values ? metric.values : null;
+  const value = values ? values[valueKey] : undefined;
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function formatFloat(value) {
+  return Number.isFinite(value) ? value.toFixed(2) : '0.00';
+}
+
+function formatInt(value) {
+  return Number.isFinite(value) ? String(Math.round(value)) : '0';
 }

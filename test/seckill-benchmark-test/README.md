@@ -28,6 +28,20 @@ go mod tidy
 go run . -users 1000 -duration 30s
 ```
 
+可选：如果你希望每轮场景前后自动清理 `seckill_orders`（按“当前场景商品ID + 用户区间”删除），可设置：
+
+```bash
+export BENCHMARK_MYSQL_DSN='root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local'
+go run .
+```
+
+Windows PowerShell:
+
+```powershell
+$env:BENCHMARK_MYSQL_DSN='root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local'
+go run .
+```
+
 ## 压测场景配置
 
 | 场景 | 秒杀商品 ID | 总请求数 | 并发数 | 初始库存 |

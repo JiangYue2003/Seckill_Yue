@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -264,16 +263,7 @@ func (c *Consumer) handleMessage(msg amqp091.Delivery) {
 		return
 	}
 
-	retryCount := 0
-	if msg.Headers != nil {
-		if rc, ok := msg.Headers["x-retry-count"].(int64); ok {
-			retryCount = int(rc)
-		} else if rc, ok := msg.Headers["x-retry-count"].(int32); ok {
-			retryCount = int(rc)
-		} else if rc, ok := msg.Headers["x-retry-count"].(string); ok {
-			retryCount, _ = strconv.Atoi(rc)
-		}
-	}
+	retryCount := getRetryCountFromXDeath(msg.Headers, c.queueName)
 
 	if c.processFunc != nil {
 		if err := c.processFunc(&seckillMsg); err != nil {
@@ -293,6 +283,73 @@ func (c *Consumer) handleMessage(msg amqp091.Delivery) {
 		logx.Errorf("Failed to ack: %v", err)
 	}
 	logx.Infof("Processed: orderId=%s", seckillMsg.OrderId)
+}
+
+// getRetryCountFromXDeath 从 RabbitMQ x-death 头解析当前队列累计死信次数。
+// x-death 是一个数组，元素为 table，包含 queue/count 等字段。
+func getRetryCountFromXDeath(headers amqp091.Table, queueName string) int {
+	if len(headers) == 0 || queueName == "" {
+		return 0
+	}
+
+	raw, ok := headers["x-death"]
+	if !ok || raw == nil {
+		return 0
+	}
+
+	var entries []interface{}
+	switch v := raw.(type) {
+	case []interface{}:
+		entries = v
+	case []amqp091.Table:
+		entries = make([]interface{}, 0, len(v))
+		for _, t := range v {
+			entries = append(entries, t)
+		}
+	default:
+		logx.Errorf("Invalid x-death header type: %T", raw)
+		return 0
+	}
+
+	for _, entry := range entries {
+		table, ok := entry.(amqp091.Table)
+		if !ok {
+			if m, ok := entry.(map[string]interface{}); ok {
+				table = amqp091.Table(m)
+			} else {
+				continue
+			}
+		}
+
+		q, _ := table["queue"].(string)
+		if q != queueName {
+			continue
+		}
+
+		if count, ok := toInt(table["count"]); ok && count > 0 {
+			return count
+		}
+		return 0
+	}
+
+	return 0
+}
+
+func toInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 // Stop 优雅停止消费者

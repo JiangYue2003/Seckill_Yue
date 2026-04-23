@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -21,10 +24,13 @@ const (
 	keyPrefixSeckillName  = "seckill:product_name:"
 	keyPrefixSeckillStock = "seckill:stock:"
 	keyPrefixSeckillUser  = "seckill:user:"
+	benchmarkUserStart    = int64(10000)
+	defaultMySQLDSN       = "root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local"
 )
 
 var (
 	redisClient *redis.Client
+	mysqlDB     *sql.DB
 )
 
 // 测试场景配置
@@ -87,6 +93,8 @@ func main() {
 
 	// 初始化 Redis
 	initRedis("localhost:6379")
+	initMySQL()
+	defer closeMySQL()
 
 	// 初始化 gRPC 连接池
 	pool := initGrpcPool("127.0.0.1:9083", poolSize)
@@ -117,6 +125,36 @@ func initRedis(addr string) {
 	}
 
 	fmt.Println("[OK] Redis 连接成功")
+}
+
+func initMySQL() {
+	dsn := os.Getenv("BENCHMARK_MYSQL_DSN")
+	if dsn == "" {
+		dsn = defaultMySQLDSN
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("[WARN] MySQL init failed, skip seckill_orders cleanup: %v", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		log.Printf("[WARN] MySQL ping failed, skip seckill_orders cleanup: %v", err)
+		_ = db.Close()
+		return
+	}
+
+	mysqlDB = db
+	fmt.Println("[OK] MySQL connected (seckill_orders cleanup enabled)")
+}
+
+func closeMySQL() {
+	if mysqlDB != nil {
+		_ = mysqlDB.Close()
+	}
 }
 
 func initGrpcClient(addr string) *SeckillServiceClient {
@@ -243,7 +281,7 @@ func runBenchmark(client *ConnectionPool, scenario struct {
 			latency := time.Since(reqStart).Milliseconds()
 
 			metrics.Record(latency, resp, err)
-		}(10000 + i)
+		}(benchmarkUserStart + i)
 	}
 
 	wg.Wait()
@@ -269,8 +307,23 @@ func cleanupProductData(seckillProductId int64, totalRequests int64) {
 	// 用 pipeline 批量删除 user keys
 	pipe := redisClient.Pipeline()
 	for i := int64(0); i < totalRequests; i++ {
-		key := fmt.Sprintf("%s%d:%d", keyPrefixSeckillUser, seckillProductId, 10000+i)
+		key := fmt.Sprintf("%s%d:%d", keyPrefixSeckillUser, seckillProductId, benchmarkUserStart+i)
 		pipe.Del(ctx, key)
 	}
-	pipe.Exec(ctx)
+	_, _ = pipe.Exec(ctx)
+
+	if mysqlDB != nil {
+		startUserID := benchmarkUserStart
+		endUserID := benchmarkUserStart + totalRequests - 1
+		if _, err := mysqlDB.ExecContext(
+			ctx,
+			"DELETE FROM seckill_orders WHERE seckill_product_id = ? AND user_id BETWEEN ? AND ?",
+			seckillProductId,
+			startUserID,
+			endUserID,
+		); err != nil {
+			log.Printf("[WARN] cleanup seckill_orders failed: product=%d, userRange=[%d,%d], err=%v",
+				seckillProductId, startUserID, endUserID, err)
+		}
+	}
 }

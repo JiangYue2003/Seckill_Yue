@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -8,18 +10,24 @@ import (
 	"time"
 
 	seckill "seckill-mall/seckill-service/seckill"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Metrics 性能指标收集器
 type Metrics struct {
 	mu sync.Mutex
 
-	totalRequests   int64
+	totalRequests  int64
 	successCount   int64
 	failCount      int64
 	soldOutCount   int64
 	duplicateCount int64
 	systemErrCount int64
+
+	failReasons      map[string]int64 // 失败原因明细（按响应码/错误类型）
+	systemErrDetails map[string]int64 // 系统错误细分（按 message / rpc error）
 
 	latencies []int64 // 毫秒
 
@@ -29,7 +37,9 @@ type Metrics struct {
 
 func NewMetrics() *Metrics {
 	return &Metrics{
-		latencies: make([]int64, 0, 200000),
+		latencies:        make([]int64, 0, 200000),
+		failReasons:      make(map[string]int64, 16),
+		systemErrDetails: make(map[string]int64, 16),
 	}
 }
 
@@ -45,12 +55,17 @@ func (m *Metrics) Record(latencyMs int64, resp *seckill.SeckillResponse, err err
 	if err != nil {
 		atomic.AddInt64(&m.failCount, 1)
 		atomic.AddInt64(&m.systemErrCount, 1)
+		reason := classifyError(err)
+		m.addFailReason(reason)
+		m.addSystemErrDetail(reason)
 		return
 	}
 
 	if resp == nil {
 		atomic.AddInt64(&m.failCount, 1)
 		atomic.AddInt64(&m.systemErrCount, 1)
+		m.addFailReason("RESP_NIL")
+		m.addSystemErrDetail("RESP_NIL")
 		return
 	}
 
@@ -67,6 +82,11 @@ func (m *Metrics) Record(latencyMs int64, resp *seckill.SeckillResponse, err err
 		m.mu.Unlock()
 	} else {
 		atomic.AddInt64(&m.failCount, 1)
+		code := resp.Code
+		if code == "" {
+			code = "EMPTY_CODE"
+		}
+		m.addFailReason("RESP_" + code)
 		switch resp.Code {
 		case "SOLD_OUT":
 			atomic.AddInt64(&m.soldOutCount, 1)
@@ -74,6 +94,7 @@ func (m *Metrics) Record(latencyMs int64, resp *seckill.SeckillResponse, err err
 			atomic.AddInt64(&m.duplicateCount, 1)
 		default:
 			atomic.AddInt64(&m.systemErrCount, 1)
+			m.addSystemErrDetail(classifySystemResponse(resp))
 		}
 	}
 }
@@ -150,6 +171,42 @@ func (m *Metrics) Report(totalDuration time.Duration, totalStock, actualSold int
 	fmt.Printf("    失败数:       %d\n", fail)
 	fmt.Printf("      - 库存不足:  %d\n", soldOut)
 	fmt.Printf("      - 用户重复:  %d\n", duplicate)
+	fmt.Printf("      - 系统错误:  %d\n", atomic.LoadInt64(&m.systemErrCount))
+
+	m.mu.Lock()
+	reasonPairs := make([]reasonCount, 0, len(m.failReasons))
+	for reason, count := range m.failReasons {
+		reasonPairs = append(reasonPairs, reasonCount{reason: reason, count: count})
+	}
+	systemErrPairs := make([]reasonCount, 0, len(m.systemErrDetails))
+	for reason, count := range m.systemErrDetails {
+		systemErrPairs = append(systemErrPairs, reasonCount{reason: reason, count: count})
+	}
+	m.mu.Unlock()
+	sort.Slice(reasonPairs, func(i, j int) bool {
+		if reasonPairs[i].count == reasonPairs[j].count {
+			return reasonPairs[i].reason < reasonPairs[j].reason
+		}
+		return reasonPairs[i].count > reasonPairs[j].count
+	})
+	if len(reasonPairs) > 0 {
+		fmt.Printf("    失败原因明细:\n")
+		for _, item := range reasonPairs {
+			fmt.Printf("      - %s: %d\n", item.reason, item.count)
+		}
+	}
+	sort.Slice(systemErrPairs, func(i, j int) bool {
+		if systemErrPairs[i].count == systemErrPairs[j].count {
+			return systemErrPairs[i].reason < systemErrPairs[j].reason
+		}
+		return systemErrPairs[i].count > systemErrPairs[j].count
+	})
+	if len(systemErrPairs) > 0 {
+		fmt.Printf("    系统错误细分:\n")
+		for _, item := range systemErrPairs {
+			fmt.Printf("      - %s: %d\n", item.reason, item.count)
+		}
+	}
 
 	fmt.Printf("\n  库存统计:\n")
 	fmt.Printf("    初始库存:     %d\n", totalStock)
@@ -188,4 +245,62 @@ func percentile(sorted []int64, p int) int64 {
 		index = len(sorted) - 1
 	}
 	return sorted[index]
+}
+
+type reasonCount struct {
+	reason string
+	count  int64
+}
+
+func (m *Metrics) addFailReason(reason string) {
+	if reason == "" {
+		reason = "UNKNOWN"
+	}
+	m.mu.Lock()
+	m.failReasons[reason]++
+	m.mu.Unlock()
+}
+
+func (m *Metrics) addSystemErrDetail(reason string) {
+	if reason == "" {
+		reason = "SYS_UNKNOWN"
+	}
+	m.mu.Lock()
+	m.systemErrDetails[reason]++
+	m.mu.Unlock()
+}
+
+func classifyError(err error) string {
+	if err == nil {
+		return "ERR_UNKNOWN"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "ERR_CONTEXT_DEADLINE_EXCEEDED"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "ERR_CONTEXT_CANCELED"
+	}
+	if st, ok := status.FromError(err); ok {
+		code := st.Code()
+		if code == codes.OK {
+			return "ERR_RPC_OK"
+		}
+		return "ERR_RPC_" + code.String()
+	}
+	return "ERR_LOCAL"
+}
+
+func classifySystemResponse(resp *seckill.SeckillResponse) string {
+	if resp == nil {
+		return "RESP_NIL"
+	}
+	code := resp.Code
+	if code == "" {
+		code = "EMPTY_CODE"
+	}
+	msg := resp.Message
+	if msg == "" {
+		msg = "EMPTY_MESSAGE"
+	}
+	return "RESP_" + code + "|" + msg
 }
