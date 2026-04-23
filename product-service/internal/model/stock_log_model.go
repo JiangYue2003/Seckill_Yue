@@ -26,7 +26,9 @@ type StockLogModel interface {
 
 // NewStockLogModel 创建 StockLogModel 实例
 func NewStockLogModel(c config.Config) (StockLogModel, error) {
-	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{})
+	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
+		Logger: newGormLogger(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}

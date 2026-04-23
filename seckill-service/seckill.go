@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +27,8 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	logx.MustSetup(c.Log)
+	defer logx.Close()
 	ctx := svc.NewServiceContext(c)
 
 	s := zrpc.MustNewServer(c.RpcServerConf, func(grpcServer *grpc.Server) {
@@ -56,7 +57,7 @@ func main() {
 		os.Exit(0) // 正常退出
 	}()
 
-	fmt.Printf("Starting rpc server at %s...\n", c.ListenOn)
+	logx.Infof("Starting rpc server at %s...", c.ListenOn)
 	s.Start() // 阻塞直到 s.Stop() 被调用
 
 	// 等待关闭完成

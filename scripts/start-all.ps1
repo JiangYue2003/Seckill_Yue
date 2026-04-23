@@ -63,6 +63,11 @@ function Start-ServiceProcess {
         $Port
     )
 
+    $runtimeLogDir = Join-Path $BASE_DIR "logs\\runtime"
+    if (-not (Test-Path $runtimeLogDir)) {
+        New-Item -ItemType Directory -Path $runtimeLogDir -Force | Out-Null
+    }
+
     $exePath = Join-Path $Dir $ExeName
     if (-not (Test-Path $exePath)) {
         Write-ColorOutput "  [!] $exePath not found, compiling..." "DarkYellow"
@@ -82,13 +87,14 @@ function Start-ServiceProcess {
         -WorkingDirectory $Dir `
         -NoNewWindow `
         -PassThru `
-        -RedirectStandardOutput "$env:TEMP\$Name-stdout.log" `
-        -RedirectStandardError "$env:TEMP\$Name-stderr.log"
+        -RedirectStandardOutput (Join-Path $runtimeLogDir "$Name-stdout.log") `
+        -RedirectStandardError (Join-Path $runtimeLogDir "$Name-stderr.log")
 
     Start-Sleep -Milliseconds 800
 
     if ($proc.HasExited) {
-        $err = Get-Content "$env:TEMP\$Name-stderr.log" -ErrorAction SilentlyContinue | Select-Object -First 5
+        $stderrPath = Join-Path $runtimeLogDir "$Name-stderr.log"
+        $err = Get-Content $stderrPath -ErrorAction SilentlyContinue | Select-Object -First 5
         $errStr = if ($err) { $err -join " " } else { "unknown error" }
         Write-ColorOutput "  [x] $Name failed to start: $errStr" "Red"
         return $null

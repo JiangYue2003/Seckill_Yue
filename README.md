@@ -68,6 +68,15 @@
 
 ---
 
+## 3.4 日志持久化
+
+- 所有服务默认启用 `Log` 落盘（按服务目录写入 `logs/<service>`）
+- 默认策略：`Level=info`、`Compress=true`、`KeepDays=14`
+- 容器环境建议将 `Log.Mode` 改为 `volume` 并挂载日志目录
+- Windows 一键启动脚本会将进程 `stdout/stderr` 同步落盘到 `logs/runtime`
+
+---
+
 ## 4. 秒杀核心链路
 
 ### 4.1 同步抢购链路（快速返回）

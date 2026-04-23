@@ -1,6 +1,14 @@
 Name: user.rpc
 ListenOn: 127.0.0.1:9081
 Mode: pro
+Log:
+  ServiceName: user.rpc
+  Mode: file     # 容器环境建议改为 volume 并挂载目录
+  Path: logs/user-service
+  Level: info
+  Compress: true
+  KeepDays: 14
+  StackCooldownMillis: 100
 Etcd:
   Hosts:
   - 127.0.0.1:2379

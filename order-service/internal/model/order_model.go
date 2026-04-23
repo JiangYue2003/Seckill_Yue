@@ -12,7 +12,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 // OrderModel 接口定义
@@ -55,7 +54,7 @@ type OrderModel interface {
 // NewOrderModel 创建 OrderModel 实例
 func NewOrderModel(c config.Config) (OrderModel, error) {
 	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: newGormLogger(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)

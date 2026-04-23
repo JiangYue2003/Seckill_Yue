@@ -12,7 +12,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 // SeckillOrderModel 秒杀订单记录 Model 接口
@@ -33,7 +32,7 @@ type SeckillOrderModel interface {
 // NewSeckillOrderModel 创建 SeckillOrderModel 实例
 func NewSeckillOrderModel(c config.Config) (SeckillOrderModel, error) {
 	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: newGormLogger(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)

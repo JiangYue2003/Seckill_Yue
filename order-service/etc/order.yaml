@@ -1,6 +1,14 @@
 Name: order.rpc
 ListenOn: 127.0.0.1:9084
 Mode: pro
+Log:
+  ServiceName: order.rpc
+  Mode: file     # 容器环境建议改为 volume 并挂载目录
+  Path: logs/order-service
+  Level: info
+  Compress: true
+  KeepDays: 14
+  StackCooldownMillis: 100
 Etcd:
   Hosts:
   - 127.0.0.1:2379

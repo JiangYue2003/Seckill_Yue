@@ -13,7 +13,6 @@ import (
 	gormMysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 // ProductModel 接口定义
@@ -73,7 +72,7 @@ type SeckillProductModel interface {
 // NewProductModel 创建 ProductModel 实例
 func NewProductModel(c config.Config) (ProductModel, error) {
 	db, err := gorm.Open(gormMysql.Open(c.MySQL.DataSource), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: newGormLogger(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -93,7 +92,7 @@ func NewProductModel(c config.Config) (ProductModel, error) {
 // NewSeckillProductModel 创建 SeckillProductModel 实例
 func NewSeckillProductModel(c config.Config) (SeckillProductModel, error) {
 	db, err := gorm.Open(gormMysql.Open(c.MySQL.DataSource), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info),
+		Logger: newGormLogger(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)

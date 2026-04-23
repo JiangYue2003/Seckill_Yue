@@ -127,8 +127,11 @@ func hmacSha256(message, secret string) []byte {
 // RequestLogger 请求日志中间件
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		logx.Infof("[%s] %s %s", c.Request.Method, c.Request.URL.Path, c.ClientIP())
+		start := time.Now()
 		c.Next()
+		latency := time.Since(start).Milliseconds()
+		logx.Infof("http_request method=%s path=%s status=%d latency_ms=%d client_ip=%s",
+			c.Request.Method, c.Request.URL.Path, c.Writer.Status(), latency, c.ClientIP())
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/core/logx"
 	goprometheus "github.com/zeromicro/go-zero/core/prometheus"
 	"github.com/zeromicro/go-zero/core/trace"
 )
@@ -24,6 +25,8 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	logx.MustSetup(c.Log)
+	defer logx.Close()
 
 	// 初始化链路追踪（上报到 Jaeger）
 	if !c.Telemetry.Disabled {
@@ -98,10 +101,10 @@ func main() {
 			if err != nil {
 				panic(fmt.Sprintf("初始化限流策略失败: %v", err))
 			}
-			fmt.Printf("Seckill rate limit enabled: strategy=%s qps=%d capacity=%d\n", c.RateLimit.Strategy, c.RateLimit.QPS, c.RateLimit.Capacity)
+			logx.Infof("Seckill rate limit enabled: strategy=%s qps=%d capacity=%d", c.RateLimit.Strategy, c.RateLimit.QPS, c.RateLimit.Capacity)
 			seckillGroup.Use(middleware.RateLimitMiddleware(seckillStrategy))
 		} else {
-			fmt.Println("Seckill rate limit disabled by config")
+			logx.Info("Seckill rate limit disabled by config")
 		}
 
 		seckillGroup.POST("", seckillHandler.Seckill)
@@ -118,8 +121,9 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("%s:%d", c.Host, c.Port)
-	fmt.Printf("Starting gateway server at %s...\n", addr)
+	logx.Infof("Starting gateway server at %s...", addr)
 	if err := server.ListenAndServe(); err != nil {
+		logx.Errorf("gateway server exited: %v", err)
 		panic(err)
 	}
 }

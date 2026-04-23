@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/cache"
 	"github.com/zeromicro/go-zero/core/trace"
 	"github.com/zeromicro/go-zero/zrpc"
@@ -18,6 +19,10 @@ type Config struct {
 	// HTTP 服务配置
 	Host string `json:"host"`
 	Port int    `json:"port"`
+	Mode string `json:"mode,optional"`
+
+	// 日志配置（持久化）
+	Log logx.LogConf `json:"log"`
 
 	// JWT 配置
 	JWT struct {

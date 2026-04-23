@@ -1,6 +1,16 @@
 Name: gateway
 Host: 0.0.0.0
 Port: 8888
+Mode: pro
+
+Log:
+  ServiceName: gateway
+  Mode: file     # 容器环境建议改为 volume 并挂载目录
+  Path: logs/gateway
+  Level: info
+  Compress: true
+  KeepDays: 14
+  StackCooldownMillis: 100
 
 # 链路追踪（上报到 Jaeger OTLP gRPC）
 Telemetry:
