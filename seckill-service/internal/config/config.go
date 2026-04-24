@@ -50,8 +50,9 @@ type Config struct {
 		ReaperIntervalSeconds int64
 	}
 
-	// 秒杀商品ID布隆过滤器配置
+	// 秒杀商品ID预过滤器配置（bloom/cuckoo）
 	Bloom struct {
+		Type                    string
 		Enabled                 bool
 		ExpectedItems           int64
 		FalsePositiveRate       float64

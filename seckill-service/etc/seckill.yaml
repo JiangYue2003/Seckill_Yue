@@ -46,6 +46,7 @@ ProductMetaCache:
   ScanCount: 500
 
 Bloom:
+  Type: bloom   # bloom / cuckoo
   Enabled: true
   ExpectedItems: 50000
   FalsePositiveRate: 0.001

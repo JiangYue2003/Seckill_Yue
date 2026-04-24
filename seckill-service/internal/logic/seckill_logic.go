@@ -85,7 +85,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 	exists, filterErr := l.svcCtx.MayExistSeckillProduct(l.ctx, in.SeckillProductId)
 	if filterErr != nil {
-		l.Logger.Errorf("Bloom fallback verify failed (fail-open): seckillProductId=%d, err=%v", in.SeckillProductId, filterErr)
+		l.Logger.Errorf("Product filter fallback verify failed (fail-open): seckillProductId=%d, err=%v", in.SeckillProductId, filterErr)
 	}
 	if !exists {
 		resultLabel = "product_not_found"

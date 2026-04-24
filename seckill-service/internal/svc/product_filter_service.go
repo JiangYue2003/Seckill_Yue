@@ -8,10 +8,10 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-// MayExistSeckillProduct 使用 Bloom 进行秒杀商品ID预过滤。
+// MayExistSeckillProduct 使用可配置过滤器（Bloom/Cuckoo）进行秒杀商品ID预过滤。
 // 软拦截策略：
-// 1. Bloom positive 直接放行；
-// 2. Bloom negative 触发一次 Redis 回源确认；
+// 1. 过滤器 positive 直接放行；
+// 2. 过滤器 negative 触发一次 Redis 回源确认；
 // 3. Redis 确认不存在则短期负缓存并拒绝。
 func (s *ServiceContext) MayExistSeckillProduct(ctx context.Context, seckillProductId int64) (bool, error) {
 	if s == nil || s.ProductFilter == nil || !s.ProductFilter.Enabled() {
@@ -38,7 +38,7 @@ func (s *ServiceContext) MayExistSeckillProduct(ctx context.Context, seckillProd
 	meta, err := s.Redis.GetSeckillProductMeta(ctx, seckillProductId)
 	if err != nil {
 		metrics.SeckillBloomFallbackVerifyTotal.WithLabelValues("error").Inc()
-		logx.WithContext(ctx).Errorf("bloom fallback verify failed: seckillProductId=%d, err=%v", seckillProductId, err)
+		logx.WithContext(ctx).Errorf("product filter fallback verify failed: seckillProductId=%d, err=%v", seckillProductId, err)
 		// fail-open：回源异常时不阻断合法请求
 		return true, err
 	}

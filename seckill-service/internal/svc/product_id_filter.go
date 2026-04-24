@@ -1,12 +1,19 @@
 package svc
 
 import (
+	"encoding/binary"
 	"math"
+	"strings"
 	"sync"
 	"time"
+
+	cuckoo "github.com/seiflotfy/cuckoofilter"
 )
 
 const (
+	defaultFilterTypeBloom  = "bloom"
+	defaultFilterTypeCuckoo = "cuckoo"
+
 	defaultBloomExpectedItems            = int64(50000)
 	defaultBloomFalsePositiveRate        = 0.001
 	defaultBloomNegativeCacheTTL         = int64(5)
@@ -14,6 +21,7 @@ const (
 )
 
 type ProductIDFilterConfig struct {
+	Type                    string
 	Enabled                 bool
 	ExpectedItems           int64
 	FalsePositiveRate       float64
@@ -22,17 +30,21 @@ type ProductIDFilterConfig struct {
 }
 
 type ProductIDFilter struct {
+	filterType            string
 	enabled               bool
 	fallbackVerifyEnabled bool
 	negativeTTL           time.Duration
 
-	expectedItems     uint64
-	falsePositiveRate float64
-
-	filterMu sync.RWMutex
-	filter   *bloomBits
+	engine productFilterEngine
 
 	negativeCache sync.Map // key: int64(seckillProductId), value: int64(expireUnixNano)
+}
+
+type productFilterEngine interface {
+	Type() string
+	Rebuild(productIDs []int64)
+	Add(productID int64)
+	MayContain(productID int64) bool
 }
 
 func NewProductIDFilter(cfg ProductIDFilterConfig) *ProductIDFilter {
@@ -49,23 +61,33 @@ func NewProductIDFilter(cfg ProductIDFilterConfig) *ProductIDFilter {
 		negativeTTL = defaultBloomNegativeCacheTTL
 	}
 
-	f := &ProductIDFilter{
+	filterType := normalizeFilterType(cfg.Type)
+	filter := &ProductIDFilter{
+		filterType:            filterType,
 		enabled:               cfg.Enabled,
 		fallbackVerifyEnabled: cfg.FallbackVerifyEnabled,
 		negativeTTL:           time.Duration(negativeTTL) * time.Second,
-		expectedItems:         uint64(expected),
-		falsePositiveRate:     fpr,
+	}
+	if filter.enabled {
+		filter.engine = newProductFilterEngine(filterType, uint64(expected), fpr)
+		if filter.engine == nil {
+			filter.filterType = defaultFilterTypeBloom
+			filter.engine = newBloomEngine(uint64(expected), fpr)
+		}
 	}
 
-	if f.enabled {
-		f.filter = newBloomBits(f.expectedItems, f.falsePositiveRate)
-	}
-
-	return f
+	return filter
 }
 
 func (f *ProductIDFilter) Enabled() bool {
 	return f != nil && f.enabled
+}
+
+func (f *ProductIDFilter) Type() string {
+	if f == nil {
+		return defaultFilterTypeBloom
+	}
+	return f.filterType
 }
 
 func (f *ProductIDFilter) FallbackVerifyEnabled() bool {
@@ -73,40 +95,20 @@ func (f *ProductIDFilter) FallbackVerifyEnabled() bool {
 }
 
 func (f *ProductIDFilter) Rebuild(productIDs []int64) {
-	if f == nil || !f.enabled {
+	if f == nil || !f.enabled || f.engine == nil {
 		return
 	}
 
-	expected := f.expectedItems
-	if uint64(len(productIDs)) > expected {
-		expected = uint64(len(productIDs))
-	}
-	next := newBloomBits(expected, f.falsePositiveRate)
-	for _, id := range productIDs {
-		if id > 0 {
-			next.add(id)
-		}
-	}
-
-	f.filterMu.Lock()
-	f.filter = next
-	f.filterMu.Unlock()
-
+	f.engine.Rebuild(productIDs)
 	f.clearNegativeCache()
 }
 
 func (f *ProductIDFilter) Add(productID int64) {
-	if f == nil || !f.enabled || productID <= 0 {
+	if f == nil || !f.enabled || productID <= 0 || f.engine == nil {
 		return
 	}
 
-	f.filterMu.RLock()
-	current := f.filter
-	f.filterMu.RUnlock()
-	if current == nil {
-		return
-	}
-	current.add(productID)
+	f.engine.Add(productID)
 	f.negativeCache.Delete(productID)
 }
 
@@ -117,14 +119,11 @@ func (f *ProductIDFilter) MayContain(productID int64) bool {
 	if productID <= 0 {
 		return false
 	}
-
-	f.filterMu.RLock()
-	current := f.filter
-	f.filterMu.RUnlock()
-	if current == nil {
+	if f.engine == nil {
 		return true
 	}
-	return current.mayContain(productID)
+
+	return f.engine.MayContain(productID)
 }
 
 func (f *ProductIDFilter) MarkNotExist(productID int64) {
@@ -161,6 +160,166 @@ func (f *ProductIDFilter) clearNegativeCache() {
 		f.negativeCache.Delete(key)
 		return true
 	})
+}
+
+func normalizeFilterType(filterType string) string {
+	switch strings.ToLower(strings.TrimSpace(filterType)) {
+	case defaultFilterTypeCuckoo:
+		return defaultFilterTypeCuckoo
+	case defaultFilterTypeBloom, "":
+		return defaultFilterTypeBloom
+	default:
+		return defaultFilterTypeBloom
+	}
+}
+
+func newProductFilterEngine(filterType string, expected uint64, falsePositiveRate float64) productFilterEngine {
+	switch normalizeFilterType(filterType) {
+	case defaultFilterTypeCuckoo:
+		return newCuckooEngine()
+	default:
+		return newBloomEngine(expected, falsePositiveRate)
+	}
+}
+
+type bloomEngine struct {
+	expectedItems     uint64
+	falsePositiveRate float64
+
+	mu     sync.RWMutex
+	filter *bloomBits
+}
+
+func newBloomEngine(expected uint64, falsePositiveRate float64) *bloomEngine {
+	if expected == 0 {
+		expected = uint64(defaultBloomExpectedItems)
+	}
+	if falsePositiveRate <= 0 || falsePositiveRate >= 1 {
+		falsePositiveRate = defaultBloomFalsePositiveRate
+	}
+	return &bloomEngine{
+		expectedItems:     expected,
+		falsePositiveRate: falsePositiveRate,
+		filter:            newBloomBits(expected, falsePositiveRate),
+	}
+}
+
+func (b *bloomEngine) Type() string {
+	return defaultFilterTypeBloom
+}
+
+func (b *bloomEngine) Rebuild(productIDs []int64) {
+	expected := b.expectedItems
+	if uint64(len(productIDs)) > expected {
+		expected = uint64(len(productIDs))
+	}
+
+	next := newBloomBits(expected, b.falsePositiveRate)
+	for _, id := range productIDs {
+		if id > 0 {
+			next.add(id)
+		}
+	}
+
+	b.mu.Lock()
+	b.filter = next
+	b.mu.Unlock()
+}
+
+func (b *bloomEngine) Add(productID int64) {
+	if productID <= 0 {
+		return
+	}
+
+	b.mu.RLock()
+	current := b.filter
+	b.mu.RUnlock()
+	if current == nil {
+		return
+	}
+	current.add(productID)
+}
+
+func (b *bloomEngine) MayContain(productID int64) bool {
+	if productID <= 0 {
+		return false
+	}
+
+	b.mu.RLock()
+	current := b.filter
+	b.mu.RUnlock()
+	if current == nil {
+		return true
+	}
+	return current.mayContain(productID)
+}
+
+type cuckooEngine struct {
+	mu     sync.RWMutex
+	filter *cuckoo.ScalableCuckooFilter
+}
+
+func newCuckooEngine() *cuckooEngine {
+	return &cuckooEngine{filter: cuckoo.NewScalableCuckooFilter()}
+}
+
+func (c *cuckooEngine) Type() string {
+	return defaultFilterTypeCuckoo
+}
+
+func (c *cuckooEngine) Rebuild(productIDs []int64) {
+	next := cuckoo.NewScalableCuckooFilter()
+	for _, id := range productIDs {
+		if id <= 0 {
+			continue
+		}
+		key := toFilterKey(id)
+		next.InsertUnique(key[:])
+	}
+
+	c.mu.Lock()
+	c.filter = next
+	c.mu.Unlock()
+}
+
+func (c *cuckooEngine) Add(productID int64) {
+	if productID <= 0 {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	current := c.filter
+	if current == nil {
+		return
+	}
+
+	key := toFilterKey(productID)
+	current.InsertUnique(key[:])
+}
+
+func (c *cuckooEngine) MayContain(productID int64) bool {
+	if productID <= 0 {
+		return false
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	current := c.filter
+	if current == nil {
+		return true
+	}
+
+	key := toFilterKey(productID)
+	return current.Lookup(key[:])
+}
+
+func toFilterKey(v int64) [8]byte {
+	var key [8]byte
+	binary.LittleEndian.PutUint64(key[:], uint64(v))
+	return key
 }
 
 type bloomBits struct {

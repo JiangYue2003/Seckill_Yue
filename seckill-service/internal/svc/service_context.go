@@ -69,6 +69,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		c.ProductMetaCache.ScanCount,
 	)
 	productFilter := NewProductIDFilter(ProductIDFilterConfig{
+		Type:                    c.Bloom.Type,
 		Enabled:                 c.Bloom.Enabled,
 		ExpectedItems:           c.Bloom.ExpectedItems,
 		FalsePositiveRate:       c.Bloom.FalsePositiveRate,
@@ -92,19 +93,20 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		}
 		if productFilter != nil && productFilter.Enabled() {
 			productFilter.Rebuild(productMetaCache.ProductIDs())
+			logx.Infof("product id filter preloaded: type=%s, count=%d", productFilter.Type(), len(productMetaCache.ProductIDs()))
 		}
 		ctx.startProductMetaRefreshWorker()
 	} else if productFilter != nil && productFilter.Enabled() {
 		metaMap, loadErr := redisClient.LoadAllSeckillProductMeta(context.Background(), defaultMetaScanCount)
 		if loadErr != nil {
-			logx.Errorf("preload bloom filter from redis failed: %v", loadErr)
+			logx.Errorf("preload product id filter from redis failed: %v", loadErr)
 		} else {
 			ids := make([]int64, 0, len(metaMap))
 			for id := range metaMap {
 				ids = append(ids, id)
 			}
 			productFilter.Rebuild(ids)
-			logx.Infof("bloom filter preloaded without meta cache: count=%d", len(ids))
+			logx.Infof("product id filter preloaded without meta cache: type=%s, count=%d", productFilter.Type(), len(ids))
 		}
 	}
 

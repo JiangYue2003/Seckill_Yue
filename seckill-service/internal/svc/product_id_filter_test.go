@@ -57,3 +57,34 @@ func TestProductIDFilterDisabledBypass(t *testing.T) {
 		t.Fatalf("disabled filter should bypass and allow requests")
 	}
 }
+
+func TestProductIDFilterCuckooRebuildAndAdd(t *testing.T) {
+	filter := NewProductIDFilter(ProductIDFilterConfig{
+		Type:                  "cuckoo",
+		Enabled:               true,
+		FallbackVerifyEnabled: true,
+	})
+
+	filter.Rebuild([]int64{3001, 3002, 3003})
+	if !filter.MayContain(3001) {
+		t.Fatalf("expected product 3001 to be present after cuckoo rebuild")
+	}
+
+	filter.Add(4001)
+	if !filter.MayContain(4001) {
+		t.Fatalf("expected product 4001 to be present after cuckoo add")
+	}
+}
+
+func TestProductIDFilterInvalidTypeFallbackToBloom(t *testing.T) {
+	filter := NewProductIDFilter(ProductIDFilterConfig{
+		Type:              "unknown-filter",
+		Enabled:           true,
+		ExpectedItems:     128,
+		FalsePositiveRate: 0.001,
+	})
+
+	if filter.Type() != "bloom" {
+		t.Fatalf("expected fallback type bloom, got %s", filter.Type())
+	}
+}
