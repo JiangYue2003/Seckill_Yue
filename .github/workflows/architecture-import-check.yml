@@ -1,0 +1,31 @@
+name: Architecture Import Check
+
+on:
+  pull_request:
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "scripts/check-import-boundary.sh"
+      - ".github/workflows/architecture-import-check.yml"
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "scripts/check-import-boundary.sh"
+      - ".github/workflows/architecture-import-check.yml"
+
+jobs:
+  import-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Check forbidden cross-service imports
+        run: bash scripts/check-import-boundary.sh
