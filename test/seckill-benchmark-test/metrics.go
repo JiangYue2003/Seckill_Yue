@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	seckill "seckill-mall/seckill-service/seckill"
+	seckill "seckill-mall/common/seckill"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

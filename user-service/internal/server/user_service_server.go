@@ -6,10 +6,11 @@ package server
 
 import (
 	"context"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/user"
 	"seckill-mall/user-service/internal/logic"
 	"seckill-mall/user-service/internal/svc"
-	"seckill-mall/user-service/user"
 )
 
 type UserServiceServer struct {
@@ -48,13 +49,13 @@ func (s *UserServiceServer) GetUserInfo(ctx context.Context, in *user.GetUserInf
 }
 
 // 更新用户信息
-func (s *UserServiceServer) UpdateUserInfo(ctx context.Context, in *user.UpdateUserInfoRequest) (*user.BoolResponse, error) {
+func (s *UserServiceServer) UpdateUserInfo(ctx context.Context, in *user.UpdateUserInfoRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewUpdateUserInfoLogic(ctx, s.svcCtx)
 	return l.UpdateUserInfo(in)
 }
 
 // 修改密码
-func (s *UserServiceServer) ChangePassword(ctx context.Context, in *user.ChangePasswordRequest) (*user.BoolResponse, error) {
+func (s *UserServiceServer) ChangePassword(ctx context.Context, in *user.ChangePasswordRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewChangePasswordLogic(ctx, s.svcCtx)
 	return l.ChangePassword(in)
 }

@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 
+	commonpb "seckill-mall/common/common"
+	"seckill-mall/common/user"
 	"seckill-mall/user-service/internal/model"
 	"seckill-mall/user-service/internal/svc"
-	"seckill-mall/user-service/user"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/crypto/bcrypt"
@@ -27,7 +28,7 @@ func NewChangePasswordLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Ch
 }
 
 // ChangePassword 修改密码
-func (l *ChangePasswordLogic) ChangePassword(in *user.ChangePasswordRequest) (*user.BoolResponse, error) {
+func (l *ChangePasswordLogic) ChangePassword(in *user.ChangePasswordRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.UserId <= 0 {
 		return nil, errors.New("用户ID无效")
@@ -70,7 +71,7 @@ func (l *ChangePasswordLogic) ChangePassword(in *user.ChangePasswordRequest) (*u
 
 	l.Logger.Infof("密码修改成功: userId=%d", in.UserId)
 
-	return &user.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "密码修改成功",
 	}, nil

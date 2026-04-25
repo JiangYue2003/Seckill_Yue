@@ -3,11 +3,11 @@ package client
 import (
 	"fmt"
 
+	order "seckill-mall/common/order"
+	product "seckill-mall/common/product"
+	seckill "seckill-mall/common/seckill"
+	user "seckill-mall/common/user"
 	"seckill-mall/gateway/internal/config"
-	order "seckill-mall/order-service/order"
-	product "seckill-mall/product-service/product"
-	seckill "seckill-mall/seckill-service/seckill"
-	user "seckill-mall/user-service/user"
 
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"

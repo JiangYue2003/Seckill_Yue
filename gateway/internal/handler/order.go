@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"seckill-mall/common/order"
 	"seckill-mall/gateway/internal/middleware"
-	"seckill-mall/order-service/order"
 
 	"github.com/gin-gonic/gin"
 	"time"

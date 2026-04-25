@@ -6,10 +6,11 @@ package server
 
 import (
 	"context"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/logic"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 )
 
 type OrderServiceServer struct {
@@ -42,19 +43,19 @@ func (s *OrderServiceServer) ListUserOrders(ctx context.Context, in *order.ListU
 }
 
 // 取消订单
-func (s *OrderServiceServer) CancelOrder(ctx context.Context, in *order.CancelOrderRequest) (*order.BoolResponse, error) {
+func (s *OrderServiceServer) CancelOrder(ctx context.Context, in *order.CancelOrderRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewCancelOrderLogic(ctx, s.svcCtx)
 	return l.CancelOrder(in)
 }
 
 // 支付订单
-func (s *OrderServiceServer) PayOrder(ctx context.Context, in *order.PayOrderRequest) (*order.BoolResponse, error) {
+func (s *OrderServiceServer) PayOrder(ctx context.Context, in *order.PayOrderRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewPayOrderLogic(ctx, s.svcCtx)
 	return l.PayOrder(in)
 }
 
 // 退款
-func (s *OrderServiceServer) RefundOrder(ctx context.Context, in *order.RefundOrderRequest) (*order.BoolResponse, error) {
+func (s *OrderServiceServer) RefundOrder(ctx context.Context, in *order.RefundOrderRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewRefundOrderLogic(ctx, s.svcCtx)
 	return l.RefundOrder(in)
 }

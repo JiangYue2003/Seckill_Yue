@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
+	"seckill-mall/common/user"
 	"seckill-mall/user-service/internal/model"
 	"seckill-mall/user-service/internal/model/entity"
 	"seckill-mall/user-service/internal/svc"
-	"seckill-mall/user-service/user"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"golang.org/x/crypto/bcrypt"

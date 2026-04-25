@@ -6,15 +6,16 @@ package orderservice
 
 import (
 	"context"
+	commonpb "seckill-mall/common/common"
 
-	"seckill-mall/order-service/order"
+	"seckill-mall/common/order"
 
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"
 )
 
 type (
-	BoolResponse             = order.BoolResponse
+	BoolResponse             = commonpb.BoolResponse
 	CancelOrderRequest       = order.CancelOrderRequest
 	CreateNormalOrderRequest = order.CreateNormalOrderRequest
 	GetOrderRequest          = order.GetOrderRequest

@@ -2,6 +2,8 @@ module seckill-mall/user-service
 
 go 1.25.0
 
+replace seckill-mall/common => ../common
+
 require (
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0
@@ -10,6 +12,7 @@ require (
 	google.golang.org/grpc v1.79.3
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.1
+	seckill-mall/common v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -40,7 +43,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

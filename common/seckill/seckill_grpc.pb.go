@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v6.33.2
-// source: seckill.proto
+// source: proto/seckill.proto
 
 package seckill
 
@@ -19,10 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SeckillService_Seckill_FullMethodName           = "/seckill.SeckillService/Seckill"
-	SeckillService_GetSeckillStatus_FullMethodName  = "/seckill.SeckillService/GetSeckillStatus"
-	SeckillService_GetSeckillResult_FullMethodName  = "/seckill.SeckillService/GetSeckillResult"
-	SeckillService_UpdateOrderStatus_FullMethodName = "/seckill.SeckillService/UpdateOrderStatus"
+	SeckillService_Seckill_FullMethodName               = "/seckill.SeckillService/Seckill"
+	SeckillService_GetSeckillStatus_FullMethodName      = "/seckill.SeckillService/GetSeckillStatus"
+	SeckillService_GetSeckillResult_FullMethodName      = "/seckill.SeckillService/GetSeckillResult"
+	SeckillService_UpdateOrderStatus_FullMethodName     = "/seckill.SeckillService/UpdateOrderStatus"
+	SeckillService_CompensateFailedOrder_FullMethodName = "/seckill.SeckillService/CompensateFailedOrder"
 )
 
 // SeckillServiceClient is the client API for SeckillService service.
@@ -39,6 +40,8 @@ type SeckillServiceClient interface {
 	GetSeckillResult(ctx context.Context, in *SeckillResultRequest, opts ...grpc.CallOption) (*SeckillResultResponse, error)
 	// 更新订单状态（Order-Service 内部调用，将 pending → success）
 	UpdateOrderStatus(ctx context.Context, in *UpdateOrderStatusRequest, opts ...grpc.CallOption) (*UpdateOrderStatusResponse, error)
+	// 超时失败补偿（Order-Service 内部调用）
+	CompensateFailedOrder(ctx context.Context, in *CompensateFailedOrderRequest, opts ...grpc.CallOption) (*CompensateFailedOrderResponse, error)
 }
 
 type seckillServiceClient struct {
@@ -89,6 +92,16 @@ func (c *seckillServiceClient) UpdateOrderStatus(ctx context.Context, in *Update
 	return out, nil
 }
 
+func (c *seckillServiceClient) CompensateFailedOrder(ctx context.Context, in *CompensateFailedOrderRequest, opts ...grpc.CallOption) (*CompensateFailedOrderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompensateFailedOrderResponse)
+	err := c.cc.Invoke(ctx, SeckillService_CompensateFailedOrder_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeckillServiceServer is the server API for SeckillService service.
 // All implementations must embed UnimplementedSeckillServiceServer
 // for forward compatibility.
@@ -103,6 +116,8 @@ type SeckillServiceServer interface {
 	GetSeckillResult(context.Context, *SeckillResultRequest) (*SeckillResultResponse, error)
 	// 更新订单状态（Order-Service 内部调用，将 pending → success）
 	UpdateOrderStatus(context.Context, *UpdateOrderStatusRequest) (*UpdateOrderStatusResponse, error)
+	// 超时失败补偿（Order-Service 内部调用）
+	CompensateFailedOrder(context.Context, *CompensateFailedOrderRequest) (*CompensateFailedOrderResponse, error)
 	mustEmbedUnimplementedSeckillServiceServer()
 }
 
@@ -124,6 +139,9 @@ func (UnimplementedSeckillServiceServer) GetSeckillResult(context.Context, *Seck
 }
 func (UnimplementedSeckillServiceServer) UpdateOrderStatus(context.Context, *UpdateOrderStatusRequest) (*UpdateOrderStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateOrderStatus not implemented")
+}
+func (UnimplementedSeckillServiceServer) CompensateFailedOrder(context.Context, *CompensateFailedOrderRequest) (*CompensateFailedOrderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompensateFailedOrder not implemented")
 }
 func (UnimplementedSeckillServiceServer) mustEmbedUnimplementedSeckillServiceServer() {}
 func (UnimplementedSeckillServiceServer) testEmbeddedByValue()                        {}
@@ -218,6 +236,24 @@ func _SeckillService_UpdateOrderStatus_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeckillService_CompensateFailedOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompensateFailedOrderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeckillServiceServer).CompensateFailedOrder(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeckillService_CompensateFailedOrder_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeckillServiceServer).CompensateFailedOrder(ctx, req.(*CompensateFailedOrderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeckillService_ServiceDesc is the grpc.ServiceDesc for SeckillService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -241,7 +277,11 @@ var SeckillService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "UpdateOrderStatus",
 			Handler:    _SeckillService_UpdateOrderStatus_Handler,
 		},
+		{
+			MethodName: "CompensateFailedOrder",
+			Handler:    _SeckillService_CompensateFailedOrder_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "seckill.proto",
+	Metadata: "proto/seckill.proto",
 }

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package product;
 
-option go_package = "./product";
+option go_package = "seckill-mall/common/product";
 
 import "proto/common.proto";
 

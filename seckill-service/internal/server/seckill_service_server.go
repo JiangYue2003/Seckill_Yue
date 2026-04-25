@@ -7,9 +7,9 @@ package server
 import (
 	"context"
 
+	"seckill-mall/common/seckill"
 	"seckill-mall/seckill-service/internal/logic"
 	"seckill-mall/seckill-service/internal/svc"
-	"seckill-mall/seckill-service/seckill"
 )
 
 type SeckillServiceServer struct {

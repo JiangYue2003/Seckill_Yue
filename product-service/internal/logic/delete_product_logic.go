@@ -3,10 +3,10 @@ package logic
 import (
 	"context"
 	"errors"
+	commonpb "seckill-mall/common/common"
 
 	"seckill-mall/product-service/internal/model"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -26,7 +26,7 @@ func NewDeleteProductLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Del
 }
 
 // DeleteProduct 删除商品
-func (l *DeleteProductLogic) DeleteProduct(in *product.IdRequest) (*product.BoolResponse, error) {
+func (l *DeleteProductLogic) DeleteProduct(in *commonpb.IdRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.Id <= 0 {
 		return nil, errors.New("商品ID无效")
@@ -55,7 +55,7 @@ func (l *DeleteProductLogic) DeleteProduct(in *product.IdRequest) (*product.Bool
 
 	l.Logger.Infof("商品删除成功: productId=%d", in.Id)
 
-	return &product.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "删除成功",
 	}, nil

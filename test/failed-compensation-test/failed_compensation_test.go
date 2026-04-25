@@ -15,7 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
-	seckillpb "seckill-mall/seckill-service/seckill"
+	seckillpb "seckill-mall/common/seckill"
 )
 
 const (

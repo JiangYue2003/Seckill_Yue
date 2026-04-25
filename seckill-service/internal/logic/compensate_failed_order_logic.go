@@ -3,9 +3,9 @@ package logic
 import (
 	"context"
 
+	"seckill-mall/common/seckill"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
-	"seckill-mall/seckill-service/seckill"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )

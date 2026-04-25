@@ -4,22 +4,11 @@ go 1.25.0
 
 replace seckill-mall/common => ../common
 
-replace seckill-mall/user-service => ../user-service
-
-replace seckill-mall/product-service => ../product-service
-
-replace seckill-mall/seckill-service => ../seckill-service
-
-replace seckill-mall/order-service => ../order-service
-
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/zeromicro/go-zero v1.10.0
 	google.golang.org/grpc v1.79.3
-	seckill-mall/order-service v0.0.0-00010101000000-000000000000
-	seckill-mall/product-service v0.0.0-00010101000000-000000000000
-	seckill-mall/seckill-service v0.0.0-00010101000000-000000000000
-	seckill-mall/user-service v0.0.0-00010101000000-000000000000
+	seckill-mall/common v0.0.0-00010101000000-000000000000
 )
 
 require (

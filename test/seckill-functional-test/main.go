@@ -11,15 +11,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	seckill "seckill-mall/seckill-service/seckill"
+	seckill "seckill-mall/common/seckill"
 )
 
 const (
 	// Redis key 前缀
-	keyPrefixSeckillInfo   = "seckill:info:"
-	keyPrefixSeckillName   = "seckill:product_name:"
-	keyPrefixSeckillStock  = "seckill:stock:"
-	keyPrefixSeckillUser   = "seckill:user:"
+	keyPrefixSeckillInfo  = "seckill:info:"
+	keyPrefixSeckillName  = "seckill:product_name:"
+	keyPrefixSeckillStock = "seckill:stock:"
+	keyPrefixSeckillUser  = "seckill:user:"
 )
 
 var (
@@ -63,7 +63,7 @@ func initRedis(addr string) {
 
 // SeckillServiceClient gRPC 客户端封装
 type SeckillServiceClient struct {
-	conn *grpc.ClientConn
+	conn   *grpc.ClientConn
 	client seckill.SeckillServiceClient
 }
 

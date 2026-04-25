@@ -55,6 +55,43 @@ function Test-Port {
     }
 }
 
+function Test-BuildRequired {
+    param(
+        $Dir,
+        $ExePath
+    )
+
+    if (-not (Test-Path $ExePath)) {
+        return $true
+    }
+
+    $exeTime = (Get-Item $ExePath).LastWriteTimeUtc
+    $commonDir = Join-Path $BASE_DIR "common"
+    $rootBuildFiles = @(
+        (Join-Path $BASE_DIR "go.work"),
+        (Join-Path $BASE_DIR "go.work.sum")
+    )
+
+    $sourceFiles = @()
+    $sourceFiles += Get-ChildItem -Path $Dir -Recurse -File -Include *.go,go.mod,go.sum,*.proto -ErrorAction SilentlyContinue
+    if (Test-Path $commonDir) {
+        $sourceFiles += Get-ChildItem -Path $commonDir -Recurse -File -Include *.go,go.mod,go.sum,*.proto -ErrorAction SilentlyContinue
+    }
+    foreach ($file in $rootBuildFiles) {
+        if (Test-Path $file) {
+            $sourceFiles += Get-Item $file
+        }
+    }
+
+    foreach ($file in $sourceFiles) {
+        if ($file.LastWriteTimeUtc -gt $exeTime) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Start-ServiceProcess {
     param(
         $Name,
@@ -69,17 +106,22 @@ function Start-ServiceProcess {
     }
 
     $exePath = Join-Path $Dir $ExeName
-    if (-not (Test-Path $exePath)) {
-        Write-ColorOutput "  [!] $exePath not found, compiling..." "DarkYellow"
+    if (Test-BuildRequired -Dir $Dir -ExePath $exePath) {
+        Write-ColorOutput "  [!] $Name binary missing or stale, compiling..." "DarkYellow"
         Push-Location $Dir
         try {
-            $null = go build -o $ExeName . 2>&1
+            $buildOutput = go build -o $ExeName . 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $errStr = if ($buildOutput) { $buildOutput -join " " } else { "unknown error" }
+                Write-ColorOutput "  [x] $Name compile failed: $errStr" "Red"
+                return $null
+            }
         } catch {
             Write-ColorOutput "  [x] $Name compile failed: $_" "Red"
-            Pop-Location
             return $null
+        } finally {
+            Pop-Location
         }
-        Pop-Location
     }
 
     Write-ColorOutput "  [>] Starting $Name ..." "Cyan"

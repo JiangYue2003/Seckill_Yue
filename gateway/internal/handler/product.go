@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"strconv"
 
+	commonpb "seckill-mall/common/common"
+	"seckill-mall/common/product"
 	"seckill-mall/gateway/internal/middleware"
-	"seckill-mall/product-service/product"
 
 	"github.com/gin-gonic/gin"
 	"time"
@@ -113,7 +114,7 @@ func (h *ProductHandler) ListSeckillProducts(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	stream, err := h.productSvc.ListActiveSeckillProducts(ctx, &product.Empty{})
+	stream, err := h.productSvc.ListActiveSeckillProducts(ctx, &commonpb.Empty{})
 	if err != nil {
 		logx.Errorf("获取秒杀商品列表失败: %v", err)
 		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "获取秒杀商品列表失败")

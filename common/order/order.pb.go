@@ -7,10 +7,10 @@
 package order
 
 import (
-	common "./common"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
+	common "seckill-mall/common/common"
 	sync "sync"
 	unsafe "unsafe"
 )
@@ -839,7 +839,7 @@ const file_proto_order_proto_rawDesc = "" +
 	"\x0eListUserOrders\x12\x1c.order.ListUserOrdersRequest\x1a\x1d.order.ListUserOrdersResponse\x12>\n" +
 	"\vCancelOrder\x12\x19.order.CancelOrderRequest\x1a\x14.common.BoolResponse\x128\n" +
 	"\bPayOrder\x12\x16.order.PayOrderRequest\x1a\x14.common.BoolResponse\x12>\n" +
-	"\vRefundOrder\x12\x19.order.RefundOrderRequest\x1a\x14.common.BoolResponseB\tZ\a./orderb\x06proto3"
+	"\vRefundOrder\x12\x19.order.RefundOrderRequest\x1a\x14.common.BoolResponseB\x1bZ\x19seckill-mall/common/orderb\x06proto3"
 
 var (
 	file_proto_order_proto_rawDescOnce sync.Once
