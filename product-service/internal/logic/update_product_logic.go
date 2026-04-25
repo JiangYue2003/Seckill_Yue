@@ -3,11 +3,12 @@ package logic
 import (
 	"context"
 	"errors"
+	commonpb "seckill-mall/common/common"
 	"time"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/model"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -27,7 +28,7 @@ func NewUpdateProductLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Upd
 }
 
 // UpdateProduct 更新商品
-func (l *UpdateProductLogic) UpdateProduct(in *product.UpdateProductRequest) (*product.BoolResponse, error) {
+func (l *UpdateProductLogic) UpdateProduct(in *product.UpdateProductRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.Id <= 0 {
 		return nil, errors.New("商品ID无效")
@@ -78,7 +79,7 @@ func (l *UpdateProductLogic) UpdateProduct(in *product.UpdateProductRequest) (*p
 
 	l.Logger.Infof("商品更新成功: productId=%d", in.Id)
 
-	return &product.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "更新成功",
 	}, nil

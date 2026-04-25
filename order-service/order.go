@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 
+	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/server"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"

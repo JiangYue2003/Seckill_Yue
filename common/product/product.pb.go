@@ -7,10 +7,10 @@
 package product
 
 import (
-	common "./common"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
+	common "seckill-mall/common/common"
 	sync "sync"
 	unsafe "unsafe"
 )
@@ -1196,7 +1196,7 @@ const file_proto_product_proto_rawDesc = "" +
 	"\x14CreateSeckillProduct\x12$.product.CreateSeckillProductRequest\x1a\x1b.product.SeckillProductInfo\x12S\n" +
 	"\x11GetSeckillProduct\x12!.product.GetSeckillProductRequest\x1a\x1b.product.SeckillProductInfo\x12R\n" +
 	"\x14UpdateSeckillProduct\x12$.product.UpdateSeckillProductRequest\x1a\x14.common.BoolResponse\x12I\n" +
-	"\x19ListActiveSeckillProducts\x12\r.common.Empty\x1a\x1b.product.SeckillProductInfo0\x01B\vZ\t./productb\x06proto3"
+	"\x19ListActiveSeckillProducts\x12\r.common.Empty\x1a\x1b.product.SeckillProductInfo0\x01B\x1dZ\x1bseckill-mall/common/productb\x06proto3"
 
 var (
 	file_proto_product_proto_rawDescOnce sync.Once

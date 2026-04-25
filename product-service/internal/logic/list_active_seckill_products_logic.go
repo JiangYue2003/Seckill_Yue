@@ -2,9 +2,10 @@ package logic
 
 import (
 	"context"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -24,7 +25,7 @@ func NewListActiveSeckillProductsLogic(ctx context.Context, svcCtx *svc.ServiceC
 }
 
 // ListActiveSeckillProducts 获取进行中的秒杀商品列表
-func (l *ListActiveSeckillProductsLogic) ListActiveSeckillProducts(in *product.Empty, stream product.ProductService_ListActiveSeckillProductsServer) error {
+func (l *ListActiveSeckillProductsLogic) ListActiveSeckillProducts(in *commonpb.Empty, stream product.ProductService_ListActiveSeckillProductsServer) error {
 	// 查询进行中的秒杀商品
 	seckillProducts, err := l.svcCtx.SeckillProductModel.ListActive(l.ctx)
 	if err != nil {

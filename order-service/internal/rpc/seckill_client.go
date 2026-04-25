@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"seckill-mall/common/seckill"
 	"seckill-mall/order-service/internal/config"
-	"seckill-mall/seckill-service/seckill"
 
 	"github.com/zeromicro/go-zero/zrpc"
 )

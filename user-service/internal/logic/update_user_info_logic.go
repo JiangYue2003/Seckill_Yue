@@ -5,9 +5,10 @@ import (
 	"errors"
 	"time"
 
+	commonpb "seckill-mall/common/common"
+	"seckill-mall/common/user"
 	"seckill-mall/user-service/internal/model"
 	"seckill-mall/user-service/internal/svc"
-	"seckill-mall/user-service/user"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -27,7 +28,7 @@ func NewUpdateUserInfoLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Up
 }
 
 // UpdateUserInfo 更新用户信息
-func (l *UpdateUserInfoLogic) UpdateUserInfo(in *user.UpdateUserInfoRequest) (*user.BoolResponse, error) {
+func (l *UpdateUserInfoLogic) UpdateUserInfo(in *user.UpdateUserInfoRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.UserId <= 0 {
 		return nil, errors.New("用户ID无效")
@@ -71,7 +72,7 @@ func (l *UpdateUserInfoLogic) UpdateUserInfo(in *user.UpdateUserInfoRequest) (*u
 
 	l.Logger.Infof("用户信息更新成功: userId=%d", in.UserId)
 
-	return &user.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "更新成功",
 	}, nil

@@ -334,8 +334,7 @@ const file_proto_common_proto_rawDesc = "" +
 	"\fPageResponse\x12\x14\n" +
 	"\x05total\x18\x01 \x01(\x03R\x05total\x12\x12\n" +
 	"\x04page\x18\x02 \x01(\x03R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x03 \x01(\x03R\bpageSizeB\n" +
-	"Z\b./commonb\x06proto3"
+	"\tpage_size\x18\x03 \x01(\x03R\bpageSizeB\x1cZ\x1aseckill-mall/common/commonb\x06proto3"
 
 var (
 	file_proto_common_proto_rawDescOnce sync.Once

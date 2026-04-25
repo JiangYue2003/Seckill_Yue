@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/config"
 	"seckill-mall/product-service/internal/server"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"

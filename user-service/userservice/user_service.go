@@ -7,14 +7,15 @@ package userservice
 import (
 	"context"
 
-	"seckill-mall/user-service/user"
+	commonpb "seckill-mall/common/common"
+	"seckill-mall/common/user"
 
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"
 )
 
 type (
-	BoolResponse          = user.BoolResponse
+	BoolResponse          = commonpb.BoolResponse
 	ChangePasswordRequest = user.ChangePasswordRequest
 	GetUserInfoRequest    = user.GetUserInfoRequest
 	LoginRequest          = user.LoginRequest

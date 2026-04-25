@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
+	"seckill-mall/common/seckill"
 	"seckill-mall/common/utils"
 	"seckill-mall/seckill-service/internal/metrics"
 	"seckill-mall/seckill-service/internal/mq"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
-	"seckill-mall/seckill-service/seckill"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )

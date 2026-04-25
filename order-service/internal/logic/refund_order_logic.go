@@ -3,11 +3,12 @@ package logic
 import (
 	"context"
 	"errors"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -27,7 +28,7 @@ func NewRefundOrderLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Refun
 }
 
 // RefundOrder 退款
-func (l *RefundOrderLogic) RefundOrder(in *order.RefundOrderRequest) (*order.BoolResponse, error) {
+func (l *RefundOrderLogic) RefundOrder(in *order.RefundOrderRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.OrderId == "" {
 		return nil, errors.New("订单号不能为空")
@@ -80,7 +81,7 @@ func (l *RefundOrderLogic) RefundOrder(in *order.RefundOrderRequest) (*order.Boo
 
 	l.Logger.Infof("退款成功: orderId=%s, reason=%s", in.OrderId, in.Reason)
 
-	return &order.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "退款成功",
 	}, nil

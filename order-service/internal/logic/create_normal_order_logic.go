@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
+	"seckill-mall/common/order"
 	"seckill-mall/common/utils"
 	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )

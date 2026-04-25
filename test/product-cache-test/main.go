@@ -11,7 +11,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	product "seckill-mall/product-service/product"
+	commonpb "seckill-mall/common/common"
+	product "seckill-mall/common/product"
 )
 
 const (
@@ -139,7 +140,7 @@ func createTestProduct() int64 {
 func cleanupProduct(productId int64) {
 	ctx := context.Background()
 	deleteCacheKey(productId)
-	productClient.DeleteProduct(ctx, &product.IdRequest{Id: productId})
+	productClient.DeleteProduct(ctx, &commonpb.IdRequest{Id: productId})
 	fmt.Printf("[CLEANUP] 测试商品已清理: productId=%d\n", productId)
 }
 
@@ -295,7 +296,7 @@ func testCacheInvalidateOnDelete(productId int64) error {
 	}
 
 	// 执行删除
-	_, err := productClient.DeleteProduct(ctx, &product.IdRequest{Id: productId})
+	_, err := productClient.DeleteProduct(ctx, &commonpb.IdRequest{Id: productId})
 	if err != nil {
 		return fmt.Errorf("DeleteProduct 失败: %w", err)
 	}

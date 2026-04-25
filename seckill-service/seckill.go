@@ -7,10 +7,10 @@ import (
 	"syscall"
 	"time"
 
+	"seckill-mall/common/seckill"
 	"seckill-mall/seckill-service/internal/config"
 	"seckill-mall/seckill-service/internal/server"
 	"seckill-mall/seckill-service/internal/svc"
-	"seckill-mall/seckill-service/seckill"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"

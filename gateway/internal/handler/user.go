@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"seckill-mall/common/user"
 	"seckill-mall/gateway/internal/middleware"
-	"seckill-mall/user-service/user"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zeromicro/go-zero/core/logx"

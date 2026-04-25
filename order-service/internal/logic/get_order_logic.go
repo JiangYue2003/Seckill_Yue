@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )

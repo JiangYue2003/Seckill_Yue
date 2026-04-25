@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	seckill "seckill-mall/seckill-service/seckill"
+	seckill "seckill-mall/common/seckill"
 )
 
 // TestResult 测试结果
@@ -58,7 +58,7 @@ func testSeckillSuccess(client *SeckillServiceClient) TestResult {
 
 	// 初始化商品库存到 Redis
 	now := time.Now().Unix()
-	ttl := int64(86400) // 24小时
+	ttl := int64(86400)     // 24小时
 	startTime := now - 3600 // 1小时前开始
 	endTime := now + 3600   // 1小时后结束
 

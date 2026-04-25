@@ -7,7 +7,7 @@ package seckillservice
 import (
 	"context"
 
-	"seckill-mall/seckill-service/seckill"
+	"seckill-mall/common/seckill"
 
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"

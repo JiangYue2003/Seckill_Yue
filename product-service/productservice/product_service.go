@@ -6,22 +6,23 @@ package productservice
 
 import (
 	"context"
+	commonpb "seckill-mall/common/common"
 
-	"seckill-mall/product-service/product"
+	"seckill-mall/common/product"
 
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc"
 )
 
 type (
-	BoolResponse                = product.BoolResponse
+	BoolResponse                = commonpb.BoolResponse
 	CreateProductRequest        = product.CreateProductRequest
 	CreateSeckillProductRequest = product.CreateSeckillProductRequest
 	DeductStockRequest          = product.DeductStockRequest
-	Empty                       = product.Empty
+	Empty                       = commonpb.Empty
 	GetProductRequest           = product.GetProductRequest
 	GetSeckillProductRequest    = product.GetSeckillProductRequest
-	IdRequest                   = product.IdRequest
+	IdRequest                   = commonpb.IdRequest
 	ListProductsRequest         = product.ListProductsRequest
 	ListProductsResponse        = product.ListProductsResponse
 	ProductInfo                 = product.ProductInfo

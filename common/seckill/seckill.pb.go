@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v6.33.2
-// source: seckill.proto
+// source: proto/seckill.proto
 
 package seckill
 
@@ -33,7 +33,7 @@ type SeckillRequest struct {
 
 func (x *SeckillRequest) Reset() {
 	*x = SeckillRequest{}
-	mi := &file_seckill_proto_msgTypes[0]
+	mi := &file_proto_seckill_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -45,7 +45,7 @@ func (x *SeckillRequest) String() string {
 func (*SeckillRequest) ProtoMessage() {}
 
 func (x *SeckillRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[0]
+	mi := &file_proto_seckill_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -58,7 +58,7 @@ func (x *SeckillRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeckillRequest.ProtoReflect.Descriptor instead.
 func (*SeckillRequest) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{0}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *SeckillRequest) GetUserId() int64 {
@@ -95,7 +95,7 @@ type SeckillResponse struct {
 
 func (x *SeckillResponse) Reset() {
 	*x = SeckillResponse{}
-	mi := &file_seckill_proto_msgTypes[1]
+	mi := &file_proto_seckill_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -107,7 +107,7 @@ func (x *SeckillResponse) String() string {
 func (*SeckillResponse) ProtoMessage() {}
 
 func (x *SeckillResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[1]
+	mi := &file_proto_seckill_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -120,7 +120,7 @@ func (x *SeckillResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeckillResponse.ProtoReflect.Descriptor instead.
 func (*SeckillResponse) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{1}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *SeckillResponse) GetSuccess() bool {
@@ -162,7 +162,7 @@ type SeckillStatusRequest struct {
 
 func (x *SeckillStatusRequest) Reset() {
 	*x = SeckillStatusRequest{}
-	mi := &file_seckill_proto_msgTypes[2]
+	mi := &file_proto_seckill_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -174,7 +174,7 @@ func (x *SeckillStatusRequest) String() string {
 func (*SeckillStatusRequest) ProtoMessage() {}
 
 func (x *SeckillStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[2]
+	mi := &file_proto_seckill_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -187,7 +187,7 @@ func (x *SeckillStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeckillStatusRequest.ProtoReflect.Descriptor instead.
 func (*SeckillStatusRequest) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{2}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SeckillStatusRequest) GetUserId() int64 {
@@ -216,7 +216,7 @@ type SeckillStatusResponse struct {
 
 func (x *SeckillStatusResponse) Reset() {
 	*x = SeckillStatusResponse{}
-	mi := &file_seckill_proto_msgTypes[3]
+	mi := &file_proto_seckill_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -228,7 +228,7 @@ func (x *SeckillStatusResponse) String() string {
 func (*SeckillStatusResponse) ProtoMessage() {}
 
 func (x *SeckillStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[3]
+	mi := &file_proto_seckill_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -241,7 +241,7 @@ func (x *SeckillStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeckillStatusResponse.ProtoReflect.Descriptor instead.
 func (*SeckillStatusResponse) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{3}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SeckillStatusResponse) GetStatus() string {
@@ -282,7 +282,7 @@ type SeckillResultRequest struct {
 
 func (x *SeckillResultRequest) Reset() {
 	*x = SeckillResultRequest{}
-	mi := &file_seckill_proto_msgTypes[4]
+	mi := &file_proto_seckill_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -294,7 +294,7 @@ func (x *SeckillResultRequest) String() string {
 func (*SeckillResultRequest) ProtoMessage() {}
 
 func (x *SeckillResultRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[4]
+	mi := &file_proto_seckill_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -307,7 +307,7 @@ func (x *SeckillResultRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeckillResultRequest.ProtoReflect.Descriptor instead.
 func (*SeckillResultRequest) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{4}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SeckillResultRequest) GetOrderId() string {
@@ -333,7 +333,7 @@ type SeckillResultResponse struct {
 
 func (x *SeckillResultResponse) Reset() {
 	*x = SeckillResultResponse{}
-	mi := &file_seckill_proto_msgTypes[5]
+	mi := &file_proto_seckill_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -345,7 +345,7 @@ func (x *SeckillResultResponse) String() string {
 func (*SeckillResultResponse) ProtoMessage() {}
 
 func (x *SeckillResultResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[5]
+	mi := &file_proto_seckill_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -358,7 +358,7 @@ func (x *SeckillResultResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeckillResultResponse.ProtoReflect.Descriptor instead.
 func (*SeckillResultResponse) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{5}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SeckillResultResponse) GetSuccess() bool {
@@ -420,15 +420,16 @@ func (x *SeckillResultResponse) GetMessage() string {
 // 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
 type UpdateOrderStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"` // 订单号 [required]
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                  // 新状态 [required]: "success" | "failed"
+	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`                 // 订单号 [required]
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                                  // 新状态 [required]: "success" | "failed"
+	AllowRecover  bool                   `protobuf:"varint,3,opt,name=allow_recover,json=allowRecover,proto3" json:"allow_recover,omitempty"` // 是否允许 failed -> success 的受控自愈 [optional, default=false]
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateOrderStatusRequest) Reset() {
 	*x = UpdateOrderStatusRequest{}
-	mi := &file_seckill_proto_msgTypes[6]
+	mi := &file_proto_seckill_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -440,7 +441,7 @@ func (x *UpdateOrderStatusRequest) String() string {
 func (*UpdateOrderStatusRequest) ProtoMessage() {}
 
 func (x *UpdateOrderStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[6]
+	mi := &file_proto_seckill_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -453,7 +454,7 @@ func (x *UpdateOrderStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrderStatusRequest.ProtoReflect.Descriptor instead.
 func (*UpdateOrderStatusRequest) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{6}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateOrderStatusRequest) GetOrderId() string {
@@ -470,6 +471,13 @@ func (x *UpdateOrderStatusRequest) GetStatus() string {
 	return ""
 }
 
+func (x *UpdateOrderStatusRequest) GetAllowRecover() bool {
+	if x != nil {
+		return x.AllowRecover
+	}
+	return false
+}
+
 type UpdateOrderStatusResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
@@ -480,7 +488,7 @@ type UpdateOrderStatusResponse struct {
 
 func (x *UpdateOrderStatusResponse) Reset() {
 	*x = UpdateOrderStatusResponse{}
-	mi := &file_seckill_proto_msgTypes[7]
+	mi := &file_proto_seckill_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -492,7 +500,7 @@ func (x *UpdateOrderStatusResponse) String() string {
 func (*UpdateOrderStatusResponse) ProtoMessage() {}
 
 func (x *UpdateOrderStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_seckill_proto_msgTypes[7]
+	mi := &file_proto_seckill_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -505,7 +513,7 @@ func (x *UpdateOrderStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrderStatusResponse.ProtoReflect.Descriptor instead.
 func (*UpdateOrderStatusResponse) Descriptor() ([]byte, []int) {
-	return file_seckill_proto_rawDescGZIP(), []int{7}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *UpdateOrderStatusResponse) GetSuccess() bool {
@@ -522,11 +530,149 @@ func (x *UpdateOrderStatusResponse) GetMessage() string {
 	return ""
 }
 
-var File_seckill_proto protoreflect.FileDescriptor
+// 超时失败补偿（Order-Service 超时检查后调用）
+// 语义：仅当当前状态为 pending 时，原子执行 pending -> failed + 回补 Redis 秒杀库存 + 释放 userKey
+type CompensateFailedOrderRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	OrderId          string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`                               // 订单号 [required]
+	SeckillProductId int64                  `protobuf:"varint,2,opt,name=seckill_product_id,json=seckillProductId,proto3" json:"seckill_product_id,omitempty"` // 秒杀商品ID [required]
+	UserId           int64                  `protobuf:"varint,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                                 // 用户ID [required]
+	Quantity         int64                  `protobuf:"varint,4,opt,name=quantity,proto3" json:"quantity,omitempty"`                                           // 回补数量 [required]
+	Reason           string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                                                // 失败原因 [optional]
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
 
-const file_seckill_proto_rawDesc = "" +
+func (x *CompensateFailedOrderRequest) Reset() {
+	*x = CompensateFailedOrderRequest{}
+	mi := &file_proto_seckill_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompensateFailedOrderRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompensateFailedOrderRequest) ProtoMessage() {}
+
+func (x *CompensateFailedOrderRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_seckill_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompensateFailedOrderRequest.ProtoReflect.Descriptor instead.
+func (*CompensateFailedOrderRequest) Descriptor() ([]byte, []int) {
+	return file_proto_seckill_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CompensateFailedOrderRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *CompensateFailedOrderRequest) GetSeckillProductId() int64 {
+	if x != nil {
+		return x.SeckillProductId
+	}
+	return 0
+}
+
+func (x *CompensateFailedOrderRequest) GetUserId() int64 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *CompensateFailedOrderRequest) GetQuantity() int64 {
+	if x != nil {
+		return x.Quantity
+	}
+	return 0
+}
+
+func (x *CompensateFailedOrderRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type CompensateFailedOrderResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Result        string                 `protobuf:"bytes,3,opt,name=result,proto3" json:"result,omitempty"` // compensated | idempotent_failed | already_success | order_not_found | invalid_status
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompensateFailedOrderResponse) Reset() {
+	*x = CompensateFailedOrderResponse{}
+	mi := &file_proto_seckill_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompensateFailedOrderResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompensateFailedOrderResponse) ProtoMessage() {}
+
+func (x *CompensateFailedOrderResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_seckill_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompensateFailedOrderResponse.ProtoReflect.Descriptor instead.
+func (*CompensateFailedOrderResponse) Descriptor() ([]byte, []int) {
+	return file_proto_seckill_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CompensateFailedOrderResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *CompensateFailedOrderResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *CompensateFailedOrderResponse) GetResult() string {
+	if x != nil {
+		return x.Result
+	}
+	return ""
+}
+
+var File_proto_seckill_proto protoreflect.FileDescriptor
+
+const file_proto_seckill_proto_rawDesc = "" +
 	"\n" +
-	"\rseckill.proto\x12\aseckill\"s\n" +
+	"\x13proto/seckill.proto\x12\aseckill\"s\n" +
 	"\x0eSeckillRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12,\n" +
 	"\x12seckill_product_id\x18\x02 \x01(\x03R\x10seckillProductId\x12\x1a\n" +
@@ -556,78 +702,94 @@ const file_seckill_proto_rawDesc = "" +
 	"\bquantity\x18\x05 \x01(\x03R\bquantity\x12\x16\n" +
 	"\x06amount\x18\x06 \x01(\x03R\x06amount\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x12\x18\n" +
-	"\amessage\x18\b \x01(\tR\amessage\"M\n" +
+	"\amessage\x18\b \x01(\tR\amessage\"r\n" +
 	"\x18UpdateOrderStatusRequest\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\"O\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12#\n" +
+	"\rallow_recover\x18\x03 \x01(\bR\fallowRecover\"O\n" +
 	"\x19UpdateOrderStatusResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xd0\x02\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xb4\x01\n" +
+	"\x1cCompensateFailedOrderRequest\x12\x19\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12,\n" +
+	"\x12seckill_product_id\x18\x02 \x01(\x03R\x10seckillProductId\x12\x17\n" +
+	"\auser_id\x18\x03 \x01(\x03R\x06userId\x12\x1a\n" +
+	"\bquantity\x18\x04 \x01(\x03R\bquantity\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"k\n" +
+	"\x1dCompensateFailedOrderResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +
+	"\x06result\x18\x03 \x01(\tR\x06result2\xb8\x03\n" +
 	"\x0eSeckillService\x12<\n" +
 	"\aSeckill\x12\x17.seckill.SeckillRequest\x1a\x18.seckill.SeckillResponse\x12Q\n" +
 	"\x10GetSeckillStatus\x12\x1d.seckill.SeckillStatusRequest\x1a\x1e.seckill.SeckillStatusResponse\x12Q\n" +
 	"\x10GetSeckillResult\x12\x1d.seckill.SeckillResultRequest\x1a\x1e.seckill.SeckillResultResponse\x12Z\n" +
-	"\x11UpdateOrderStatus\x12!.seckill.UpdateOrderStatusRequest\x1a\".seckill.UpdateOrderStatusResponseB\vZ\t./seckillb\x06proto3"
+	"\x11UpdateOrderStatus\x12!.seckill.UpdateOrderStatusRequest\x1a\".seckill.UpdateOrderStatusResponse\x12f\n" +
+	"\x15CompensateFailedOrder\x12%.seckill.CompensateFailedOrderRequest\x1a&.seckill.CompensateFailedOrderResponseB\x1dZ\x1bseckill-mall/common/seckillb\x06proto3"
 
 var (
-	file_seckill_proto_rawDescOnce sync.Once
-	file_seckill_proto_rawDescData []byte
+	file_proto_seckill_proto_rawDescOnce sync.Once
+	file_proto_seckill_proto_rawDescData []byte
 )
 
-func file_seckill_proto_rawDescGZIP() []byte {
-	file_seckill_proto_rawDescOnce.Do(func() {
-		file_seckill_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_seckill_proto_rawDesc), len(file_seckill_proto_rawDesc)))
+func file_proto_seckill_proto_rawDescGZIP() []byte {
+	file_proto_seckill_proto_rawDescOnce.Do(func() {
+		file_proto_seckill_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_seckill_proto_rawDesc), len(file_proto_seckill_proto_rawDesc)))
 	})
-	return file_seckill_proto_rawDescData
+	return file_proto_seckill_proto_rawDescData
 }
 
-var file_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
-var file_seckill_proto_goTypes = []any{
-	(*SeckillRequest)(nil),            // 0: seckill.SeckillRequest
-	(*SeckillResponse)(nil),           // 1: seckill.SeckillResponse
-	(*SeckillStatusRequest)(nil),      // 2: seckill.SeckillStatusRequest
-	(*SeckillStatusResponse)(nil),     // 3: seckill.SeckillStatusResponse
-	(*SeckillResultRequest)(nil),      // 4: seckill.SeckillResultRequest
-	(*SeckillResultResponse)(nil),     // 5: seckill.SeckillResultResponse
-	(*UpdateOrderStatusRequest)(nil),  // 6: seckill.UpdateOrderStatusRequest
-	(*UpdateOrderStatusResponse)(nil), // 7: seckill.UpdateOrderStatusResponse
+var file_proto_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_proto_seckill_proto_goTypes = []any{
+	(*SeckillRequest)(nil),                // 0: seckill.SeckillRequest
+	(*SeckillResponse)(nil),               // 1: seckill.SeckillResponse
+	(*SeckillStatusRequest)(nil),          // 2: seckill.SeckillStatusRequest
+	(*SeckillStatusResponse)(nil),         // 3: seckill.SeckillStatusResponse
+	(*SeckillResultRequest)(nil),          // 4: seckill.SeckillResultRequest
+	(*SeckillResultResponse)(nil),         // 5: seckill.SeckillResultResponse
+	(*UpdateOrderStatusRequest)(nil),      // 6: seckill.UpdateOrderStatusRequest
+	(*UpdateOrderStatusResponse)(nil),     // 7: seckill.UpdateOrderStatusResponse
+	(*CompensateFailedOrderRequest)(nil),  // 8: seckill.CompensateFailedOrderRequest
+	(*CompensateFailedOrderResponse)(nil), // 9: seckill.CompensateFailedOrderResponse
 }
-var file_seckill_proto_depIdxs = []int32{
+var file_proto_seckill_proto_depIdxs = []int32{
 	0, // 0: seckill.SeckillService.Seckill:input_type -> seckill.SeckillRequest
 	2, // 1: seckill.SeckillService.GetSeckillStatus:input_type -> seckill.SeckillStatusRequest
 	4, // 2: seckill.SeckillService.GetSeckillResult:input_type -> seckill.SeckillResultRequest
 	6, // 3: seckill.SeckillService.UpdateOrderStatus:input_type -> seckill.UpdateOrderStatusRequest
-	1, // 4: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
-	3, // 5: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
-	5, // 6: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
-	7, // 7: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
+	8, // 4: seckill.SeckillService.CompensateFailedOrder:input_type -> seckill.CompensateFailedOrderRequest
+	1, // 5: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
+	3, // 6: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
+	5, // 7: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
+	7, // 8: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
+	9, // 9: seckill.SeckillService.CompensateFailedOrder:output_type -> seckill.CompensateFailedOrderResponse
+	5, // [5:10] is the sub-list for method output_type
+	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_seckill_proto_init() }
-func file_seckill_proto_init() {
-	if File_seckill_proto != nil {
+func init() { file_proto_seckill_proto_init() }
+func file_proto_seckill_proto_init() {
+	if File_proto_seckill_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_seckill_proto_rawDesc), len(file_seckill_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_seckill_proto_rawDesc), len(file_proto_seckill_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_seckill_proto_goTypes,
-		DependencyIndexes: file_seckill_proto_depIdxs,
-		MessageInfos:      file_seckill_proto_msgTypes,
+		GoTypes:           file_proto_seckill_proto_goTypes,
+		DependencyIndexes: file_proto_seckill_proto_depIdxs,
+		MessageInfos:      file_proto_seckill_proto_msgTypes,
 	}.Build()
-	File_seckill_proto = out.File
-	file_seckill_proto_goTypes = nil
-	file_seckill_proto_depIdxs = nil
+	File_proto_seckill_proto = out.File
+	file_proto_seckill_proto_goTypes = nil
+	file_proto_seckill_proto_depIdxs = nil
 }

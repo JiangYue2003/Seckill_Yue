@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"seckill-mall/user-service/user"
+	"seckill-mall/common/user"
 
 	"github.com/gin-gonic/gin"
 	"github.com/zeromicro/go-zero/core/stores/redis"

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"seckill-mall/common/product"
 	"seckill-mall/order-service/internal/config"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/zrpc"
 	"google.golang.org/grpc/codes"

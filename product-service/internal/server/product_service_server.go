@@ -6,10 +6,11 @@ package server
 
 import (
 	"context"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/logic"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 )
 
 type ProductServiceServer struct {
@@ -30,7 +31,7 @@ func (s *ProductServiceServer) CreateProduct(ctx context.Context, in *product.Cr
 }
 
 // 更新商品
-func (s *ProductServiceServer) UpdateProduct(ctx context.Context, in *product.UpdateProductRequest) (*product.BoolResponse, error) {
+func (s *ProductServiceServer) UpdateProduct(ctx context.Context, in *product.UpdateProductRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewUpdateProductLogic(ctx, s.svcCtx)
 	return l.UpdateProduct(in)
 }
@@ -48,7 +49,7 @@ func (s *ProductServiceServer) ListProducts(ctx context.Context, in *product.Lis
 }
 
 // 删除商品
-func (s *ProductServiceServer) DeleteProduct(ctx context.Context, in *product.IdRequest) (*product.BoolResponse, error) {
+func (s *ProductServiceServer) DeleteProduct(ctx context.Context, in *commonpb.IdRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewDeleteProductLogic(ctx, s.svcCtx)
 	return l.DeleteProduct(in)
 }
@@ -66,7 +67,7 @@ func (s *ProductServiceServer) RollbackStock(ctx context.Context, in *product.Ro
 }
 
 // 查询库存
-func (s *ProductServiceServer) GetStock(ctx context.Context, in *product.IdRequest) (*product.StockOperationResponse, error) {
+func (s *ProductServiceServer) GetStock(ctx context.Context, in *commonpb.IdRequest) (*product.StockOperationResponse, error) {
 	l := logic.NewGetStockLogic(ctx, s.svcCtx)
 	return l.GetStock(in)
 }
@@ -84,13 +85,13 @@ func (s *ProductServiceServer) GetSeckillProduct(ctx context.Context, in *produc
 }
 
 // 更新秒杀商品
-func (s *ProductServiceServer) UpdateSeckillProduct(ctx context.Context, in *product.UpdateSeckillProductRequest) (*product.BoolResponse, error) {
+func (s *ProductServiceServer) UpdateSeckillProduct(ctx context.Context, in *product.UpdateSeckillProductRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewUpdateSeckillProductLogic(ctx, s.svcCtx)
 	return l.UpdateSeckillProduct(in)
 }
 
 // 获取进行中的秒杀商品列表
-func (s *ProductServiceServer) ListActiveSeckillProducts(in *product.Empty, stream product.ProductService_ListActiveSeckillProductsServer) error {
+func (s *ProductServiceServer) ListActiveSeckillProducts(in *commonpb.Empty, stream product.ProductService_ListActiveSeckillProductsServer) error {
 	l := logic.NewListActiveSeckillProductsLogic(stream.Context(), s.svcCtx)
 	return l.ListActiveSeckillProducts(in, stream)
 }

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/model"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
 	"google.golang.org/grpc/codes"

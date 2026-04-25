@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package user;
 
-option go_package = "./user";
+option go_package = "seckill-mall/common/user";
 
 import "proto/common.proto";
 
@@ -25,8 +25,23 @@ message LoginResponse {
     int64 user_id = 1;
     string username = 2;
     string email = 3;
-    string token = 4;       // JWT Token
-    int64 expire_at = 5;    // Token 过期时间戳
+    string access_token = 4;      // Access Token（短 token，15 分钟）
+    int64 access_expire_at = 5;   // Access Token 过期时间戳
+    string refresh_token = 6;     // Refresh Token（长 token，7 天）
+    int64 refresh_expire_at = 7;  // Refresh Token 过期时间戳
+}
+
+// 刷新 Token 请求
+message RefreshTokenRequest {
+    string refresh_token = 1;  // Refresh Token [required]
+}
+
+// 刷新 Token 响应
+message RefreshTokenResponse {
+    string access_token = 1;      // 新 Access Token
+    int64 access_expire_at = 2;   // 新 Access Token 过期时间戳
+    string refresh_token = 3;     // 新 Refresh Token（rotation）
+    int64 refresh_expire_at = 4;  // 新 Refresh Token 过期时间戳
 }
 
 // 用户信息响应
@@ -66,6 +81,9 @@ service UserService {
 
     // 用户登录
     rpc Login(LoginRequest) returns (LoginResponse);
+
+    // 刷新 Token
+    rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
 
     // 获取用户信息
     rpc GetUserInfo(GetUserInfoRequest) returns (UserInfo);

@@ -7,10 +7,10 @@
 package user
 
 import (
-	common "./common"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
+	common "seckill-mall/common/common"
 	sync "sync"
 	unsafe "unsafe"
 )
@@ -146,14 +146,16 @@ func (x *LoginRequest) GetPassword() string {
 
 // 登录响应（包含 JWT Token）
 type LoginResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	UserId        int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
-	Email         string                 `protobuf:"bytes,3,opt,name=email,proto3" json:"email,omitempty"`
-	Token         string                 `protobuf:"bytes,4,opt,name=token,proto3" json:"token,omitempty"`                        // JWT Token
-	ExpireAt      int64                  `protobuf:"varint,5,opt,name=expire_at,json=expireAt,proto3" json:"expire_at,omitempty"` // Token 过期时间戳
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	UserId          int64                  `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Username        string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	Email           string                 `protobuf:"bytes,3,opt,name=email,proto3" json:"email,omitempty"`
+	AccessToken     string                 `protobuf:"bytes,4,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`                // Access Token（短 token，15 分钟）
+	AccessExpireAt  int64                  `protobuf:"varint,5,opt,name=access_expire_at,json=accessExpireAt,proto3" json:"access_expire_at,omitempty"`    // Access Token 过期时间戳
+	RefreshToken    string                 `protobuf:"bytes,6,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`             // Refresh Token（长 token，7 天）
+	RefreshExpireAt int64                  `protobuf:"varint,7,opt,name=refresh_expire_at,json=refreshExpireAt,proto3" json:"refresh_expire_at,omitempty"` // Refresh Token 过期时间戳
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *LoginResponse) Reset() {
@@ -207,16 +209,144 @@ func (x *LoginResponse) GetEmail() string {
 	return ""
 }
 
-func (x *LoginResponse) GetToken() string {
+func (x *LoginResponse) GetAccessToken() string {
 	if x != nil {
-		return x.Token
+		return x.AccessToken
 	}
 	return ""
 }
 
-func (x *LoginResponse) GetExpireAt() int64 {
+func (x *LoginResponse) GetAccessExpireAt() int64 {
 	if x != nil {
-		return x.ExpireAt
+		return x.AccessExpireAt
+	}
+	return 0
+}
+
+func (x *LoginResponse) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+func (x *LoginResponse) GetRefreshExpireAt() int64 {
+	if x != nil {
+		return x.RefreshExpireAt
+	}
+	return 0
+}
+
+// 刷新 Token 请求
+type RefreshTokenRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RefreshToken  string                 `protobuf:"bytes,1,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"` // Refresh Token [required]
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RefreshTokenRequest) Reset() {
+	*x = RefreshTokenRequest{}
+	mi := &file_proto_user_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshTokenRequest) ProtoMessage() {}
+
+func (x *RefreshTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_user_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshTokenRequest.ProtoReflect.Descriptor instead.
+func (*RefreshTokenRequest) Descriptor() ([]byte, []int) {
+	return file_proto_user_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *RefreshTokenRequest) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+// 刷新 Token 响应
+type RefreshTokenResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken     string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`                // 新 Access Token
+	AccessExpireAt  int64                  `protobuf:"varint,2,opt,name=access_expire_at,json=accessExpireAt,proto3" json:"access_expire_at,omitempty"`    // 新 Access Token 过期时间戳
+	RefreshToken    string                 `protobuf:"bytes,3,opt,name=refresh_token,json=refreshToken,proto3" json:"refresh_token,omitempty"`             // 新 Refresh Token（rotation）
+	RefreshExpireAt int64                  `protobuf:"varint,4,opt,name=refresh_expire_at,json=refreshExpireAt,proto3" json:"refresh_expire_at,omitempty"` // 新 Refresh Token 过期时间戳
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RefreshTokenResponse) Reset() {
+	*x = RefreshTokenResponse{}
+	mi := &file_proto_user_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RefreshTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RefreshTokenResponse) ProtoMessage() {}
+
+func (x *RefreshTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_user_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RefreshTokenResponse.ProtoReflect.Descriptor instead.
+func (*RefreshTokenResponse) Descriptor() ([]byte, []int) {
+	return file_proto_user_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RefreshTokenResponse) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *RefreshTokenResponse) GetAccessExpireAt() int64 {
+	if x != nil {
+		return x.AccessExpireAt
+	}
+	return 0
+}
+
+func (x *RefreshTokenResponse) GetRefreshToken() string {
+	if x != nil {
+		return x.RefreshToken
+	}
+	return ""
+}
+
+func (x *RefreshTokenResponse) GetRefreshExpireAt() int64 {
+	if x != nil {
+		return x.RefreshExpireAt
 	}
 	return 0
 }
@@ -237,7 +367,7 @@ type UserInfo struct {
 
 func (x *UserInfo) Reset() {
 	*x = UserInfo{}
-	mi := &file_proto_user_proto_msgTypes[3]
+	mi := &file_proto_user_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -249,7 +379,7 @@ func (x *UserInfo) String() string {
 func (*UserInfo) ProtoMessage() {}
 
 func (x *UserInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_user_proto_msgTypes[3]
+	mi := &file_proto_user_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -262,7 +392,7 @@ func (x *UserInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UserInfo.ProtoReflect.Descriptor instead.
 func (*UserInfo) Descriptor() ([]byte, []int) {
-	return file_proto_user_proto_rawDescGZIP(), []int{3}
+	return file_proto_user_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *UserInfo) GetId() int64 {
@@ -324,7 +454,7 @@ type GetUserInfoRequest struct {
 
 func (x *GetUserInfoRequest) Reset() {
 	*x = GetUserInfoRequest{}
-	mi := &file_proto_user_proto_msgTypes[4]
+	mi := &file_proto_user_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +466,7 @@ func (x *GetUserInfoRequest) String() string {
 func (*GetUserInfoRequest) ProtoMessage() {}
 
 func (x *GetUserInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_user_proto_msgTypes[4]
+	mi := &file_proto_user_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +479,7 @@ func (x *GetUserInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetUserInfoRequest) Descriptor() ([]byte, []int) {
-	return file_proto_user_proto_rawDescGZIP(), []int{4}
+	return file_proto_user_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *GetUserInfoRequest) GetUserId() int64 {
@@ -371,7 +501,7 @@ type UpdateUserInfoRequest struct {
 
 func (x *UpdateUserInfoRequest) Reset() {
 	*x = UpdateUserInfoRequest{}
-	mi := &file_proto_user_proto_msgTypes[5]
+	mi := &file_proto_user_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -383,7 +513,7 @@ func (x *UpdateUserInfoRequest) String() string {
 func (*UpdateUserInfoRequest) ProtoMessage() {}
 
 func (x *UpdateUserInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_user_proto_msgTypes[5]
+	mi := &file_proto_user_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -396,7 +526,7 @@ func (x *UpdateUserInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserInfoRequest.ProtoReflect.Descriptor instead.
 func (*UpdateUserInfoRequest) Descriptor() ([]byte, []int) {
-	return file_proto_user_proto_rawDescGZIP(), []int{5}
+	return file_proto_user_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *UpdateUserInfoRequest) GetUserId() int64 {
@@ -432,7 +562,7 @@ type ChangePasswordRequest struct {
 
 func (x *ChangePasswordRequest) Reset() {
 	*x = ChangePasswordRequest{}
-	mi := &file_proto_user_proto_msgTypes[6]
+	mi := &file_proto_user_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -444,7 +574,7 @@ func (x *ChangePasswordRequest) String() string {
 func (*ChangePasswordRequest) ProtoMessage() {}
 
 func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_user_proto_msgTypes[6]
+	mi := &file_proto_user_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -457,7 +587,7 @@ func (x *ChangePasswordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePasswordRequest.ProtoReflect.Descriptor instead.
 func (*ChangePasswordRequest) Descriptor() ([]byte, []int) {
-	return file_proto_user_proto_rawDescGZIP(), []int{6}
+	return file_proto_user_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ChangePasswordRequest) GetUserId() int64 {
@@ -493,13 +623,22 @@ const file_proto_user_proto_rawDesc = "" +
 	"\x05phone\x18\x04 \x01(\tR\x05phone\"F\n" +
 	"\fLoginRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\"\x8d\x01\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\"\xf8\x01\n" +
 	"\rLoginResponse\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x14\n" +
-	"\x05email\x18\x03 \x01(\tR\x05email\x12\x14\n" +
-	"\x05token\x18\x04 \x01(\tR\x05token\x12\x1b\n" +
-	"\texpire_at\x18\x05 \x01(\x03R\bexpireAt\"\xb8\x01\n" +
+	"\x05email\x18\x03 \x01(\tR\x05email\x12!\n" +
+	"\faccess_token\x18\x04 \x01(\tR\vaccessToken\x12(\n" +
+	"\x10access_expire_at\x18\x05 \x01(\x03R\x0eaccessExpireAt\x12#\n" +
+	"\rrefresh_token\x18\x06 \x01(\tR\frefreshToken\x12*\n" +
+	"\x11refresh_expire_at\x18\a \x01(\x03R\x0frefreshExpireAt\":\n" +
+	"\x13RefreshTokenRequest\x12#\n" +
+	"\rrefresh_token\x18\x01 \x01(\tR\frefreshToken\"\xb4\x01\n" +
+	"\x14RefreshTokenResponse\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12(\n" +
+	"\x10access_expire_at\x18\x02 \x01(\x03R\x0eaccessExpireAt\x12#\n" +
+	"\rrefresh_token\x18\x03 \x01(\tR\frefreshToken\x12*\n" +
+	"\x11refresh_expire_at\x18\x04 \x01(\x03R\x0frefreshExpireAt\"\xb8\x01\n" +
 	"\bUserInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x14\n" +
@@ -519,13 +658,14 @@ const file_proto_user_proto_rawDesc = "" +
 	"\x15ChangePasswordRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\x03R\x06userId\x12!\n" +
 	"\fold_password\x18\x02 \x01(\tR\voldPassword\x12!\n" +
-	"\fnew_password\x18\x03 \x01(\tR\vnewPassword2\xb5\x02\n" +
+	"\fnew_password\x18\x03 \x01(\tR\vnewPassword2\xfc\x02\n" +
 	"\vUserService\x121\n" +
 	"\bRegister\x12\x15.user.RegisterRequest\x1a\x0e.user.UserInfo\x120\n" +
-	"\x05Login\x12\x12.user.LoginRequest\x1a\x13.user.LoginResponse\x127\n" +
+	"\x05Login\x12\x12.user.LoginRequest\x1a\x13.user.LoginResponse\x12E\n" +
+	"\fRefreshToken\x12\x19.user.RefreshTokenRequest\x1a\x1a.user.RefreshTokenResponse\x127\n" +
 	"\vGetUserInfo\x12\x18.user.GetUserInfoRequest\x1a\x0e.user.UserInfo\x12C\n" +
 	"\x0eUpdateUserInfo\x12\x1b.user.UpdateUserInfoRequest\x1a\x14.common.BoolResponse\x12C\n" +
-	"\x0eChangePassword\x12\x1b.user.ChangePasswordRequest\x1a\x14.common.BoolResponseB\bZ\x06./userb\x06proto3"
+	"\x0eChangePassword\x12\x1b.user.ChangePasswordRequest\x1a\x14.common.BoolResponseB\x1aZ\x18seckill-mall/common/userb\x06proto3"
 
 var (
 	file_proto_user_proto_rawDescOnce sync.Once
@@ -539,30 +679,34 @@ func file_proto_user_proto_rawDescGZIP() []byte {
 	return file_proto_user_proto_rawDescData
 }
 
-var file_proto_user_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_proto_user_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_proto_user_proto_goTypes = []any{
 	(*RegisterRequest)(nil),       // 0: user.RegisterRequest
 	(*LoginRequest)(nil),          // 1: user.LoginRequest
 	(*LoginResponse)(nil),         // 2: user.LoginResponse
-	(*UserInfo)(nil),              // 3: user.UserInfo
-	(*GetUserInfoRequest)(nil),    // 4: user.GetUserInfoRequest
-	(*UpdateUserInfoRequest)(nil), // 5: user.UpdateUserInfoRequest
-	(*ChangePasswordRequest)(nil), // 6: user.ChangePasswordRequest
-	(*common.BoolResponse)(nil),   // 7: common.BoolResponse
+	(*RefreshTokenRequest)(nil),   // 3: user.RefreshTokenRequest
+	(*RefreshTokenResponse)(nil),  // 4: user.RefreshTokenResponse
+	(*UserInfo)(nil),              // 5: user.UserInfo
+	(*GetUserInfoRequest)(nil),    // 6: user.GetUserInfoRequest
+	(*UpdateUserInfoRequest)(nil), // 7: user.UpdateUserInfoRequest
+	(*ChangePasswordRequest)(nil), // 8: user.ChangePasswordRequest
+	(*common.BoolResponse)(nil),   // 9: common.BoolResponse
 }
 var file_proto_user_proto_depIdxs = []int32{
 	0, // 0: user.UserService.Register:input_type -> user.RegisterRequest
 	1, // 1: user.UserService.Login:input_type -> user.LoginRequest
-	4, // 2: user.UserService.GetUserInfo:input_type -> user.GetUserInfoRequest
-	5, // 3: user.UserService.UpdateUserInfo:input_type -> user.UpdateUserInfoRequest
-	6, // 4: user.UserService.ChangePassword:input_type -> user.ChangePasswordRequest
-	3, // 5: user.UserService.Register:output_type -> user.UserInfo
-	2, // 6: user.UserService.Login:output_type -> user.LoginResponse
-	3, // 7: user.UserService.GetUserInfo:output_type -> user.UserInfo
-	7, // 8: user.UserService.UpdateUserInfo:output_type -> common.BoolResponse
-	7, // 9: user.UserService.ChangePassword:output_type -> common.BoolResponse
-	5, // [5:10] is the sub-list for method output_type
-	0, // [0:5] is the sub-list for method input_type
+	3, // 2: user.UserService.RefreshToken:input_type -> user.RefreshTokenRequest
+	6, // 3: user.UserService.GetUserInfo:input_type -> user.GetUserInfoRequest
+	7, // 4: user.UserService.UpdateUserInfo:input_type -> user.UpdateUserInfoRequest
+	8, // 5: user.UserService.ChangePassword:input_type -> user.ChangePasswordRequest
+	5, // 6: user.UserService.Register:output_type -> user.UserInfo
+	2, // 7: user.UserService.Login:output_type -> user.LoginResponse
+	4, // 8: user.UserService.RefreshToken:output_type -> user.RefreshTokenResponse
+	5, // 9: user.UserService.GetUserInfo:output_type -> user.UserInfo
+	9, // 10: user.UserService.UpdateUserInfo:output_type -> common.BoolResponse
+	9, // 11: user.UserService.ChangePassword:output_type -> common.BoolResponse
+	6, // [6:12] is the sub-list for method output_type
+	0, // [0:6] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -579,7 +723,7 @@ func file_proto_user_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_user_proto_rawDesc), len(file_proto_user_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

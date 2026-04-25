@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/model"
 	redisutil "seckill-mall/product-service/internal/redis"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )

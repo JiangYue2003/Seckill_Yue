@@ -3,10 +3,11 @@ package logic
 import (
 	"context"
 	"errors"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -26,7 +27,7 @@ func NewPayOrderLogic(ctx context.Context, svcCtx *svc.ServiceContext) *PayOrder
 }
 
 // PayOrder 支付订单
-func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*order.BoolResponse, error) {
+func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.OrderId == "" {
 		return nil, errors.New("订单号不能为空")
@@ -61,7 +62,7 @@ func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*order.BoolResponse
 
 	l.Logger.Infof("订单支付成功: orderId=%s, paymentId=%s", in.OrderId, in.PaymentId)
 
-	return &order.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "支付成功",
 	}, nil

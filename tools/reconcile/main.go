@@ -18,7 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/seckill-mall/reconcile-tool/reconcile"
-	seckillpb "seckill-mall/seckill-service/seckill"
+	seckillpb "seckill-mall/common/seckill"
 
 	_ "github.com/go-sql-driver/mysql"
 )

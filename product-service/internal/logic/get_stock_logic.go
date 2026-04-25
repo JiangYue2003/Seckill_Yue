@@ -3,10 +3,11 @@ package logic
 import (
 	"context"
 	"errors"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/model"
 	"seckill-mall/product-service/internal/svc"
-	"seckill-mall/product-service/product"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -26,7 +27,7 @@ func NewGetStockLogic(ctx context.Context, svcCtx *svc.ServiceContext) *GetStock
 }
 
 // GetStock 查询库存
-func (l *GetStockLogic) GetStock(in *product.IdRequest) (*product.StockOperationResponse, error) {
+func (l *GetStockLogic) GetStock(in *commonpb.IdRequest) (*product.StockOperationResponse, error) {
 	// 参数校验
 	if in.Id <= 0 {
 		return nil, errors.New("商品ID无效")

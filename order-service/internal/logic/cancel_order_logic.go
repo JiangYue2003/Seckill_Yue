@@ -3,11 +3,12 @@ package logic
 import (
 	"context"
 	"errors"
+	commonpb "seckill-mall/common/common"
 
+	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/svc"
-	"seckill-mall/order-service/order"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -27,7 +28,7 @@ func NewCancelOrderLogic(ctx context.Context, svcCtx *svc.ServiceContext) *Cance
 }
 
 // CancelOrder 取消订单
-func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.BoolResponse, error) {
+func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.OrderId == "" {
 		return nil, errors.New("订单号不能为空")
@@ -82,7 +83,7 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*order.Boo
 
 	l.Logger.Infof("订单取消成功: orderId=%s, userId=%d", in.OrderId, in.UserId)
 
-	return &order.BoolResponse{
+	return &commonpb.BoolResponse{
 		Success: true,
 		Message: "订单取消成功",
 	}, nil
