@@ -21,6 +21,7 @@ type ServiceContext struct {
 	AsyncProducer    *mq.AsyncProducer
 	ProductMetaCache *ProductMetaCache
 	ProductFilter    *ProductIDFilter
+	QuotaRefillGate  *QuotaRefillGate
 	InstanceID       string
 
 	bgCtx    context.Context
@@ -81,6 +82,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		AsyncProducer:    asyncProducer,
 		ProductMetaCache: productMetaCache,
 		ProductFilter:    productFilter,
+		QuotaRefillGate:  NewQuotaRefillGate(),
 		InstanceID:       instanceID,
 	}
 

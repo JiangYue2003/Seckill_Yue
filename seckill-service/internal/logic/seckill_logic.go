@@ -36,6 +36,10 @@ const (
 	defaultQuotaBatchSize       = 200
 	defaultQuotaLowWatermark    = 40
 	defaultQuotaLeaseTTLSeconds = 15
+
+	quotaRefillSourceInitial      = "initial"
+	quotaRefillSourceInsufficient = "insufficient"
+	quotaRefillSourceLowWater     = "low_water"
 )
 
 type SeckillLogic struct {
@@ -137,20 +141,8 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		// 配额模式：本地计数器从 0 起步，仅在不足时领取，避免每请求打 Redis
 		l.svcCtx.Redis.GetOrInitLocalStockWithValue(in.SeckillProductId, 0)
 		if l.svcCtx.Redis.GetLocalStock(in.SeckillProductId) <= 0 {
-			if allocated, _, err := l.svcCtx.Redis.EnsureQuota(
-				l.ctx,
-				in.SeckillProductId,
-				l.svcCtx.InstanceID,
-				l.quotaBatchSize(),
-				l.quotaLeaseTTLSeconds(),
-			); err != nil {
-				metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
-				l.Logger.Errorf("initial quota allocate failed: spid=%d, err=%v", in.SeckillProductId, err)
-			} else if allocated > 0 {
-				metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
-				l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, allocated)
-			} else {
-				metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
+			if err := l.refillQuota(l.ctx, in.SeckillProductId, quotaRefillSourceInitial); err != nil {
+				l.Logger.Errorf("initial quota refill failed: spid=%d, err=%v", in.SeckillProductId, err)
 			}
 		}
 	} else {
@@ -172,25 +164,14 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 		// 配额模式：尝试快速补一批本地配额再重试一次
 		if quotaEnabled {
-			allocated, _, err := l.svcCtx.Redis.EnsureQuota(
-				l.ctx,
-				in.SeckillProductId,
-				l.svcCtx.InstanceID,
-				l.quotaBatchSize(),
-				l.quotaLeaseTTLSeconds(),
-			)
-			if err != nil {
-				metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
-				l.Logger.Errorf("quota allocate failed: spid=%d, err=%v", in.SeckillProductId, err)
-			} else if allocated > 0 {
-				metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
-				l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, allocated)
+			if err := l.refillQuota(l.ctx, in.SeckillProductId, quotaRefillSourceInsufficient); err != nil {
+				l.Logger.Errorf("quota refill failed: spid=%d, err=%v", in.SeckillProductId, err)
+			}
+			if l.svcCtx.Redis.GetLocalStock(in.SeckillProductId) > 0 {
 				remaining = l.svcCtx.Redis.DecrLocalStock(in.SeckillProductId, quantity)
 				if remaining < 0 {
 					l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
 				}
-			} else {
-				metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
 			}
 		}
 	}
@@ -291,22 +272,10 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	case redis.LuaResultSuccess:
 		if quotaEnabled && remaining <= l.quotaLowWatermark() {
 			go func(spid int64) {
-				allocated, _, allocErr := l.svcCtx.Redis.EnsureQuota(
-					context.Background(),
-					spid,
-					l.svcCtx.InstanceID,
-					l.quotaBatchSize(),
-					l.quotaLeaseTTLSeconds(),
-				)
-				if allocErr != nil {
-					metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
-					return
-				}
-				if allocated > 0 {
-					metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
-					l.svcCtx.Redis.IncrLocalStock(spid, allocated)
-				} else {
-					metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
+				bgCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				if refillErr := l.refillQuota(bgCtx, spid, quotaRefillSourceLowWater); refillErr != nil {
+					l.Logger.Errorf("low-water quota refill failed: spid=%d, err=%v", spid, refillErr)
 				}
 			}(in.SeckillProductId)
 		}
@@ -389,6 +358,41 @@ func (l *SeckillLogic) quotaLeaseTTLSeconds() int64 {
 		return l.svcCtx.Config.LocalQuota.LeaseTTLSeconds
 	}
 	return defaultQuotaLeaseTTLSeconds
+}
+
+// refillQuota performs quota refill with per-product single-flight protection.
+// The first caller executes EnsureQuota; concurrent callers wait for that result.
+func (l *SeckillLogic) refillQuota(ctx context.Context, seckillProductId int64, source string) error {
+	outcome := "ok"
+	shared, err := l.svcCtx.QuotaRefillGate.Do(ctx, seckillProductId, func() error {
+		allocated, _, allocErr := l.svcCtx.Redis.EnsureQuota(
+			ctx,
+			seckillProductId,
+			l.svcCtx.InstanceID,
+			l.quotaBatchSize(),
+			l.quotaLeaseTTLSeconds(),
+		)
+		if allocErr != nil {
+			outcome = "failed"
+			metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
+			return allocErr
+		}
+		if allocated > 0 {
+			outcome = "ok"
+			metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
+			l.svcCtx.Redis.IncrLocalStock(seckillProductId, allocated)
+			return nil
+		}
+		outcome = "empty"
+		metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
+		return nil
+	})
+	if shared {
+		metrics.SeckillQuotaRefillTotal.WithLabelValues(source, "coalesced").Inc()
+		return err
+	}
+	metrics.SeckillQuotaRefillTotal.WithLabelValues(source, outcome).Inc()
+	return err
 }
 
 // getSeckillProductInfo 从 Redis 获取秒杀商品信息（productId, seckillPrice, productName, startTime, endTime）

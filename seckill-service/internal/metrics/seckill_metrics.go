@@ -51,6 +51,15 @@ var (
 		[]string{"result"},
 	)
 
+	// SeckillQuotaRefillTotal counts refill attempt outcomes by trigger source.
+	SeckillQuotaRefillTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "seckill_quota_refill_total",
+			Help: "Total quota refill outcomes by trigger source.",
+		},
+		[]string{"source", "result"},
+	)
+
 	// SeckillQuotaReclaimTotal counts reclaimed quota amount from expired leases.
 	SeckillQuotaReclaimTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
