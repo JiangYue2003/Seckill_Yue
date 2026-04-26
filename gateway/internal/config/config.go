@@ -21,6 +21,10 @@ type Config struct {
 	Port int    `json:"port"`
 	Mode string `json:"mode,optional"`
 
+	Dev struct {
+		ResetLogsOnStart bool `json:"resetLogsOnStart,optional"`
+	} `json:"dev,optional"`
+
 	// 日志配置（持久化）
 	Log logx.LogConf `json:"log"`
 

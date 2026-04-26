@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 
+	"seckill-mall/common/logutil"
 	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/server"
@@ -29,6 +30,9 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
 	overridePorts(&c)
+	if err := logutil.ResetLogsIfEnabled(c.Mode, c.Dev.ResetLogsOnStart, c.Log); err != nil {
+		panic(fmt.Sprintf("failed to reset logs: %v", err))
+	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 	ctx := svc.NewServiceContext(c)

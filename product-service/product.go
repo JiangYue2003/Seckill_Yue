@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 
+	"seckill-mall/common/logutil"
 	"seckill-mall/common/product"
 	"seckill-mall/product-service/internal/config"
 	"seckill-mall/product-service/internal/server"
@@ -23,6 +24,9 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	if err := logutil.ResetLogsIfEnabled(c.Mode, c.Dev.ResetLogsOnStart, c.Log); err != nil {
+		panic(err)
+	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 	ctx := svc.NewServiceContext(c)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"seckill-mall/common/logutil"
 	"seckill-mall/gateway/internal/client"
 	"seckill-mall/gateway/internal/config"
 	"seckill-mall/gateway/internal/handler"
@@ -30,6 +31,9 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
 	metricsListenPort := overridePorts(&c)
+	if err := logutil.ResetLogsIfEnabled(c.Mode, c.Dev.ResetLogsOnStart, c.Log); err != nil {
+		panic(fmt.Sprintf("failed to reset logs: %v", err))
+	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 

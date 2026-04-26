@@ -1,7 +1,9 @@
 Name: gateway
 Host: 0.0.0.0
 Port: 8888
-Mode: pro
+Mode: dev
+Dev:
+  ResetLogsOnStart: true # 仅在 Mode=dev/test 且该值=true 时，启动前清空日志目录
 
 Log:
   ServiceName: gateway
