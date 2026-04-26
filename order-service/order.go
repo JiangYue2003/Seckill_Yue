@@ -2,6 +2,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"net"
+	"strconv"
 
 	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/config"
@@ -17,12 +20,15 @@ import (
 )
 
 var configFile = flag.String("f", "etc/order.yaml", "the config file")
+var port = flag.Int("port", 0, "override rpc listen port, e.g. --port=19084")
+var metricsPort = flag.Int("metrics-port", 0, "override prometheus port, e.g. --metrics-port=19184")
 
 func main() {
 	flag.Parse()
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	overridePorts(&c)
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 	ctx := svc.NewServiceContext(c)
@@ -67,4 +73,26 @@ func main() {
 
 	logx.Infof("Starting rpc server at %s...", c.ListenOn)
 	s.Start()
+}
+
+func overridePorts(c *config.Config) {
+	if *port > 0 {
+		listenOn, err := replacePort(c.ListenOn, *port)
+		if err != nil {
+			panic(fmt.Sprintf("invalid --port=%d: %v", *port, err))
+		}
+		c.ListenOn = listenOn
+	}
+
+	if *metricsPort > 0 {
+		c.Prometheus.Port = *metricsPort
+	}
+}
+
+func replacePort(addr string, newPort int) (string, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", err
+	}
+	return net.JoinHostPort(host, strconv.Itoa(newPort)), nil
 }

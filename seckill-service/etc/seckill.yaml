@@ -33,12 +33,12 @@ Redis:
 
 SeckillRedis:
   Host: localhost:6379
-  PoolSize: 256
-  MinIdleConns: 32
-  DialTimeoutMs: 200
-  ReadTimeoutMs: 200
-  WriteTimeoutMs: 200
-  PoolTimeoutMs: 200
+  PoolSize: 128
+  MinIdleConns: 16
+  DialTimeoutMs: 1000
+  ReadTimeoutMs: 1000
+  WriteTimeoutMs: 1000
+  PoolTimeoutMs: 1000
 
 ProductMetaCache:
   Enabled: true
@@ -64,9 +64,9 @@ AsyncProducer:
   RetryInterval: 1
 
 LocalQuota:
-  Enabled: false
-  BatchSize: 200
-  LowWatermark: 40
-  LeaseTTLSeconds: 15
-  HeartbeatSeconds: 5
-  ReaperIntervalSeconds: 2
+  Enabled: true
+  BatchSize: 2000
+  LowWatermark: 400
+  LeaseTTLSeconds: 30
+  HeartbeatSeconds: 10
+  ReaperIntervalSeconds: 5

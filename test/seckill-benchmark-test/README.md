@@ -16,7 +16,7 @@
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | Redis | `localhost:6379` | 存储秒杀库存和用户购买记录（Redis Lua 保证原子性） |
-| Seckill-Service | `127.0.0.1:8083` | 秒杀核心服务（gRPC） |
+| Seckill-Service | `127.0.0.1:9083` | 秒杀核心服务（gRPC） |
 
 > 不需要 Order-Service，因为性能测试只验证 Redis 层扣减性能，不涉及异步下单流程。
 
@@ -25,7 +25,13 @@
 ```bash
 cd test/seckill-benchmark-test
 go mod tidy
-go run . -users 1000 -duration 30s
+go run .
+```
+
+多实例压测（轮询多个 seckill-service）：
+
+```bash
+go run . --targets=127.0.0.1:9083,127.0.0.1:19083
 ```
 
 可选：如果你希望每轮场景前后自动清理 `seckill_orders`（按“当前场景商品ID + 用户区间”删除），可设置：
@@ -40,6 +46,12 @@ Windows PowerShell:
 ```powershell
 $env:BENCHMARK_MYSQL_DSN='root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local'
 go run .
+```
+
+Windows PowerShell 多实例示例：
+
+```powershell
+go run . --targets="127.0.0.1:9083,127.0.0.1:19083"
 ```
 
 ## 压测场景配置

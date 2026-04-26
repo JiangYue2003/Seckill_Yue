@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,11 +28,14 @@ const (
 	keyPrefixSeckillUser  = "seckill:user:"
 	benchmarkUserStart    = int64(10000)
 	defaultMySQLDSN       = "root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local"
+	defaultTargets        = "127.0.0.1:9083"
 )
 
 var (
 	redisClient *redis.Client
 	mysqlDB     *sql.DB
+
+	targetsFlag = flag.String("targets", defaultTargets, "comma-separated seckill grpc targets, e.g. 127.0.0.1:9083,127.0.0.1:19083")
 )
 
 // 测试场景配置
@@ -86,6 +91,8 @@ func (p *ConnectionPool) Close() {
 }
 
 func main() {
+	flag.Parse()
+
 	fmt.Println("========================================")
 	fmt.Println("   秒杀系统性能测试")
 	fmt.Println("========================================")
@@ -96,8 +103,13 @@ func main() {
 	initMySQL()
 	defer closeMySQL()
 
+	targets := parseTargets(*targetsFlag)
+	if len(targets) == 0 {
+		log.Fatal("invalid --targets: no valid grpc target found")
+	}
+
 	// 初始化 gRPC 连接池
-	pool := initGrpcPool("127.0.0.1:9083", poolSize)
+	pool := initGrpcPool(targets, poolSize)
 	defer pool.Close()
 
 	// 运行所有测试场景
@@ -169,13 +181,27 @@ func initGrpcClient(addr string) *SeckillServiceClient {
 	}
 }
 
-func initGrpcPool(addr string, size int) *ConnectionPool {
+func initGrpcPool(addrs []string, size int) *ConnectionPool {
 	clients := make([]*SeckillServiceClient, size)
 	for i := range clients {
-		clients[i] = initGrpcClient(addr)
+		target := addrs[i%len(addrs)]
+		clients[i] = initGrpcClient(target)
 	}
-	fmt.Printf("[OK] gRPC 连接池初始化完成 (size=%d)\n", size)
+	fmt.Printf("[OK] gRPC 连接池初始化完成 (size=%d, targets=%s)\n", size, strings.Join(addrs, ","))
 	return &ConnectionPool{clients: clients}
+}
+
+func parseTargets(raw string) []string {
+	parts := strings.Split(raw, ",")
+	targets := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t == "" {
+			continue
+		}
+		targets = append(targets, t)
+	}
+	return targets
 }
 
 // Redis 操作函数
