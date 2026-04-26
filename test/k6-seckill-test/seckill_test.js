@@ -38,6 +38,7 @@ export const options = {
 
 // 配置
 const GATEWAY_URL = __ENV.GATEWAY_URL || 'http://localhost:8888';
+const GATEWAY_URLS = parseGatewayURLs(__ENV.GATEWAY_URLS, GATEWAY_URL);
 const SECKILL_PRODUCT_ID = __ENV.SECKILL_PRODUCT_ID || '1';
 const JWT_SECRET = 'seckill-mall-jwt-secret-key-2026';  // 从 gateway.yaml 获取
 
@@ -99,7 +100,8 @@ export default function () {
   const userId = generateUserId();
   const token = generateJWT(userId);
 
-  const url = `${GATEWAY_URL}/api/v1/seckill`;
+  const gatewayURL = pickGatewayURL();
+  const url = `${gatewayURL}/api/v1/seckill`;
   const payload = JSON.stringify({
     seckillProductId: parseInt(SECKILL_PRODUCT_ID),
     quantity: 1,
@@ -152,6 +154,33 @@ export default function () {
     failCount.add(1);
     console.log(`❌ 请求失败: userId=${userId}, status=${response.status}, body=${response.body}`);
   }
+}
+
+function parseGatewayURLs(raw, fallback) {
+  if (!raw || String(raw).trim() === '') {
+    return [fallback];
+  }
+
+  const items = String(raw)
+    .split(',')
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
+
+  if (items.length === 0) {
+    return [fallback];
+  }
+
+  return items;
+}
+
+function pickGatewayURL() {
+  if (GATEWAY_URLS.length === 1) {
+    return GATEWAY_URLS[0];
+  }
+
+  // 使用 VU + 迭代号做稳定轮询，避免只压到单个 gateway 实例。
+  const idx = (__VU + __ITER) % GATEWAY_URLS.length;
+  return GATEWAY_URLS[idx];
 }
 
 // 测试结束后的汇总

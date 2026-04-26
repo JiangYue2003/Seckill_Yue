@@ -40,6 +40,9 @@ k6 run seckill_test.js
 # 指定 gateway 地址
 k6 run -e GATEWAY_URL=http://localhost:8888 seckill_test.js
 
+# 指定多个 gateway 地址（逗号分隔，脚本会轮询分发）
+k6 run -e GATEWAY_URLS=http://127.0.0.1:8888,http://127.0.0.1:18888 seckill_test.js
+
 # 指定秒杀商品 ID
 k6 run -e SECKILL_PRODUCT_ID=1 seckill_test.js
 
@@ -88,6 +91,11 @@ k6 run --out influxdb=http://localhost:8086/k6 seckill_test.js
     "quantity": 1
   }
   ```
+
+## 多 gateway 说明
+
+- 若未设置 `GATEWAY_URLS`，脚本使用 `GATEWAY_URL`（默认 `http://localhost:8888`）。
+- 若设置了 `GATEWAY_URLS`，脚本会在多个地址之间做轮询分发（`VU + ITER` 维度）。
 
 ## JWT Token 生成
 

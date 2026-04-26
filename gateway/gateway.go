@@ -19,12 +19,17 @@ import (
 )
 
 var configFile = flag.String("f", "etc/gateway.yaml", "the config file")
+var port = flag.Int("port", 0, "override gateway http listen port, e.g. --port=18888")
+var metricsPort = flag.Int("metrics-port", 0, "override prometheus metrics port, e.g. --metrics-port=19180")
+
+const defaultMetricsPort = 9180
 
 func main() {
 	flag.Parse()
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
+	metricsListenPort := overridePorts(&c)
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 
@@ -34,10 +39,10 @@ func main() {
 		defer trace.StopAgent()
 	}
 
-	// 初始化 Prometheus 指标暴露（/metrics 端口 9180）
+	// 初始化 Prometheus 指标暴露（默认 /metrics 端口 9180，可被 --metrics-port 覆盖）
 	goprometheus.StartAgent(goprometheus.Config{
 		Host: "0.0.0.0",
-		Port: 9180,
+		Port: metricsListenPort,
 		Path: "/metrics",
 	})
 
@@ -121,9 +126,22 @@ func main() {
 	}
 
 	addr := fmt.Sprintf("%s:%d", c.Host, c.Port)
-	logx.Infof("Starting gateway server at %s...", addr)
+	logx.Infof("Starting gateway server at %s (metrics=0.0.0.0:%d)...", addr, metricsListenPort)
 	if err := server.ListenAndServe(); err != nil {
 		logx.Errorf("gateway server exited: %v", err)
 		panic(err)
 	}
+}
+
+func overridePorts(c *config.Config) int {
+	if *port > 0 {
+		c.Port = *port
+	}
+
+	metricsListenPort := defaultMetricsPort
+	if *metricsPort > 0 {
+		metricsListenPort = *metricsPort
+	}
+
+	return metricsListenPort
 }
