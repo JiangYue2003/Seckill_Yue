@@ -58,3 +58,4 @@ coverage.txt
 tmp/
 temp/
 *.tmp
+/test/k6-seckill-test/summary.json
