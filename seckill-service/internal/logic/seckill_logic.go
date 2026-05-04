@@ -186,8 +186,9 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 	}
 
-	// 生成订单号
-	orderId := utils.GenerateOrderId(OrderIdPrefix)
+	// 生成订单号（编码 spid，用于 Redis Cluster key 路由）
+	rawId := utils.GenerateOrderId(OrderIdPrefix)
+	orderId := redis.FormatOrderId(in.SeckillProductId, rawId)
 	amount := seckillPrice * quantity
 
 	// 秒杀 Lua 脚本执行（携带时间校验参数）

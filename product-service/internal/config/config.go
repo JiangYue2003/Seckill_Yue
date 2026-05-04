@@ -18,6 +18,9 @@ type Config struct {
 
 	// Redis 缓存配置（用于秒杀库存同步）
 	SeckillRedis struct {
-		Host string
+		Mode     string   // "single"(默认) | "cluster" | "sentinel"
+		Addr     string   // single/sentinel: "host:port"（原 Host）
+		Addrs    []string // cluster/sentinel: 节点列表
+		Password string
 	}
 }

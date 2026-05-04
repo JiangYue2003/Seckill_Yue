@@ -33,7 +33,12 @@ type ServiceContext struct {
 func NewServiceContext(c config.Config) *ServiceContext {
 	// 初始化 Redis
 	redisClient, err := redis.NewSeckillRedis(redis.ClientConfig{
-		Host:           c.SeckillRedis.Host,
+		Mode:           c.SeckillRedis.Mode,
+		Addr:           c.SeckillRedis.Addr,
+		Addrs:          c.SeckillRedis.Addrs,
+		MasterName:     c.SeckillRedis.MasterName,
+		Password:       c.SeckillRedis.Password,
+		DB:             c.SeckillRedis.DB,
 		PoolSize:       c.SeckillRedis.PoolSize,
 		MinIdleConns:   c.SeckillRedis.MinIdleConns,
 		DialTimeoutMs:  c.SeckillRedis.DialTimeoutMs,

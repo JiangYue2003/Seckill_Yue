@@ -37,7 +37,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 
-	seckillRedis, err := redisutil.NewSeckillRedis(c.SeckillRedis.Host)
+	seckillRedis, err := redisutil.NewSeckillRedis(redisutil.ClientConfig{
+		Mode:     c.SeckillRedis.Mode,
+		Addr:     c.SeckillRedis.Addr,
+		Addrs:    c.SeckillRedis.Addrs,
+		Password: c.SeckillRedis.Password,
+	})
 	if err != nil {
 		logx.Errorf("failed to initialize seckill redis: %v", err)
 		seckillRedis = nil

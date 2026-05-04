@@ -77,7 +77,7 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 
 	// ========== 检查用户购买记录 ==========
 	// 通过 Redis userKey 判断用户是否已参与过该秒杀
-	userKey := redis.KeyPrefixSeckillUser + redis.FormatSeckillUserKey(in.SeckillProductId, in.UserId)
+	userKey := redis.KeyUser(in.SeckillProductId, in.UserId)
 	exists, err := l.svcCtx.Redis.CheckUserKeyExists(l.ctx, userKey)
 	if err != nil {
 		l.Logger.Errorf("检查用户购买记录失败: userId=%d, seckillProductId=%d, err=%v",

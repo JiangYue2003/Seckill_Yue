@@ -38,4 +38,11 @@ MySQL:
   DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
 
 SeckillRedis:
-  Host: localhost:6379
+  Mode: single          # single(默认) | cluster | sentinel
+  Addr: localhost:6379  # single/sentinel 模式使用
+  # cluster 模式示例：
+  # Mode: cluster
+  # Addrs:
+  #   - localhost:7001
+  #   - localhost:7002
+  #   - localhost:7003

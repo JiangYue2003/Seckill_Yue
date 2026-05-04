@@ -13,7 +13,12 @@ type Config struct {
 
 	// Redis 配置
 	SeckillRedis struct {
-		Host           string
+		Mode           string   // "single"(默认) | "cluster" | "sentinel"
+		Addr           string   // single/sentinel: "host:port"
+		Addrs          []string // cluster/sentinel: 节点列表
+		MasterName     string   // sentinel 专用
+		Password       string
+		DB             int
 		PoolSize       int
 		MinIdleConns   int
 		DialTimeoutMs  int

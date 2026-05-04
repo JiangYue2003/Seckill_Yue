@@ -80,7 +80,7 @@ func (l *UpdateOrderStatusLogic) UpdateOrderStatus(in *seckill.UpdateOrderStatus
 
 	// 更新状态
 	orderInfo.Status = in.Status
-	if err := l.svcCtx.Redis.SetOrderInfo(l.ctx, in.OrderId, orderInfo, OrderStatusTTL); err != nil {
+	if err := l.svcCtx.Redis.SetOrderInfo(l.ctx, redis.ParseSpidFromOrderId(in.OrderId), in.OrderId, orderInfo, OrderStatusTTL); err != nil {
 		l.Logger.Errorf("更新订单状态失败: orderId=%s, status=%s, err=%v", in.OrderId, in.Status, err)
 		return &seckill.UpdateOrderStatusResponse{
 			Success: false,

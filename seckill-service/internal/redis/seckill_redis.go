@@ -20,17 +20,6 @@ const (
 	LuaResultNotStarted     = -3
 	LuaResultEnded          = -4
 
-	// Key 前缀
-	KeyPrefixSeckillStock       = "seckill:stock:"             // 秒杀库存
-	KeyPrefixSeckillUser        = "seckill:user:"              // 用户预占记录（短期TTL，自动释放悬空库存）
-	KeyPrefixSeckillOrder       = "seckill:order:"             // 秒杀订单状态
-	KeyPrefixSeckillInfo        = "seckill:info:"              // 秒杀商品信息 (productId:seckillPrice:startTime:endTime)
-	KeyPrefixSeckillProductName = "seckill:product_name:"      // 秒杀商品名称
-	KeyPrefixQuotaBucket        = "seckill:quota:bucket:"      // 实例配额桶前缀: seckill:quota:bucket:{spid}:{instanceId}
-	KeyPrefixQuotaLeaseZSet     = "seckill:quota:lease:zset:"  // 配额租约前缀: seckill:quota:lease:zset:{spid}
-	KeyPrefixQuotaReaperLock    = "seckill:quota:reaper:lock:" // 回收锁前缀: seckill:quota:reaper:lock:{spid}
-	KeyQuotaProductsSet         = "seckill:quota:products"     // 有活动租约的商品集合
-
 	// 订单状态常量（与 logic 包保持一致）
 	OrderStatusPending  = "pending"
 	OrderStatusSuccess  = "success"
@@ -56,7 +45,10 @@ const (
 )
 
 type ClientConfig struct {
-	Host           string
+	Mode           string   // "single"(默认) | "cluster" | "sentinel"
+	Addr           string   // single/sentinel: "host:port"
+	Addrs          []string // cluster/sentinel: 节点列表
+	MasterName     string   // sentinel 专用
 	Password       string
 	DB             int
 	PoolSize       int
@@ -204,23 +196,20 @@ return {0, tonumber(newStock)}
 // KEYS[1]: global stock key
 // KEYS[2]: current instance bucket key
 // KEYS[3]: lease zset key
-// KEYS[4]: products set key
 // ARGV[1]: instanceId
 // ARGV[2]: batchSize
 // ARGV[3]: leaseTTLSeconds
-// ARGV[4]: seckillProductId
+// ARGV[4]: seckillProductId (unused, kept for arity compatibility)
 // ARGV[5]: nowUnix
 // return: {allocated, currentBucket}
 var quotaAllocateLuaScript = `
 local globalKey = KEYS[1]
 local bucketKey = KEYS[2]
 local leaseKey = KEYS[3]
-local productsKey = KEYS[4]
 
 local instanceId = ARGV[1]
 local batchSize = tonumber(ARGV[2])
 local leaseTTL = tonumber(ARGV[3])
-local productId = ARGV[4]
 local now = tonumber(ARGV[5])
 
 local allocated = 0
@@ -236,13 +225,8 @@ end
 local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
 if currentBucket > 0 then
     redis.call('ZADD', leaseKey, now + leaseTTL, instanceId)
-    redis.call('SADD', productsKey, productId)
 else
     redis.call('ZREM', leaseKey, instanceId)
-end
-
-if redis.call('ZCARD', leaseKey) == 0 then
-    redis.call('SREM', productsKey, productId)
 end
 
 return {allocated, currentBucket}
@@ -313,19 +297,15 @@ return {1, newBucket}
 // quotaReapLuaScript 回收某商品的过期租约配额
 // KEYS[1]: global stock key
 // KEYS[2]: lease zset key
-// KEYS[3]: products set key
 // ARGV[1]: nowUnix
 // ARGV[2]: bucketPrefixWithProduct
-// ARGV[3]: seckillProductId
 // return: reclaimed
 var quotaReapLuaScript = `
 local globalKey = KEYS[1]
 local leaseKey = KEYS[2]
-local productsKey = KEYS[3]
 
 local now = tonumber(ARGV[1])
 local bucketPrefix = ARGV[2]
-local productId = ARGV[3]
 
 local reclaimed = 0
 local expired = redis.call('ZRANGEBYSCORE', leaseKey, '-inf', now)
@@ -340,24 +320,17 @@ for _, inst in ipairs(expired) do
     redis.call('ZREM', leaseKey, inst)
 end
 
-if redis.call('ZCARD', leaseKey) == 0 then
-    redis.call('SREM', productsKey, productId)
-end
-
 return reclaimed
 `
 
 // SeckillRedis Redis 客户端封装
 type SeckillRedis struct {
-	client     *redis.Client
+	client     redis.UniversalClient
 	localStock sync.Map // key: seckillProductId(int64) → value: *atomic.Int64，本地库存计数器
 }
 
-// NewSeckillRedis 创建 SeckillRedis 实例
+// NewSeckillRedis 创建 SeckillRedis 实例，支持 single/cluster/sentinel 三种模式
 func NewSeckillRedis(conf ClientConfig) (*SeckillRedis, error) {
-	if conf.Host == "" {
-		conf.Host = "127.0.0.1:6379"
-	}
 	if conf.PoolSize <= 0 {
 		conf.PoolSize = defaultPoolSize
 	}
@@ -377,17 +350,63 @@ func NewSeckillRedis(conf ClientConfig) (*SeckillRedis, error) {
 		conf.PoolTimeoutMs = defaultPoolTimeoutMs
 	}
 
-	client := redis.NewClient(&redis.Options{
-		Addr:         conf.Host,
-		Password:     conf.Password,
-		DB:           conf.DB,
-		PoolSize:     conf.PoolSize,
-		MinIdleConns: conf.MinIdleConns,
-		DialTimeout:  time.Duration(conf.DialTimeoutMs) * time.Millisecond,
-		ReadTimeout:  time.Duration(conf.ReadTimeoutMs) * time.Millisecond,
-		WriteTimeout: time.Duration(conf.WriteTimeoutMs) * time.Millisecond,
-		PoolTimeout:  time.Duration(conf.PoolTimeoutMs) * time.Millisecond,
-	})
+	dialTimeout := time.Duration(conf.DialTimeoutMs) * time.Millisecond
+	readTimeout := time.Duration(conf.ReadTimeoutMs) * time.Millisecond
+	writeTimeout := time.Duration(conf.WriteTimeoutMs) * time.Millisecond
+	poolTimeout := time.Duration(conf.PoolTimeoutMs) * time.Millisecond
+
+	var client redis.UniversalClient
+	switch conf.Mode {
+	case "cluster":
+		addrs := conf.Addrs
+		if len(addrs) == 0 && conf.Addr != "" {
+			addrs = []string{conf.Addr}
+		}
+		client = redis.NewClusterClient(&redis.ClusterOptions{
+			Addrs:        addrs,
+			Password:     conf.Password,
+			PoolSize:     conf.PoolSize,
+			MinIdleConns: conf.MinIdleConns,
+			DialTimeout:  dialTimeout,
+			ReadTimeout:  readTimeout,
+			WriteTimeout: writeTimeout,
+			PoolTimeout:  poolTimeout,
+		})
+	case "sentinel":
+		addrs := conf.Addrs
+		if len(addrs) == 0 && conf.Addr != "" {
+			addrs = []string{conf.Addr}
+		}
+		client = redis.NewFailoverClient(&redis.FailoverOptions{
+			MasterName:    conf.MasterName,
+			SentinelAddrs: addrs,
+			Password:      conf.Password,
+			DB:            conf.DB,
+			PoolSize:      conf.PoolSize,
+			MinIdleConns:  conf.MinIdleConns,
+			DialTimeout:   dialTimeout,
+			ReadTimeout:   readTimeout,
+			WriteTimeout:  writeTimeout,
+			PoolTimeout:   poolTimeout,
+		})
+	default: // "single" or ""
+		addr := conf.Addr
+		if addr == "" {
+			addr = "127.0.0.1:6379"
+		}
+		client = redis.NewClient(&redis.Options{
+			Addr:         addr,
+			Password:     conf.Password,
+			DB:           conf.DB,
+			PoolSize:     conf.PoolSize,
+			MinIdleConns: conf.MinIdleConns,
+			DialTimeout:  dialTimeout,
+			ReadTimeout:  readTimeout,
+			WriteTimeout: writeTimeout,
+			PoolTimeout:  poolTimeout,
+		})
+	}
+
 	if err := client.Ping(context.Background()).Err(); err != nil {
 		return nil, fmt.Errorf("ping redis failed: %w", err)
 	}
@@ -417,9 +436,9 @@ type SeckillResult struct {
 
 // DoSeckill 执行秒杀（原子性操作）
 func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*SeckillResult, error) {
-	stockKey := KeyPrefixSeckillStock + strconv.FormatInt(req.SeckillProductId, 10)
-	userKey := KeyPrefixSeckillUser + strconv.FormatInt(req.SeckillProductId, 10) + ":" + strconv.FormatInt(req.UserId, 10)
-	orderKey := KeyPrefixSeckillOrder + req.OrderId
+	stockKey := keyStock(req.SeckillProductId)
+	userKey := keyUser(req.SeckillProductId, req.UserId)
+	orderKey := keyOrder(req.SeckillProductId, req.OrderId)
 
 	keys := []string{stockKey, userKey, orderKey}
 	argv := []interface{}{
@@ -458,14 +477,12 @@ func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*Sec
 
 // InitStock 初始化秒杀库存（活动开始前调用）
 func (r *SeckillRedis) InitStock(ctx context.Context, seckillProductId int64, stock int64) error {
-	key := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
-	return r.client.Set(ctx, key, stock, 0).Err()
+	return r.client.Set(ctx, keyStock(seckillProductId), stock, 0).Err()
 }
 
 // GetStock 获取秒杀库存
 func (r *SeckillRedis) GetStock(ctx context.Context, seckillProductId int64) (int64, error) {
-	key := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
-	val, err := r.client.Get(ctx, key).Int64()
+	val, err := r.client.Get(ctx, keyStock(seckillProductId)).Int64()
 	if err != nil {
 		if err == redis.Nil {
 			return 0, nil
@@ -476,14 +493,19 @@ func (r *SeckillRedis) GetStock(ctx context.Context, seckillProductId int64) (in
 }
 
 // SetOrderStatus 设置订单状态
-func (r *SeckillRedis) SetOrderStatus(ctx context.Context, orderId string, status string, ttl int64) error {
-	key := KeyPrefixSeckillOrder + orderId
-	return r.client.Set(ctx, key, status, time.Duration(ttl)*time.Second).Err()
+func (r *SeckillRedis) SetOrderStatus(ctx context.Context, spid int64, orderId string, status string, ttl int64) error {
+	return r.client.Set(ctx, keyOrder(spid, orderId), status, time.Duration(ttl)*time.Second).Err()
 }
 
 // GetOrderStatus 获取订单状态
 func (r *SeckillRedis) GetOrderStatus(ctx context.Context, orderId string) (string, error) {
-	key := KeyPrefixSeckillOrder + orderId
+	spid := ParseSpidFromOrderId(orderId)
+	var key string
+	if spid == 0 {
+		key = "seckill:order:" + orderId // 旧格式兼容
+	} else {
+		key = keyOrder(spid, orderId)
+	}
 	val, err := r.client.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -496,34 +518,28 @@ func (r *SeckillRedis) GetOrderStatus(ctx context.Context, orderId string) (stri
 
 // RollbackStock 回滚库存（秒杀失败时调用）
 func (r *SeckillRedis) RollbackStock(ctx context.Context, seckillProductId int64, quantity int64) error {
-	key := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
-	return r.client.IncrBy(ctx, key, quantity).Err()
+	return r.client.IncrBy(ctx, keyStock(seckillProductId), quantity).Err()
 }
 
 // DeleteUserKey 删除用户购买记录（秒杀失败时调用）
 func (r *SeckillRedis) DeleteUserKey(ctx context.Context, seckillProductId, userId int64) error {
-	key := KeyPrefixSeckillUser + strconv.FormatInt(seckillProductId, 10) + ":" + strconv.FormatInt(userId, 10)
-	return r.client.Del(ctx, key).Err()
+	return r.client.Del(ctx, keyUser(seckillProductId, userId)).Err()
 }
 
 // SetSeckillProductInfo 设置秒杀商品信息（活动开始前调用）
 // productId:seckillPrice:startTime:endTime 存储在 info key 中
 // productName 单独存储，避免商品名称中包含冒号导致解析错误
 func (r *SeckillRedis) SetSeckillProductInfo(ctx context.Context, seckillProductId, productId, seckillPrice int64, productName string, startTime, endTime int64, ttlSeconds int64) error {
-	infoKey := KeyPrefixSeckillInfo + strconv.FormatInt(seckillProductId, 10)
 	infoValue := fmt.Sprintf("%d:%d:%d:%d", productId, seckillPrice, startTime, endTime)
-	if err := r.client.Set(ctx, infoKey, infoValue, time.Duration(ttlSeconds)*time.Second).Err(); err != nil {
+	if err := r.client.Set(ctx, keyInfo(seckillProductId), infoValue, time.Duration(ttlSeconds)*time.Second).Err(); err != nil {
 		return err
 	}
-
-	nameKey := KeyPrefixSeckillProductName + strconv.FormatInt(seckillProductId, 10)
-	return r.client.Set(ctx, nameKey, productName, time.Duration(ttlSeconds)*time.Second).Err()
+	return r.client.Set(ctx, keyName(seckillProductId), productName, time.Duration(ttlSeconds)*time.Second).Err()
 }
 
 // GetSeckillProductInfo 获取秒杀商品信息（返回 productId, seckillPrice, productName, startTime, endTime）
 func (r *SeckillRedis) GetSeckillProductInfo(ctx context.Context, seckillProductId int64) (int64, int64, string, int64, int64, error) {
-	infoKey := KeyPrefixSeckillInfo + strconv.FormatInt(seckillProductId, 10)
-	val, err := r.client.Get(ctx, infoKey).Result()
+	val, err := r.client.Get(ctx, keyInfo(seckillProductId)).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return 0, 0, "", 0, 0, nil
@@ -546,8 +562,7 @@ func (r *SeckillRedis) GetSeckillProductInfo(ctx context.Context, seckillProduct
 		endTime, _ = strconv.ParseInt(parts[3], 10, 64)
 	}
 
-	nameKey := KeyPrefixSeckillProductName + strconv.FormatInt(seckillProductId, 10)
-	productName, _ := r.client.Get(ctx, nameKey).Result()
+	productName, _ := r.client.Get(ctx, keyName(seckillProductId)).Result()
 	if productName == "" {
 		productName = "秒杀商品"
 	}
@@ -578,36 +593,46 @@ func (r *SeckillRedis) LoadAllSeckillProductMeta(ctx context.Context, scanCount 
 		scanCount = defaultScanCount
 	}
 	result := make(map[int64]*SeckillProductMeta)
-	var cursor uint64
 
-	for {
-		keys, nextCursor, err := r.client.Scan(ctx, cursor, KeyPrefixSeckillInfo+"*", scanCount).Result()
-		if err != nil {
-			return nil, err
-		}
-
-		for _, key := range keys {
-			spidText := strings.TrimPrefix(key, KeyPrefixSeckillInfo)
-			seckillProductId, parseErr := strconv.ParseInt(spidText, 10, 64)
-			if parseErr != nil {
-				continue
+	scanNode := func(scanner interface {
+		Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
+	}) error {
+		var cursor uint64
+		for {
+			keys, nextCursor, err := scanner.Scan(ctx, cursor, "{*}:sk:info", scanCount).Result()
+			if err != nil {
+				return err
 			}
-			meta, metaErr := r.GetSeckillProductMeta(ctx, seckillProductId)
-			if metaErr != nil {
-				return nil, metaErr
+			for _, key := range keys {
+				spid := parseSpidFromInfoKey(key)
+				if spid == 0 {
+					continue
+				}
+				meta, metaErr := r.GetSeckillProductMeta(ctx, spid)
+				if metaErr != nil {
+					return metaErr
+				}
+				if meta != nil {
+					result[spid] = meta
+				}
 			}
-			if meta != nil {
-				result[seckillProductId] = meta
+			cursor = nextCursor
+			if cursor == 0 {
+				break
 			}
 		}
-
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+		return nil
 	}
 
-	return result, nil
+	// cluster 模式需要逐主节点 SCAN
+	if cc, ok := r.client.(*redis.ClusterClient); ok {
+		return result, cc.ForEachMaster(ctx, func(ctx context.Context, c *redis.Client) error {
+			return scanNode(c)
+		})
+	}
+	return result, scanNode(r.client.(interface {
+		Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
+	}))
 }
 
 // OrderInfo 订单信息（用于 GetSeckillResult 查询）
@@ -624,9 +649,9 @@ type OrderInfo struct {
 	ProductName string
 }
 
-// FormatSeckillUserKey 格式化用户秒杀Key
+// FormatSeckillUserKey 格式化用户秒杀Key（保留兼容，内部改用 keyUser）
 func FormatSeckillUserKey(seckillProductId, userId int64) string {
-	return strconv.FormatInt(seckillProductId, 10) + ":" + strconv.FormatInt(userId, 10)
+	return keyUser(seckillProductId, userId)
 }
 
 // CheckUserKeyExists 检查用户购买记录是否存在
@@ -653,8 +678,8 @@ func (r *SeckillRedis) GetUserOrderId(ctx context.Context, userKey string) (stri
 // SetOrderInfo 设置订单信息（用于 GetSeckillResult 查询）
 // 详情缺失时，按最小状态格式写入：status:orderId
 // 详情可用时，按完整格式写入：status:productId:quantity:amount:productName
-func (r *SeckillRedis) SetOrderInfo(ctx context.Context, orderId string, info *OrderInfo, ttl int64) error {
-	key := KeyPrefixSeckillOrder + orderId
+func (r *SeckillRedis) SetOrderInfo(ctx context.Context, spid int64, orderId string, info *OrderInfo, ttl int64) error {
+	key := keyOrder(spid, orderId)
 
 	value := info.Status
 	if info != nil {
@@ -684,9 +709,9 @@ func (r *SeckillRedis) CompensateFailedOrder(
 	quantity int64,
 	orderStatusTTL int64,
 ) (int, int64, error) {
-	orderKey := KeyPrefixSeckillOrder + orderId
-	stockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
-	userKey := KeyPrefixSeckillUser + strconv.FormatInt(seckillProductId, 10) + ":" + strconv.FormatInt(userId, 10)
+	orderKey := keyOrder(seckillProductId, orderId)
+	stockKey := keyStock(seckillProductId)
+	userKey := keyUser(seckillProductId, userId)
 
 	raw, err := r.client.Eval(
 		ctx,
@@ -719,7 +744,13 @@ func (r *SeckillRedis) CompensateFailedOrder(
 // - 完整格式：status:productId:quantity:amount:productName
 // - 纯状态：status
 func (r *SeckillRedis) GetOrderInfo(ctx context.Context, orderId string) (*OrderInfo, error) {
-	key := KeyPrefixSeckillOrder + orderId
+	spid := ParseSpidFromOrderId(orderId)
+	var key string
+	if spid == 0 {
+		key = "seckill:order:" + orderId // 旧格式兼容
+	} else {
+		key = keyOrder(spid, orderId)
+	}
 	val, err := r.client.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -818,25 +849,68 @@ func (r *SeckillRedis) IncrLocalStock(seckillProductId int64, quantity int64) {
 	v.(*atomic.Int64).Add(quantity)
 }
 
-func quotaBucketKeyPrefix(seckillProductId int64) string {
-	return KeyPrefixQuotaBucket + strconv.FormatInt(seckillProductId, 10) + ":"
+// ---- key 构造函数（hash tag 格式，兼容 Redis Cluster）----
+// 所有同一商品的 key 使用 {spid} 作为 hash tag，保证落在同一 slot。
+// 单节点 Redis 忽略 hash tag，行为与原来完全一致。
+
+func keyStock(spid int64) string     { return fmt.Sprintf("{%d}:sk:stock", spid) }
+func keyUser(spid, uid int64) string { return fmt.Sprintf("{%d}:sk:user:%d", spid, uid) }
+func keyOrder(spid int64, orderId string) string {
+	return fmt.Sprintf("{%d}:sk:order:%s", spid, orderId)
+}
+func keyInfo(spid int64) string { return fmt.Sprintf("{%d}:sk:info", spid) }
+func keyName(spid int64) string { return fmt.Sprintf("{%d}:sk:name", spid) }
+func keyQBucket(spid int64, instanceID string) string {
+	return fmt.Sprintf("{%d}:sk:qbucket:%s", spid, instanceID)
+}
+func keyQBucketPrefix(spid int64) string { return fmt.Sprintf("{%d}:sk:qbucket:", spid) }
+func keyQLease(spid int64) string        { return fmt.Sprintf("{%d}:sk:qlease", spid) }
+func keyQReaperLock(spid int64) string   { return fmt.Sprintf("{%d}:sk:qlock", spid) }
+
+// KeyUser 导出版本，供 logic 包使用
+func KeyUser(spid, uid int64) string { return keyUser(spid, uid) }
+
+// FormatOrderId 将 spid 编码进 orderId，格式：S{spid}_{rawId}
+// 用于 Redis Cluster 模式下从 orderId 反推 spid 以构造正确的 key。
+func FormatOrderId(spid int64, rawId string) string {
+	raw := strings.TrimPrefix(rawId, "S")
+	return fmt.Sprintf("S%d_%s", spid, raw)
 }
 
-func quotaBucketKey(seckillProductId int64, instanceID string) string {
-	return quotaBucketKeyPrefix(seckillProductId) + instanceID
+// ParseSpidFromOrderId 从编码后的 orderId 解析 spid。
+// 返回 0 表示旧格式（不含 spid 编码），调用方应降级处理。
+func ParseSpidFromOrderId(orderId string) int64 {
+	s := strings.TrimPrefix(orderId, "S")
+	idx := strings.Index(s, "_")
+	if idx < 0 {
+		return 0
+	}
+	spid, err := strconv.ParseInt(s[:idx], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return spid
 }
 
-func quotaLeaseZSetKey(seckillProductId int64) string {
-	return KeyPrefixQuotaLeaseZSet + strconv.FormatInt(seckillProductId, 10)
+// parseSpidFromInfoKey 从 {spid}:sk:info 格式的 key 中提取 spid
+func parseSpidFromInfoKey(key string) int64 {
+	if !strings.HasPrefix(key, "{") {
+		return 0
+	}
+	end := strings.Index(key, "}")
+	if end < 0 {
+		return 0
+	}
+	spid, err := strconv.ParseInt(key[1:end], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return spid
 }
 
 // EnsureQuota 批量领取本地配额（并回收过期租约）
 func (r *SeckillRedis) EnsureQuota(ctx context.Context, seckillProductId int64, instanceID string, batchSize int64, leaseTTLSeconds int64) (int64, int64, error) {
-	globalStockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
-	bucketKey := quotaBucketKey(seckillProductId, instanceID)
-	leaseKey := quotaLeaseZSetKey(seckillProductId)
-
-	keys := []string{globalStockKey, bucketKey, leaseKey, KeyQuotaProductsSet}
+	keys := []string{keyStock(seckillProductId), keyQBucket(seckillProductId, instanceID), keyQLease(seckillProductId)}
 	argv := []interface{}{
 		instanceID,
 		batchSize,
@@ -864,9 +938,9 @@ func (r *SeckillRedis) EnsureQuota(ctx context.Context, seckillProductId int64, 
 
 // DoSeckillWithQuota 使用实例配额桶执行秒杀原子裁决
 func (r *SeckillRedis) DoSeckillWithQuota(ctx context.Context, req *SeckillRequest, instanceID string) (*SeckillResult, error) {
-	bucketKey := quotaBucketKey(req.SeckillProductId, instanceID)
-	userKey := KeyPrefixSeckillUser + strconv.FormatInt(req.SeckillProductId, 10) + ":" + strconv.FormatInt(req.UserId, 10)
-	orderKey := KeyPrefixSeckillOrder + req.OrderId
+	bucketKey := keyQBucket(req.SeckillProductId, instanceID)
+	userKey := keyUser(req.SeckillProductId, req.UserId)
+	orderKey := keyOrder(req.SeckillProductId, req.OrderId)
 
 	keys := []string{bucketKey, userKey, orderKey}
 	argv := []interface{}{
@@ -899,12 +973,11 @@ func (r *SeckillRedis) DoSeckillWithQuota(ctx context.Context, req *SeckillReque
 
 // RenewLease 为当前实例续租（仅当桶内仍有配额）
 func (r *SeckillRedis) RenewLease(ctx context.Context, seckillProductId int64, instanceID string, leaseTTLSeconds int64) error {
-	bucketKey := quotaBucketKey(seckillProductId, instanceID)
-	bucketLeft, err := r.client.Get(ctx, bucketKey).Int64()
+	bucketLeft, err := r.client.Get(ctx, keyQBucket(seckillProductId, instanceID)).Int64()
 	if err != nil && err != redis.Nil {
 		return err
 	}
-	leaseKey := quotaLeaseZSetKey(seckillProductId)
+	leaseKey := keyQLease(seckillProductId)
 	if bucketLeft <= 0 {
 		return r.client.ZRem(ctx, leaseKey, instanceID).Err()
 	}
@@ -937,21 +1010,16 @@ func (r *SeckillRedis) RenewAllActiveLeases(ctx context.Context, instanceID stri
 
 // ReapExpiredQuotaForProduct 回收单个商品的过期租约配额
 func (r *SeckillRedis) ReapExpiredQuotaForProduct(ctx context.Context, seckillProductId int64) (int64, error) {
-	lockKey := KeyPrefixQuotaReaperLock + strconv.FormatInt(seckillProductId, 10)
-	lockOK, err := r.client.SetNX(ctx, lockKey, "1", 1200*time.Millisecond).Result()
+	lockOK, err := r.client.SetNX(ctx, keyQReaperLock(seckillProductId), "1", 1200*time.Millisecond).Result()
 	if err != nil || !lockOK {
 		return 0, err
 	}
-	defer r.client.Del(ctx, lockKey)
+	defer r.client.Del(ctx, keyQReaperLock(seckillProductId))
 
-	globalStockKey := KeyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
-	leaseKey := quotaLeaseZSetKey(seckillProductId)
-	bucketPrefix := quotaBucketKeyPrefix(seckillProductId)
-	keys := []string{globalStockKey, leaseKey, KeyQuotaProductsSet}
+	keys := []string{keyStock(seckillProductId), keyQLease(seckillProductId)}
 	argv := []interface{}{
 		time.Now().Unix(),
-		bucketPrefix,
-		strconv.FormatInt(seckillProductId, 10),
+		keyQBucketPrefix(seckillProductId),
 	}
 
 	raw, err := r.client.Eval(ctx, quotaReapLuaScript, keys, argv...).Result()
@@ -965,25 +1033,23 @@ func (r *SeckillRedis) ReapExpiredQuotaForProduct(ctx context.Context, seckillPr
 	return reclaimed, nil
 }
 
-// ReapExpiredQuotaForAllProducts 扫描并回收所有有租约商品
+// ReapExpiredQuotaForAllProducts 遍历本地已追踪商品，回收所有过期租约配额
+// 不再依赖 Redis 全局 products set，改为遍历内存中的 localStock
 func (r *SeckillRedis) ReapExpiredQuotaForAllProducts(ctx context.Context) (int64, error) {
-	products, err := r.client.SMembers(ctx, KeyQuotaProductsSet).Result()
-	if err != nil && err != redis.Nil {
-		return 0, err
-	}
 	var reclaimedTotal int64
 	var firstErr error
-	for _, item := range products {
-		spid, parseErr := strconv.ParseInt(item, 10, 64)
-		if parseErr != nil {
-			continue
+	r.localStock.Range(func(key, _ any) bool {
+		spid, ok := key.(int64)
+		if !ok {
+			return true
 		}
 		reclaimed, reclaimErr := r.ReapExpiredQuotaForProduct(ctx, spid)
 		if reclaimErr != nil && firstErr == nil {
 			firstErr = reclaimErr
 		}
 		reclaimedTotal += reclaimed
-	}
+		return true
+	})
 	return reclaimedTotal, firstErr
 }
 
