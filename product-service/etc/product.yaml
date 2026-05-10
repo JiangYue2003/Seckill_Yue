@@ -1,9 +1,6 @@
 Name: product.rpc
 ListenOn: 127.0.0.1:9082
 Mode: dev
-Dev:
-  ResetLogsOnStart: true # 仅在 Mode=dev/test 且该值=true 时，启动前清空日志目录
-
 Log:
   ServiceName: product.rpc
   Mode: console     # 容器环境建议改为 volume 并挂载目录

@@ -7,10 +7,6 @@ import (
 type Config struct {
 	zrpc.RpcServerConf
 
-	Dev struct {
-		ResetLogsOnStart bool `json:"resetLogsOnStart,optional"`
-	}
-
 	// Redis 配置
 	SeckillRedis struct {
 		Mode           string   // "single"(默认) | "cluster" | "sentinel"

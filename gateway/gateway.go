@@ -31,9 +31,6 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
 	metricsListenPort := overridePorts(&c)
-	if err := logutil.ResetLogsIfEnabled(c.Mode, c.Dev.ResetLogsOnStart, c.Log); err != nil {
-		panic(fmt.Sprintf("failed to reset logs: %v", err))
-	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 	logutil.SetupInstanceFields(c.Log.ServiceName, *port)

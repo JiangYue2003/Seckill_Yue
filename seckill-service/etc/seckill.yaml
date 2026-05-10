@@ -1,9 +1,6 @@
 Name: seckill.rpc
 ListenOn: 127.0.0.1:9083
 Mode: dev
-Dev:
-  ResetLogsOnStart: false # 仅在 Mode=dev/test 且该值=true 时，启动前清空日志目录
-
 Log:
   ServiceName: seckill.rpc
   Mode: console     # 容器环境建议改为 volume 并挂载目录

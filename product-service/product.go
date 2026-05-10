@@ -26,9 +26,6 @@ func main() {
 
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
-	if err := logutil.ResetLogsIfEnabled(c.Mode, c.Dev.ResetLogsOnStart, c.Log); err != nil {
-		panic(err)
-	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 	logutil.SetupInstanceFields(c.Log.ServiceName, *port)

@@ -7,10 +7,6 @@ import (
 type Config struct {
 	zrpc.RpcServerConf
 
-	Dev struct {
-		ResetLogsOnStart bool `json:"resetLogsOnStart,optional"`
-	}
-
 	// MySQL 数据库配置
 	MySQL struct {
 		DataSource string
