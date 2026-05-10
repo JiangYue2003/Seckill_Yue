@@ -51,10 +51,15 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 
-	// 初始化 RabbitMQ 同步生产者（底层引擎）
-	producer, err := mq.NewProducer(c.RabbitMQ.URL, c.RabbitMQ.Exchange, c.RabbitMQ.RoutingKey)
+	// 初始化 RocketMQ 同步生产者（底层引擎）
+	producer, err := mq.NewRocketMQProducer(mq.RocketMQConfig{
+		NameServer:    c.RocketMQ.NameServer,
+		ProducerGroup: c.RocketMQ.ProducerGroup,
+		OrderTopic:    c.RocketMQ.OrderTopic,
+		CheckTopic:    c.RocketMQ.CheckTopic,
+	})
 	if err != nil {
-		logx.Errorf("failed to initialize RabbitMQ producer: %v", err)
+		logx.Errorf("failed to initialize RocketMQ producer: %v", err)
 		panic(err)
 	}
 

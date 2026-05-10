@@ -15,8 +15,9 @@ type ServiceContext struct {
 	Config            config.Config
 	OrderModel        model.OrderModel
 	SeckillOrderModel model.SeckillOrderModel
-	Consumer          *mq.Consumer // 主处理队列消费者
-	CheckConsumer     *mq.Consumer // 超时检查队列消费者
+	Consumer          *mq.RocketMQOrderConsumer // 主处理队列消费者
+	CheckConsumer     *mq.RocketMQCheckConsumer // 超时检查队列消费者
+	DLQConsumer       *mq.RocketMQDLQConsumer   // 死信队列监控消费者
 	OrderService      *service.OrderService
 	ProductServiceRPC *rpc.ProductServiceClient
 	SeckillServiceRPC *rpc.SeckillServiceClient
@@ -64,38 +65,40 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		orderService.SetSeckillServiceRPC(seckillSvc)
 	}
 
-	// 初始化 RabbitMQ 消费者
+	rmqCfg := mq.RocketMQConsumerConfig{
+		NameServer:         c.RocketMQ.NameServer,
+		OrderConsumerGroup: c.RocketMQ.OrderConsumerGroup,
+		CheckConsumerGroup: c.RocketMQ.CheckConsumerGroup,
+		DLQConsumerGroup:   c.RocketMQ.DLQConsumerGroup,
+		OrderTopic:         c.RocketMQ.OrderTopic,
+		CheckTopic:         c.RocketMQ.CheckTopic,
+	}
+
+	// 初始化主链路消费者
 	processFunc := func(msg *mq.SeckillOrderMessage) error {
 		return orderService.ProcessSeckillOrder(msg)
 	}
-	consumer, err := mq.NewConsumer(
-		c.RabbitMQ.URL,
-		c.RabbitMQ.Exchange,
-		c.RabbitMQ.RoutingKey,
-		mq.SeckillOrderQueueName, // 秒杀订单队列
-		c.RabbitMQ.ConsumerTag,
-		processFunc,
-	)
+	consumer, err := mq.NewRocketMQOrderConsumer(rmqCfg, processFunc)
 	if err != nil {
-		logx.Errorf("failed to initialize RabbitMQ consumer: %v", err)
+		logx.Errorf("failed to initialize RocketMQ order consumer: %v", err)
 		consumer = nil
 	}
 
-	// 初始化超时检查队列消费者（消费 seckill_order_check_queue）
+	// 初始化超时检查消费者
 	checkProcessFunc := func(msg *mq.SeckillOrderMessage) error {
 		return orderService.ProcessOrderTimeout(msg)
 	}
-	checkConsumer, err := mq.NewConsumer(
-		c.RabbitMQ.URL,
-		c.RabbitMQ.Exchange,
-		mq.RoutingKeyCheck,
-		mq.SeckillCheckQueueName,
-		c.RabbitMQ.ConsumerTag+"_check",
-		checkProcessFunc,
-	)
+	checkConsumer, err := mq.NewRocketMQCheckConsumer(rmqCfg, checkProcessFunc)
 	if err != nil {
-		logx.Errorf("failed to initialize check consumer: %v", err)
+		logx.Errorf("failed to initialize RocketMQ check consumer: %v", err)
 		checkConsumer = nil
+	}
+
+	// 初始化死信队列监控消费者
+	dlqConsumer, err := mq.NewRocketMQDLQConsumer(rmqCfg)
+	if err != nil {
+		logx.Errorf("failed to initialize RocketMQ DLQ consumer: %v", err)
+		dlqConsumer = nil
 	}
 
 	return &ServiceContext{
@@ -104,6 +107,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		SeckillOrderModel: seckillOrderModel,
 		Consumer:          consumer,
 		CheckConsumer:     checkConsumer,
+		DLQConsumer:       dlqConsumer,
 		OrderService:      orderService,
 		ProductServiceRPC: productSvc,
 		SeckillServiceRPC: seckillSvc,

@@ -34,11 +34,12 @@ type Config struct {
 		ScanCount      int64
 	}
 
-	// RabbitMQ 配置
-	RabbitMQ struct {
-		URL        string // amqp://user:pass@host:port/
-		Exchange   string // 交换机名称
-		RoutingKey string // 路由键
+	// RocketMQ 配置
+	RocketMQ struct {
+		NameServer    string // NameServer 地址，如 "localhost:9876"
+		ProducerGroup string // 生产者组名
+		OrderTopic    string // 主链路 Topic
+		CheckTopic    string // 超时检查 Topic（延迟消息）
 	}
 
 	// 异步 MQ 生产者配置

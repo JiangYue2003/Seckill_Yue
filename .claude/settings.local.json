@@ -4,7 +4,9 @@
       "Bash(go build:*)",
       "Bash(xargs grep:*)",
       "mcp__mcp_server_mysql__mysql_query",
-      "Bash(go get *)"
+      "Bash(go get *)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs"
     ]
   }
 }

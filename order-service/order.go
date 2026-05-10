@@ -40,13 +40,19 @@ func main() {
 	// 启动主处理队列消费者
 	if ctx.Consumer != nil {
 		if err := ctx.Consumer.Start(); err != nil {
-			logx.Errorf("RabbitMQ consumer failed to start: %v", err)
+			logx.Errorf("RocketMQ order consumer failed to start: %v", err)
 		}
 	}
 	// 启动超时检查队列消费者
 	if ctx.CheckConsumer != nil {
 		if err := ctx.CheckConsumer.Start(); err != nil {
-			logx.Errorf("RabbitMQ check consumer failed to start: %v", err)
+			logx.Errorf("RocketMQ check consumer failed to start: %v", err)
+		}
+	}
+	// 启动死信队列监控消费者
+	if ctx.DLQConsumer != nil {
+		if err := ctx.DLQConsumer.Start(); err != nil {
+			logx.Errorf("RocketMQ DLQ consumer failed to start: %v", err)
 		}
 	}
 
@@ -64,6 +70,9 @@ func main() {
 		}
 		if ctx.CheckConsumer != nil {
 			_ = ctx.CheckConsumer.Stop()
+		}
+		if ctx.DLQConsumer != nil {
+			_ = ctx.DLQConsumer.Stop()
 		}
 
 		// 2. 刷完 BatchWriter 缓冲区

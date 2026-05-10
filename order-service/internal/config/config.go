@@ -20,12 +20,14 @@ type Config struct {
 	// Redis 缓存配置
 	MyCache cache.CacheConf
 
-	// RabbitMQ 配置
-	RabbitMQ struct {
-		URL         string // amqp://user:pass@host:port/
-		Exchange    string // 交换机名称
-		RoutingKey  string // 路由键
-		ConsumerTag string // 消费者标识
+	// RocketMQ 配置
+	RocketMQ struct {
+		NameServer         string // NameServer 地址
+		OrderConsumerGroup string // 主链路消费者组
+		CheckConsumerGroup string // 超时检查消费者组
+		DLQConsumerGroup   string // 死信队列监控消费者组
+		OrderTopic         string // 主链路 Topic
+		CheckTopic         string // 超时检查 Topic
 	}
 
 	// Product Service gRPC 配置（通过 etcd 发现）

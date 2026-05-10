@@ -76,27 +76,44 @@ services:
       retries: 5
 
   # ============================================================
-  # RabbitMQ 消息队列
+  # RocketMQ 消息队列（NameServer + Broker）
   # ============================================================
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: seckill-rabbitmq
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: seckill-rocketmq-namesrv
     restart: unless-stopped
     ports:
-      - "5672:5672"   # AMQP 协议端口
-      - "15672:15672" # Management UI 端口
+      - "9876:9876"
     environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_DEFAULT_VHOST: /
       TZ: Asia/Shanghai
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+    command: sh mqnamesrv
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    command: >
-      bash -c "rabbitmq-plugins enable --offline rabbitmq_management &&
-               rabbitmq-server"
+      - rocketmq_namesrv_logs:/home/rocketmq/logs
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD-SHELL", "curl -s http://localhost:9876 || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.1.4
+    container_name: seckill-rocketmq-broker
+    restart: unless-stopped
+    ports:
+      - "10911:10911"  # 生产者/消费者通信端口
+      - "10909:10909"  # VIP 通道端口
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
+    command: sh mqbroker -n rocketmq-namesrv:9876 autoCreateTopicEnable=true
+    volumes:
+      - rocketmq_broker_logs:/home/rocketmq/logs
+      - rocketmq_broker_store:/home/rocketmq/store
+    depends_on:
+      - rocketmq-namesrv
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:10911 || exit 0"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -108,5 +125,9 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  rabbitmq_data:
+  rocketmq_namesrv_logs:
+    driver: local
+  rocketmq_broker_logs:
+    driver: local
+  rocketmq_broker_store:
     driver: local
