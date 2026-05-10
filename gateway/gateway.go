@@ -36,6 +36,7 @@ func main() {
 	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
+	logutil.SetupInstanceFields(c.Log.ServiceName, *port)
 
 	// 初始化链路追踪（上报到 Jaeger）
 	if !c.Telemetry.Disabled {

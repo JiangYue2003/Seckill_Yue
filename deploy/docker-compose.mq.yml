@@ -1,0 +1,73 @@
+# docker-compose.mq.yml
+# 消息队列：RocketMQ NameServer + Broker
+#
+# 启动：docker compose -f docker-compose.mq.yml up -d
+# 停止：docker compose -f docker-compose.mq.yml down
+#
+# 依赖：需要先启动 docker-compose.infra.yml（共享 seckill-net 网络）
+
+version: '3.8'
+
+services:
+  # ============================================================
+  # RocketMQ NameServer（服务注册与路由）
+  # ============================================================
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.1.4
+    container_name: seckill-rocketmq-namesrv
+    restart: unless-stopped
+    ports:
+      - "9876:9876"
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+    command: sh mqnamesrv
+    volumes:
+      - rocketmq_namesrv_logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9876 || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - seckill-net
+
+  # ============================================================
+  # RocketMQ Broker（消息存储与投递）
+  # ============================================================
+  rocketmq-broker:
+    image: apache/rocketmq:5.1.4
+    container_name: seckill-rocketmq-broker
+    restart: unless-stopped
+    ports:
+      - "10911:10911"
+      - "10909:10909"
+    environment:
+      TZ: Asia/Shanghai
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
+    command: sh mqbroker -n rocketmq-namesrv:9876 autoCreateTopicEnable=true
+    volumes:
+      - rocketmq_broker_logs:/home/rocketmq/logs
+      - rocketmq_broker_store:/home/rocketmq/store
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:10911 || exit 0"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - seckill-net
+
+volumes:
+  rocketmq_namesrv_logs:
+    driver: local
+  rocketmq_broker_logs:
+    driver: local
+  rocketmq_broker_store:
+    driver: local
+
+networks:
+  seckill-net:
+    external: true  # 引用 infra 创建的网络，不重复创建

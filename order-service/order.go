@@ -35,6 +35,7 @@ func main() {
 	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
+	logutil.SetupInstanceFields(c.Log.ServiceName, *port)
 	ctx := svc.NewServiceContext(c)
 
 	// 启动主处理队列消费者

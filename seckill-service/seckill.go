@@ -39,6 +39,7 @@ func main() {
 	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
+	logutil.SetupInstanceFields(c.Log.ServiceName, *port)
 	ctx := svc.NewServiceContext(c)
 
 	s := zrpc.MustNewServer(c.RpcServerConf, func(grpcServer *grpc.Server) {

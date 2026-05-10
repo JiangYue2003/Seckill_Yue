@@ -1,0 +1,58 @@
+# Filebeat 配置：采集微服务 stdout 日志，发送到 Kafka
+# 部署方式：在每台宿主机上运行一个 Filebeat 实例
+#
+# 使用方式：
+#   非容器模式（直接运行服务）：
+#     ./seckill-service 2>&1 | tee /var/log/seckill/seckill.log
+#   容器模式：Filebeat 自动采集 Docker 容器 stdout
+
+filebeat.inputs:
+  # ---- 非容器模式：采集重定向到文件的 stdout ----
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/seckill/*.log
+    # go-zero console 模式输出 JSON，直接解析为字段
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.message_key: msg
+    # 多行日志合并（go-zero 的 stack trace 可能跨行）
+    multiline.pattern: '^\{'
+    multiline.negate: true
+    multiline.match: after
+    # 给每条日志加上来源标签
+    fields:
+      log_source: file
+      environment: dev
+    fields_under_root: true
+
+  # ---- 容器模式：采集 Docker 容器 stdout ----
+  - type: container
+    enabled: false  # 容器部署时改为 true
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    processors:
+      - add_docker_metadata:
+          host: "unix:///var/run/docker.sock"
+
+# 输出到 Kafka
+output.kafka:
+  hosts:
+    - "localhost:9092"  # 多机部署时改为 Kafka 实际地址
+  topic: "seckill-logs"
+  partition.round_robin:
+    reachable_only: false
+  required_acks: 1
+  compression: gzip
+  max_message_bytes: 1000000
+  codec.json:
+    pretty: false
+
+# 日志级别（Filebeat 自身的日志）
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644

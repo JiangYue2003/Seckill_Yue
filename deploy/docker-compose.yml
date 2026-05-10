@@ -1,133 +1,32 @@
 version: '3.8'
 
-services:
-  # ============================================================
-  # Etcd 服务发现
-  # ============================================================
-  etcd:
-    image: quay.io/coreos/etcd:v3.5.9
-    container_name: seckill-etcd
-    restart: unless-stopped
-    environment:
-      ETCD_ROOT_PASSWORD: root123456
-      ETCD_ENABLE_V2: "true"
-    ports:
-      - "2379:2379"  # etcd 客户端端口
-      - "2380:2380"  # etcd peer 端口
-    volumes:
-      - etcd_data:/etcd-data
-    command: >
-      etcd
-      --name seckill-etcd
-      --data-dir=/etcd-data
-      --listen-client-urls=http://0.0.0.0:2379
-      --advertise-client-urls=http://0.0.0.0:2379
-      --listen-peer-urls=http://0.0.0.0:2380
-      --initial-cluster-token=seckill-etcd-cluster
-      --initial-cluster=seckill-etcd=http://0.0.0.0:2380
-      --initial-cluster-state=new
-    healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# ============================================================
+# 此文件已拆分为四个独立的 compose 文件，按需启动：
+#
+#   基础设施（etcd + MySQL + Redis）：
+#     docker compose -f docker-compose.infra.yml up -d
+#
+#   消息队列（RocketMQ NameServer + Broker）：
+#     docker compose -f docker-compose.mq.yml up -d
+#
+#   日志采集栈（Kafka + Logstash + Elasticsearch + Kibana）：
+#     docker compose -f docker-compose.logging.yml up -d
+#
+#   可观测性栈（Prometheus + Grafana + Jaeger）：
+#     docker compose -f docker-compose.observability.yml up -d
+#
+# 启动顺序：infra → mq → logging/observability（后两者无依赖顺序）
+#
+# 一键启动全部（开发环境）：
+#   docker compose -f docker-compose.infra.yml \
+#                  -f docker-compose.mq.yml \
+#                  -f docker-compose.logging.yml \
+#                  -f docker-compose.observability.yml \
+#                  up -d
+#
+# 注意：所有文件共享同一个 Docker 网络 seckill-net，
+#       由 docker-compose.infra.yml 负责创建，其余文件声明 external: true。
+# ============================================================
 
-  # ============================================================
-  # MySQL 数据库
-  # ============================================================
-  mysql:
-    image: mysql:8.0
-    container_name: seckill-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_ROOT_PASSWORD: root123456
-      MYSQL_DATABASE: seckill_mall
-      MYSQL_USER: seckill
-      MYSQL_PASSWORD: seckill123
-      TZ: Asia/Shanghai
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./docs/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot123456"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ============================================================
-  # Redis 缓存
-  # ============================================================
-  redis:
-    image: redis:7-alpine
-    container_name: seckill-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy volatile-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # ============================================================
-  # RocketMQ 消息队列（NameServer + Broker）
-  # ============================================================
-  rocketmq-namesrv:
-    image: apache/rocketmq:5.1.4
-    container_name: seckill-rocketmq-namesrv
-    restart: unless-stopped
-    ports:
-      - "9876:9876"
-    environment:
-      TZ: Asia/Shanghai
-      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
-    command: sh mqnamesrv
-    volumes:
-      - rocketmq_namesrv_logs:/home/rocketmq/logs
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9876 || exit 0"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  rocketmq-broker:
-    image: apache/rocketmq:5.1.4
-    container_name: seckill-rocketmq-broker
-    restart: unless-stopped
-    ports:
-      - "10911:10911"  # 生产者/消费者通信端口
-      - "10909:10909"  # VIP 通道端口
-    environment:
-      TZ: Asia/Shanghai
-      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
-    command: sh mqbroker -n rocketmq-namesrv:9876 autoCreateTopicEnable=true
-    volumes:
-      - rocketmq_broker_logs:/home/rocketmq/logs
-      - rocketmq_broker_store:/home/rocketmq/store
-    depends_on:
-      - rocketmq-namesrv
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:10911 || exit 0"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-volumes:
-  etcd_data:
-    driver: local
-  mysql_data:
-    driver: local
-  redis_data:
-    driver: local
-  rocketmq_namesrv_logs:
-    driver: local
-  rocketmq_broker_logs:
-    driver: local
-  rocketmq_broker_store:
-    driver: local
+# 此文件不包含任何服务定义，仅作为入口说明文档。
+services: {}

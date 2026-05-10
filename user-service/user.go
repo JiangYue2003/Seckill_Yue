@@ -18,6 +18,8 @@ import (
 )
 
 var configFile = flag.String("f", "etc/user.yaml", "the config file")
+var port = flag.Int("port", 0, "override rpc listen port, e.g. --port=19082")
+var metricsPort = flag.Int("metrics-port", 0, "override prometheus port")
 
 func main() {
 	flag.Parse()
@@ -29,6 +31,7 @@ func main() {
 	}
 	logx.MustSetup(c.Log)
 	defer logx.Close()
+	logutil.SetupInstanceFields(c.Log.ServiceName, *port)
 	ctx := svc.NewServiceContext(c)
 
 	s := zrpc.MustNewServer(c.RpcServerConf, func(grpcServer *grpc.Server) {
