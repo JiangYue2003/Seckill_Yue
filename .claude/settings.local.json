@@ -6,7 +6,8 @@
       "mcp__mcp_server_mysql__mysql_query",
       "Bash(go get *)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__query-docs"
+      "mcp__context7__query-docs",
+      "Bash(docker run *)"
     ]
   }
 }

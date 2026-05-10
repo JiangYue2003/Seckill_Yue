@@ -9,18 +9,18 @@ type Config struct {
 
 	// Redis 配置
 	SeckillRedis struct {
-		Mode           string   // "single"(默认) | "cluster" | "sentinel"
-		Addr           string   // single/sentinel: "host:port"
-		Addrs          []string // cluster/sentinel: 节点列表
-		MasterName     string   // sentinel 专用
-		Password       string
-		DB             int
-		PoolSize       int
-		MinIdleConns   int
-		DialTimeoutMs  int
-		ReadTimeoutMs  int
-		WriteTimeoutMs int
-		PoolTimeoutMs  int
+		Mode           string   `json:",optional"` // "single"(默认) | "cluster" | "sentinel"
+		Addr           string   `json:",optional"` // single/sentinel: "host:port"
+		Addrs          []string `json:",optional"` // cluster/sentinel: 节点列表
+		MasterName     string   `json:",optional"` // sentinel 专用
+		Password       string   `json:",optional"`
+		DB             int      `json:",optional"`
+		PoolSize       int      `json:",optional"`
+		MinIdleConns   int      `json:",optional"`
+		DialTimeoutMs  int      `json:",optional"`
+		ReadTimeoutMs  int      `json:",optional"`
+		WriteTimeoutMs int      `json:",optional"`
+		PoolTimeoutMs  int      `json:",optional"`
 	}
 
 	// 秒杀商品元数据本地缓存

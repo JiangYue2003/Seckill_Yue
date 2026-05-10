@@ -4,13 +4,12 @@
 # 启动：docker compose -f docker-compose.mq.yml up -d
 # 停止：docker compose -f docker-compose.mq.yml down
 #
-# 依赖：需要先启动 docker-compose.infra.yml（共享 seckill-net 网络）
-
-version: '3.8'
+# 本地开发模式：不使用自定义网络，通过端口映射暴露到宿主机
+# 微服务连接地址：localhost:9876（NameServer）、localhost:10911（Broker）
 
 services:
   # ============================================================
-  # RocketMQ NameServer（服务注册与路由）
+  # RocketMQ NameServer
   # ============================================================
   rocketmq-namesrv:
     image: apache/rocketmq:5.1.4
@@ -25,15 +24,16 @@ services:
     volumes:
       - rocketmq_namesrv_logs:/home/rocketmq/logs
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9876 || exit 0"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    networks:
-      - seckill-net
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/9876' 2>/dev/null && echo ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ============================================================
-  # RocketMQ Broker（消息存储与投递）
+  # RocketMQ Broker
+  # Broker 内部通过容器名访问 NameServer（同一 compose 默认网络）
+  # 宿主机上的微服务通过 localhost:9876 访问 NameServer
   # ============================================================
   rocketmq-broker:
     image: apache/rocketmq:5.1.4
@@ -45,7 +45,7 @@ services:
     environment:
       TZ: Asia/Shanghai
       JAVA_OPT_EXT: "-Xms512m -Xmx512m"
-    command: sh mqbroker -n rocketmq-namesrv:9876 autoCreateTopicEnable=true
+    command: ["sh", "-c", "printf 'brokerClusterName=DefaultCluster\\nbrokerName=broker-a\\nbrokerId=0\\nbrokerIP1=host.docker.internal\\nnamesrvAddr=rocketmq-namesrv:9876\\nautoCreateTopicEnable=true\\nautoCreateSubscriptionGroup=true\\nstorePathRootDir=/home/rocketmq/store\\nflushDiskType=ASYNC_FLUSH\\nfileReservedTime=48\\n' > /tmp/broker.conf && sh mqbroker -c /tmp/broker.conf"]
     volumes:
       - rocketmq_broker_logs:/home/rocketmq/logs
       - rocketmq_broker_store:/home/rocketmq/store
@@ -53,12 +53,11 @@ services:
       rocketmq-namesrv:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:10911 || exit 0"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-    networks:
-      - seckill-net
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/10911' 2>/dev/null && echo ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   rocketmq_namesrv_logs:
@@ -67,7 +66,3 @@ volumes:
     driver: local
   rocketmq_broker_store:
     driver: local
-
-networks:
-  seckill-net:
-    external: true  # 引用 infra 创建的网络，不重复创建

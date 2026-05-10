@@ -4,7 +4,6 @@
 # 启动：docker compose -f docker-compose.infra.yml up -d
 # 停止：docker compose -f docker-compose.infra.yml down
 
-version: '3.8'
 
 services:
   # ============================================================

@@ -60,7 +60,7 @@ Bloom:
   FallbackVerifyEnabled: true
 
 RocketMQ:
-  NameServer: localhost:9876
+  NameServer: 127.0.0.1:9876
   ProducerGroup: seckill_producer
   OrderTopic: seckill_order
   CheckTopic: seckill_order_check

@@ -26,10 +26,11 @@ import (
 )
 
 const (
-	keyPrefixSeckillInfo  = "seckill:info:"
-	keyPrefixSeckillName  = "seckill:product_name:"
-	keyPrefixSeckillStock = "seckill:stock:"
-	keyPrefixSeckillUser  = "seckill:user:"
+	// Redis key 格式与 seckill-service 保持一致（hash tag 格式）
+	keyPrefixSeckillInfo  = "{%d}:sk:info"    // fmt.Sprintf(keyPrefixSeckillInfo, spid)
+	keyPrefixSeckillName  = "{%d}:sk:name"    // fmt.Sprintf(keyPrefixSeckillName, spid)
+	keyPrefixSeckillStock = "{%d}:sk:stock"   // fmt.Sprintf(keyPrefixSeckillStock, spid)
+	keyPrefixSeckillUser  = "{%d}:sk:user:%d" // fmt.Sprintf(keyPrefixSeckillUser, spid, uid)
 
 	benchmarkUserStart = int64(10000)
 	defaultMySQLDSN    = "root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local"
@@ -471,6 +472,11 @@ func prepareScenario(ctx context.Context, seckillProductId, initStock, userCount
 		log.Fatalf("初始化库存失败: %v", err)
 	}
 	fmt.Printf("[OK] 场景已初始化: productId=%d, stock=%d\n", seckillProductId, initStock)
+
+	// 等待 seckill-service 的本地缓存和布隆过滤器刷新（RefreshSeconds=3，等5秒确保刷新完成）
+	fmt.Printf("[WAIT] 等待 seckill-service 缓存刷新 (5s)...\n")
+	time.Sleep(5 * time.Second)
+	fmt.Printf("[OK] 缓存刷新等待完成\n")
 }
 
 func cleanupScenario(ctx context.Context, seckillProductId, userCount int64) {
@@ -478,7 +484,8 @@ func cleanupScenario(ctx context.Context, seckillProductId, userCount int64) {
 
 	pipe := redisClient.Pipeline()
 	for i := int64(0); i < userCount; i++ {
-		key := fmt.Sprintf("%s%d:%d", keyPrefixSeckillUser, seckillProductId, benchmarkUserStart+i)
+		uid := benchmarkUserStart + i
+		key := fmt.Sprintf(keyPrefixSeckillUser, seckillProductId, uid)
 		pipe.Del(ctx, key)
 	}
 	_, _ = pipe.Exec(ctx)
@@ -500,12 +507,12 @@ func cleanupScenario(ctx context.Context, seckillProductId, userCount int64) {
 }
 
 func initStockValue(ctx context.Context, seckillProductId, stock int64) error {
-	key := keyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
+	key := fmt.Sprintf(keyPrefixSeckillStock, seckillProductId)
 	return redisClient.Set(ctx, key, stock, 0).Err()
 }
 
 func getStock(ctx context.Context, seckillProductId int64) (int64, error) {
-	key := keyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
+	key := fmt.Sprintf(keyPrefixSeckillStock, seckillProductId)
 	val, err := redisClient.Get(ctx, key).Int64()
 	if err == redis.Nil {
 		return 0, nil
@@ -514,16 +521,16 @@ func getStock(ctx context.Context, seckillProductId int64) (int64, error) {
 }
 
 func rollbackStock(ctx context.Context, seckillProductId, amount int64) {
-	key := keyPrefixSeckillStock + strconv.FormatInt(seckillProductId, 10)
+	key := fmt.Sprintf(keyPrefixSeckillStock, seckillProductId)
 	redisClient.IncrBy(ctx, key, amount)
 }
 
 func setSeckillProductInfo(ctx context.Context, seckillProductId, productId, price int64, name string, startTime, endTime, ttl int64) error {
-	infoKey := keyPrefixSeckillInfo + strconv.FormatInt(seckillProductId, 10)
+	infoKey := fmt.Sprintf(keyPrefixSeckillInfo, seckillProductId)
 	infoValue := fmt.Sprintf("%d:%d:%d:%d", productId, price, startTime, endTime)
 	if err := redisClient.Set(ctx, infoKey, infoValue, time.Duration(ttl)*time.Second).Err(); err != nil {
 		return err
 	}
-	nameKey := keyPrefixSeckillName + strconv.FormatInt(seckillProductId, 10)
+	nameKey := fmt.Sprintf(keyPrefixSeckillName, seckillProductId)
 	return redisClient.Set(ctx, nameKey, name, time.Duration(ttl)*time.Second).Err()
 }

@@ -10,7 +10,6 @@
 # Filebeat 在宿主机上独立运行，配置见 filebeat/filebeat.yml
 # Kibana 访问地址：http://localhost:5601
 
-version: '3.8'
 
 services:
   # ============================================================

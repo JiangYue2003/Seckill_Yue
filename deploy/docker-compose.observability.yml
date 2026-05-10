@@ -19,7 +19,6 @@
 # 链路追踪上报地址（各服务 Telemetry.Endpoint）：
 #   OTLP gRPC: localhost:4317
 
-version: '3.8'
 
 services:
   # ============================================================

@@ -35,7 +35,7 @@ MyCache:
     Type: node
 
 RocketMQ:
-  NameServer: localhost:9876
+  NameServer: 127.0.0.1:9876
   OrderConsumerGroup: seckill_order_consumer
   CheckConsumerGroup: seckill_check_consumer
   DLQConsumerGroup: seckill_dlq_consumer
