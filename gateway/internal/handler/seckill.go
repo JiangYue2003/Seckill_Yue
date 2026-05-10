@@ -77,8 +77,7 @@ func (h *SeckillHandler) Seckill(c *gin.Context) {
 		Quantity:         req.Quantity,
 	})
 	if err != nil {
-		logx.Errorf("秒杀请求失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "秒杀请求失败: "+err.Error())
+		handleRPCError(c, err, "秒杀请求")
 		return
 	}
 
@@ -114,8 +113,7 @@ func (h *SeckillHandler) GetSeckillStatus(c *gin.Context) {
 		SeckillProductId: seckillProductId,
 	})
 	if err != nil {
-		logx.Errorf("查询秒杀状态失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "查询秒杀状态失败")
+		handleRPCError(c, err, "查询秒杀状态")
 		return
 	}
 
@@ -142,8 +140,7 @@ func (h *SeckillHandler) GetSeckillResult(c *gin.Context) {
 
 	resp, err := h.seckillSvc.GetSeckillResult(ctx, &seckill.SeckillResultRequest{OrderId: orderId})
 	if err != nil {
-		logx.Errorf("查询秒杀结果失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "查询秒杀结果失败")
+		handleRPCError(c, err, "查询秒杀结果")
 		return
 	}
 

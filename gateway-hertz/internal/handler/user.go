@@ -60,6 +60,10 @@ func (h *UserHandler) Register(ctx context.Context, c *app.RequestContext) {
 		Phone:    req.Phone,
 	})
 	if err != nil {
+		if isBreakerError(err) {
+			middleware.ErrorWithStatus(ctx, c, consts.StatusServiceUnavailable, 503, "系统繁忙，请稍后重试")
+			return
+		}
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "用户名") || strings.Contains(errMsg, "邮箱") ||
 			strings.Contains(errMsg, "密码") || strings.Contains(errMsg, "长度") ||
@@ -67,7 +71,7 @@ func (h *UserHandler) Register(ctx context.Context, c *app.RequestContext) {
 			middleware.ErrorWithStatus(ctx, c, consts.StatusBadRequest, 400, "注册失败: "+errMsg)
 		} else {
 			hlog.CtxErrorf(ctx, "用户注册失败: %v", err)
-			middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "注册失败: "+errMsg)
+			middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "注册失败")
 		}
 		return
 	}
@@ -102,6 +106,10 @@ func (h *UserHandler) Login(ctx context.Context, c *app.RequestContext) {
 		Password: req.Password,
 	})
 	if err != nil {
+		if isBreakerError(err) {
+			middleware.ErrorWithStatus(ctx, c, consts.StatusServiceUnavailable, 503, "系统繁忙，请稍后重试")
+			return
+		}
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "用户名") || strings.Contains(errMsg, "密码") ||
 			strings.Contains(errMsg, "账号") || strings.Contains(errMsg, "不存在") ||
@@ -109,7 +117,7 @@ func (h *UserHandler) Login(ctx context.Context, c *app.RequestContext) {
 			middleware.ErrorWithStatus(ctx, c, consts.StatusUnauthorized, 401, "用户名或密码错误")
 		} else {
 			hlog.CtxErrorf(ctx, "用户登录失败: %v", err)
-			middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "登录失败: "+errMsg)
+			middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "登录失败")
 		}
 		return
 	}
@@ -178,8 +186,7 @@ func (h *UserHandler) GetUserInfo(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := h.userSvc.GetUserInfo(rpcCtx, &user.GetUserInfoRequest{UserId: userId})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "获取用户信息失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "获取用户信息失败")
+		handleRPCError(ctx, c, err, "获取用户信息")
 		return
 	}
 
@@ -223,8 +230,7 @@ func (h *UserHandler) UpdateUserInfo(ctx context.Context, c *app.RequestContext)
 		Phone:  req.Phone,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "更新用户信息失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "更新用户信息失败")
+		handleRPCError(ctx, c, err, "更新用户信息")
 		return
 	}
 	if !resp.Success {
@@ -268,8 +274,7 @@ func (h *UserHandler) ChangePassword(ctx context.Context, c *app.RequestContext)
 		NewPassword: req.NewPassword,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "修改密码失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "修改密码失败")
+		handleRPCError(ctx, c, err, "修改密码")
 		return
 	}
 	if !resp.Success {

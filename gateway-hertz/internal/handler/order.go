@@ -43,8 +43,7 @@ func (h *OrderHandler) GetOrder(ctx context.Context, c *app.RequestContext) {
 
 	resp, err := h.orderSvc.GetOrder(rpcCtx, &order.GetOrderRequest{OrderId: orderId})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "获取订单详情失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "获取订单详情失败")
+		handleRPCError(ctx, c, err, "获取订单详情")
 		return
 	}
 
@@ -89,8 +88,7 @@ func (h *OrderHandler) ListOrders(ctx context.Context, c *app.RequestContext) {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "获取订单列表失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "获取订单列表失败")
+		handleRPCError(ctx, c, err, "获取订单列表")
 		return
 	}
 
@@ -140,8 +138,7 @@ func (h *OrderHandler) CancelOrder(ctx context.Context, c *app.RequestContext) {
 		UserId:  userId,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "取消订单失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "取消订单失败")
+		handleRPCError(ctx, c, err, "取消订单")
 		return
 	}
 	if !resp.Success {
@@ -186,8 +183,7 @@ func (h *OrderHandler) PayOrder(ctx context.Context, c *app.RequestContext) {
 		PaymentId: req.PaymentId,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "支付订单失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "支付订单失败")
+		handleRPCError(ctx, c, err, "支付订单")
 		return
 	}
 	if !resp.Success {
@@ -233,8 +229,7 @@ func (h *OrderHandler) CreateNormalOrder(ctx context.Context, c *app.RequestCont
 		Quantity:  req.Quantity,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "创建普通订单失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "创建普通订单失败: "+err.Error())
+		handleRPCError(ctx, c, err, "创建普通订单")
 		return
 	}
 
@@ -282,8 +277,7 @@ func (h *OrderHandler) RefundOrder(ctx context.Context, c *app.RequestContext) {
 		Reason:  reason,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "退款失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "退款失败: "+err.Error())
+		handleRPCError(ctx, c, err, "退款")
 		return
 	}
 	if !resp.Success {

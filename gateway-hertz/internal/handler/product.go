@@ -38,8 +38,7 @@ func (h *ProductHandler) GetProduct(ctx context.Context, c *app.RequestContext) 
 
 	resp, err := h.productSvc.GetProduct(rpcCtx, &product.GetProductRequest{ProductId: productId})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "获取商品详情失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "获取商品详情失败")
+		handleRPCError(ctx, c, err, "获取商品详情")
 		return
 	}
 
@@ -76,8 +75,7 @@ func (h *ProductHandler) ListProducts(ctx context.Context, c *app.RequestContext
 		PageSize: pageSize,
 	})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "获取商品列表失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "获取商品列表失败")
+		handleRPCError(ctx, c, err, "获取商品列表")
 		return
 	}
 
@@ -114,8 +112,7 @@ func (h *ProductHandler) ListSeckillProducts(ctx context.Context, c *app.Request
 
 	stream, err := h.productSvc.ListActiveSeckillProducts(rpcCtx, &commonpb.Empty{})
 	if err != nil {
-		hlog.CtxErrorf(ctx, "获取秒杀商品列表失败: %v", err)
-		middleware.ErrorWithStatus(ctx, c, consts.StatusInternalServerError, 500, "获取秒杀商品列表失败")
+		handleRPCError(ctx, c, err, "获取秒杀商品列表")
 		return
 	}
 

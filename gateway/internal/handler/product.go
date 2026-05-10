@@ -40,8 +40,7 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 
 	resp, err := h.productSvc.GetProduct(ctx, &product.GetProductRequest{ProductId: productId})
 	if err != nil {
-		logx.Errorf("获取商品详情失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "获取商品详情失败")
+		handleRPCError(c, err, "获取商品详情")
 		return
 	}
 
@@ -78,8 +77,7 @@ func (h *ProductHandler) ListProducts(c *gin.Context) {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		logx.Errorf("获取商品列表失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "获取商品列表失败")
+		handleRPCError(c, err, "获取商品列表")
 		return
 	}
 
@@ -116,8 +114,7 @@ func (h *ProductHandler) ListSeckillProducts(c *gin.Context) {
 
 	stream, err := h.productSvc.ListActiveSeckillProducts(ctx, &commonpb.Empty{})
 	if err != nil {
-		logx.Errorf("获取秒杀商品列表失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "获取秒杀商品列表失败")
+		handleRPCError(c, err, "获取秒杀商品列表")
 		return
 	}
 

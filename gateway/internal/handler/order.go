@@ -44,8 +44,7 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 
 	resp, err := h.orderSvc.GetOrder(ctx, &order.GetOrderRequest{OrderId: orderId})
 	if err != nil {
-		logx.Errorf("获取订单详情失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "获取订单详情失败")
+		handleRPCError(c, err, "获取订单详情")
 		return
 	}
 
@@ -90,8 +89,7 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 		PageSize: pageSize,
 	})
 	if err != nil {
-		logx.Errorf("获取订单列表失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "获取订单列表失败")
+		handleRPCError(c, err, "获取订单列表")
 		return
 	}
 
@@ -141,8 +139,7 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 		UserId:  userId,
 	})
 	if err != nil {
-		logx.Errorf("取消订单失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "取消订单失败")
+		handleRPCError(c, err, "取消订单")
 		return
 	}
 
@@ -187,8 +184,7 @@ func (h *OrderHandler) PayOrder(c *gin.Context) {
 		PaymentId: req.PaymentId,
 	})
 	if err != nil {
-		logx.Errorf("支付订单失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "支付订单失败")
+		handleRPCError(c, err, "支付订单")
 		return
 	}
 
@@ -234,8 +230,7 @@ func (h *OrderHandler) CreateNormalOrder(c *gin.Context) {
 		Quantity:  req.Quantity,
 	})
 	if err != nil {
-		logx.Errorf("创建普通订单失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "创建普通订单失败: "+err.Error())
+		handleRPCError(c, err, "创建普通订单")
 		return
 	}
 
@@ -284,8 +279,7 @@ func (h *OrderHandler) RefundOrder(c *gin.Context) {
 		Reason:  reason,
 	})
 	if err != nil {
-		logx.Errorf("退款失败: %v", err)
-		middleware.ErrorWithStatus(c, http.StatusInternalServerError, 500, "退款失败: "+err.Error())
+		handleRPCError(c, err, "退款")
 		return
 	}
 
