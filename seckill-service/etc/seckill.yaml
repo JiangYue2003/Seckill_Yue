@@ -1,6 +1,8 @@
 Name: seckill.rpc
 ListenOn: 127.0.0.1:9083
 Mode: dev
+MaxConns: 100000   # 最大并发连接数，默认 10000，高并发压测需要调大
+Timeout: 10000     # 请求超时 10s，压测时避免 DeadlineExceeded
 Log:
   ServiceName: seckill.rpc
   Mode: console     # 容器环境建议改为 volume 并挂载目录
@@ -73,8 +75,8 @@ AsyncProducer:
 
 LocalQuota:
   Enabled: true
-  BatchSize: 2000
-  LowWatermark: 400
+  BatchSize: 5000      # 调大批次，减少补充频率（原 2000）
+  LowWatermark: 1000   # 低水位对应调大（原 400）
   LeaseTTLSeconds: 30
   HeartbeatSeconds: 10
   ReaperIntervalSeconds: 5

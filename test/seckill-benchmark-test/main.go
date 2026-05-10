@@ -59,7 +59,7 @@ var scenarios = []struct {
 	{"10万并发 (100000用户/15000库存)", 4101, 100000, 8000, 15000},
 }
 
-const poolSize = 8 // 连接池大小
+const poolSize = 32 // 连接池大小：高并发下增大连接数减少 gRPC 队头阻塞
 
 // SeckillServiceClient gRPC 单连接封装
 type SeckillServiceClient struct {
