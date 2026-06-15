@@ -2,9 +2,12 @@ package logic
 
 import (
 	"context"
+	"errors"
 
 	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
+	"seckill-mall/seckill-service/internal/model"
+	"seckill-mall/seckill-service/internal/model/entity"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
 
@@ -42,16 +45,39 @@ func (l *GetSeckillResultLogic) GetSeckillResult(in *seckill.SeckillResultReques
 	orderInfo, err := l.svcCtx.Redis.GetOrderInfo(l.ctx, in.OrderId)
 	if err != nil {
 		l.Logger.Errorf("查询订单信息失败: orderId=%s, err=%v", in.OrderId, err)
-		return &seckill.SeckillResultResponse{
-			Success:       false,
-			OrderId:       in.OrderId,
-			Message:       "查询订单信息失败",
-			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
-		}, nil
+		if l.svcCtx.ReservationLedger == nil {
+			return &seckill.SeckillResultResponse{
+				Success:       false,
+				OrderId:       in.OrderId,
+				Message:       "查询订单信息失败",
+				PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
+			}, nil
+		}
 	}
 
 	// 订单不存在或已过期（TTL 过期后返回 nil）
 	if orderInfo == nil {
+		if l.svcCtx.ReservationLedger != nil {
+			reservation, reservationErr := l.svcCtx.ReservationLedger.GetReservation(l.ctx, "", in.OrderId)
+			if reservationErr == nil && reservation != nil {
+				return &seckill.SeckillResultResponse{
+					Success:           isReservationSuccess(reservation.Status),
+					OrderId:           reservation.OrderId,
+					ProductId:         reservation.ProductId,
+					Quantity:          int64(reservation.Quantity),
+					Amount:            reservation.Amount,
+					Status:            reservationStatusText(reservation.Status),
+					Message:           "订单事实已落库，Redis 热状态同步中",
+					ReservationId:     reservation.ReservationId,
+					ReservationStatus: mapReservationStatus(reservation.Status),
+					OrderStatus:       mapReservationOrderLifecycle(reservation.Status),
+					PaymentStatus:     mapReservationPaymentStatus(reservation.Status),
+				}, nil
+			}
+			if reservationErr != nil && !errors.Is(reservationErr, model.ErrNotFound) {
+				l.Logger.Errorf("查询 reservation 事实失败: orderId=%s, err=%v", in.OrderId, reservationErr)
+			}
+		}
 		return &seckill.SeckillResultResponse{
 			Success:       false,
 			OrderId:       in.OrderId,
@@ -128,5 +154,16 @@ func (l *GetSeckillResultLogic) GetSeckillResult(in *seckill.SeckillResultReques
 			Message:       "未知的订单状态",
 			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
 		}, nil
+	}
+}
+
+func reservationStatusText(status int32) string {
+	switch {
+	case isReservationSuccess(status):
+		return OrderStatusSuccess
+	case status == entity.ReservationStatusFailed:
+		return OrderStatusFailed
+	default:
+		return OrderStatusPending
 	}
 }

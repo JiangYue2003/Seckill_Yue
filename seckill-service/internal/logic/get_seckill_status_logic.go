@@ -2,10 +2,13 @@ package logic
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
+	"seckill-mall/seckill-service/internal/model"
+	"seckill-mall/seckill-service/internal/model/entity"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
 
@@ -80,6 +83,32 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_EXPIRED,
 			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_CLOSED,
 		}, nil
+	}
+
+	if l.svcCtx.ReservationLedger != nil {
+		reservation, reservationErr := l.svcCtx.ReservationLedger.FindReservationByUserProduct(l.ctx, in.UserId, in.SeckillProductId)
+		if reservationErr == nil && reservation != nil {
+			status := OrderStatusPending
+			if isReservationSuccess(reservation.Status) {
+				status = OrderStatusSuccess
+			}
+			if reservation.Status == entity.ReservationStatusFailed {
+				status = OrderStatusFailed
+			}
+			return &seckill.SeckillStatusResponse{
+				Status:            status,
+				OrderId:           reservation.OrderId,
+				ProductId:         reservation.ProductId,
+				Quantity:          int64(reservation.Quantity),
+				ReservationId:     reservation.ReservationId,
+				ReservationStatus: mapReservationStatus(reservation.Status),
+				OrderStatus:       mapReservationOrderLifecycle(reservation.Status),
+				PaymentStatus:     mapReservationPaymentStatus(reservation.Status),
+			}, nil
+		}
+		if reservationErr != nil && !errors.Is(reservationErr, model.ErrNotFound) {
+			l.Logger.Errorf("查询 reservation 事实失败: userId=%d, seckillProductId=%d, err=%v", in.UserId, in.SeckillProductId, reservationErr)
+		}
 	}
 
 	// ========== 检查用户购买记录 ==========

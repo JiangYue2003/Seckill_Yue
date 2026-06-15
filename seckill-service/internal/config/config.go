@@ -7,6 +7,10 @@ import (
 type Config struct {
 	zrpc.RpcServerConf
 
+	MySQL struct {
+		DataSource string
+	}
+
 	// Redis 配置
 	SeckillRedis struct {
 		Mode           string   `json:",optional"` // "single"(默认) | "cluster" | "sentinel"

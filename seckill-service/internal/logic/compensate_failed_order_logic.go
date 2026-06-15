@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"seckill-mall/common/seckill"
+	"seckill-mall/seckill-service/internal/model"
+	"seckill-mall/seckill-service/internal/model/entity"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
 
@@ -62,6 +64,7 @@ func (l *CompensateFailedOrderLogic) CompensateFailedOrder(in *seckill.Compensat
 
 	switch code {
 	case redis.CompensateResultCompensated:
+		l.releaseReservationFact(in.OrderId, in.Reason, entity.ReservationStatusFailed)
 		l.Logger.Infof("failed compensation done: orderId=%s, spid=%d, userId=%d, quantity=%d, stock=%d, reason=%s",
 			in.OrderId, in.SeckillProductId, in.UserId, in.Quantity, stock, in.Reason)
 		return &seckill.CompensateFailedOrderResponse{
@@ -70,6 +73,7 @@ func (l *CompensateFailedOrderLogic) CompensateFailedOrder(in *seckill.Compensat
 			Result:  "compensated",
 		}, nil
 	case redis.CompensateResultAlreadyFailed:
+		l.releaseReservationFact(in.OrderId, in.Reason, entity.ReservationStatusFailed)
 		return &seckill.CompensateFailedOrderResponse{
 			Success: true,
 			Message: "订单已是 failed，幂等跳过",
@@ -93,5 +97,20 @@ func (l *CompensateFailedOrderLogic) CompensateFailedOrder(in *seckill.Compensat
 			Message: "订单状态非法，拒绝补偿",
 			Result:  "invalid_status",
 		}, nil
+	}
+}
+
+func (l *CompensateFailedOrderLogic) releaseReservationFact(orderID, reason string, targetStatus int32) {
+	if l.svcCtx.ReservationLedger == nil {
+		return
+	}
+	_, err := l.svcCtx.ReservationLedger.ReleaseReservation(l.ctx, &model.ReleaseReservationInput{
+		OrderID:      orderID,
+		Reason:       reason,
+		TargetStatus: targetStatus,
+		Operator:     "system",
+	})
+	if err != nil && err != model.ErrNotFound {
+		l.Logger.Errorf("release reservation fact failed: orderId=%s, err=%v", orderID, err)
 	}
 }

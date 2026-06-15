@@ -7,8 +7,11 @@ package server
 import (
 	"context"
 
+	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
 	"seckill-mall/seckill-service/internal/logic"
+	"seckill-mall/seckill-service/internal/model"
+	"seckill-mall/seckill-service/internal/model/entity"
 	"seckill-mall/seckill-service/internal/svc"
 )
 
@@ -55,23 +58,97 @@ func (s *SeckillServiceServer) CompensateFailedOrder(ctx context.Context, in *se
 
 // 查询预占信息
 func (s *SeckillServiceServer) GetReservation(ctx context.Context, in *seckill.GetReservationRequest) (*seckill.ReservationInfo, error) {
-	return &seckill.ReservationInfo{
-		ReservationId: in.ReservationId,
-		OrderId:       in.OrderId,
-		Status:        0,
-	}, nil
+	if s.svcCtx.ReservationLedger == nil {
+		return &seckill.ReservationInfo{
+			ReservationId: in.ReservationId,
+			OrderId:       in.OrderId,
+		}, nil
+	}
+	reservation, err := s.svcCtx.ReservationLedger.GetReservation(ctx, in.ReservationId, in.OrderId)
+	if err != nil {
+		if err == model.ErrNotFound {
+			return &seckill.ReservationInfo{
+				ReservationId: in.ReservationId,
+				OrderId:       in.OrderId,
+			}, nil
+		}
+		return nil, err
+	}
+	return reservationToProto(reservation), nil
 }
 
 // 释放预占
 func (s *SeckillServiceServer) ReleaseReservation(ctx context.Context, in *seckill.ReleaseReservationRequest) (*seckill.ReleaseReservationResponse, error) {
+	if s.svcCtx.ReservationLedger == nil {
+		return &seckill.ReleaseReservationResponse{
+			Success: false,
+			Message: "reservation ledger 未初始化",
+		}, nil
+	}
+	reservation, err := s.svcCtx.ReservationLedger.ReleaseReservation(ctx, &model.ReleaseReservationInput{
+		ReservationID: in.ReservationId,
+		OrderID:       in.OrderId,
+		Reason:        in.Reason,
+		TargetStatus:  entity.ReservationStatusReleased,
+		Operator:      "system",
+	})
+	if err != nil {
+		if err == model.ErrNotFound {
+			return &seckill.ReleaseReservationResponse{
+				Success: false,
+				Message: "预占不存在",
+			}, nil
+		}
+		return nil, err
+	}
 	return &seckill.ReleaseReservationResponse{
 		Success: true,
-		Message: "预占释放接口已预留，后续在 Reservation 账本落地后接入",
-		Reservation: &seckill.ReservationInfo{
-			ReservationId: in.ReservationId,
-			OrderId:       in.OrderId,
-			Reason:        in.Reason,
-			Status:        0,
-		},
+		Message: "预占释放成功",
+		Reservation: reservationToProto(reservation),
 	}, nil
+}
+
+func reservationToProto(reservation *entity.SeckillReservation) *seckill.ReservationInfo {
+	if reservation == nil {
+		return &seckill.ReservationInfo{}
+	}
+	return &seckill.ReservationInfo{
+		ReservationId: reservation.ReservationId,
+		OrderId:       reservation.OrderId,
+		UserId:        reservation.UserId,
+		SeckillProductId: reservation.SeckillProductId,
+		ProductId:     reservation.ProductId,
+		Quantity:      int64(reservation.Quantity),
+		Amount:        reservation.Amount,
+		Status:        toProtoReservationStatus(reservation.Status),
+		Reason:        reservation.Reason,
+		ExpireAt:      reservation.ExpireAt,
+		CreatedAt:     reservation.CreatedAt,
+		UpdatedAt:     reservation.UpdatedAt,
+	}
+}
+
+func toProtoReservationStatus(status int32) commonpb.ReservationStatus {
+	switch status {
+	case entity.ReservationStatusReserved:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	case entity.ReservationStatusOrderCreating:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATING
+	case entity.ReservationStatusOrderCreated:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATED
+	case entity.ReservationStatusPaying:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_PAYING
+	case entity.ReservationStatusPaid:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_PAID
+	case entity.ReservationStatusConsumed:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED
+	case entity.ReservationStatusReleased:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RELEASED
+	case entity.ReservationStatusExpired:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_EXPIRED
+	case entity.ReservationStatusFailed:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_FAILED
+	default:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	}
 }

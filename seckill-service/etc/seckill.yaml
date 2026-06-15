@@ -29,6 +29,9 @@ Prometheus:
   Port: 9183
   Path: /metrics
 
+MySQL:
+  DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
+
 Redis:
   Host: localhost:6379
   Key: seckill.rpc.auth

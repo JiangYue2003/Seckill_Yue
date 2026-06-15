@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"seckill-mall/seckill-service/internal/config"
+	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/metrics"
 	"seckill-mall/seckill-service/internal/mq"
 	"seckill-mall/seckill-service/internal/redis"
@@ -19,6 +20,8 @@ type ServiceContext struct {
 	Config           config.Config
 	Redis            *redis.SeckillRedis
 	AsyncProducer    *mq.AsyncProducer
+	OrderProducer    OrderProducer
+	ReservationLedger model.ReservationLedger
 	ProductMetaCache *ProductMetaCache
 	ProductFilter    *ProductIDFilter
 	QuotaRefillGate  *QuotaRefillGate
@@ -28,6 +31,11 @@ type ServiceContext struct {
 	bgCancel context.CancelFunc
 	bgWg     sync.WaitGroup
 	stopOnce sync.Once
+}
+
+type OrderProducer interface {
+	SendDelayOrder(ctx context.Context, msg *mq.SeckillOrderMessage) error
+	SendAsync(ctx context.Context, msg *mq.SeckillOrderMessage) error
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -73,6 +81,11 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	)
 
 	instanceID := buildInstanceID()
+	reservationLedger, ledgerErr := model.NewReservationLedger(c)
+	if ledgerErr != nil {
+		logx.Errorf("failed to initialize reservation ledger: %v", ledgerErr)
+		panic(ledgerErr)
+	}
 	productMetaCache := NewProductMetaCache(
 		c.ProductMetaCache.Enabled,
 		redisClient,
@@ -90,6 +103,8 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Config:           c,
 		Redis:            redisClient,
 		AsyncProducer:    asyncProducer,
+		OrderProducer:    asyncProducer,
+		ReservationLedger: reservationLedger,
 		ProductMetaCache: productMetaCache,
 		ProductFilter:    productFilter,
 		QuotaRefillGate:  NewQuotaRefillGate(),
