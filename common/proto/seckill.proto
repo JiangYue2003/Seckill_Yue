@@ -4,6 +4,8 @@ package seckill;
 
 option go_package = "seckill-mall/common/seckill";
 
+import "proto/common.proto";
+
 // ============ 秒杀服务 (核心高并发节点) ============
 // Seckill-Service 职责边界：
 // 1. 只操作 Redis 和 RabbitMQ，绝对禁止直接连接 MySQL
@@ -23,6 +25,8 @@ message SeckillResponse {
     string code = 2;               // 结果码: SUCCESS, SOLD_OUT, ALREADY_PURCHASED, SECKILL_NOT_STARTED, SECKILL_ENDED
     string message = 3;           // 结果描述
     string order_id = 4;          // 订单号（仅成功时返回）
+    string reservation_id = 5;    // 预占号
+    common.ReservationStatus reservation_status = 6;
 }
 
 // 秒杀状态查询
@@ -36,6 +40,10 @@ message SeckillStatusResponse {
     string order_id = 2;          // 订单号
     int64 product_id = 3;
     int64 quantity = 4;
+    string reservation_id = 5;
+    common.ReservationStatus reservation_status = 6;
+    common.OrderLifecycleStatus order_status = 7;
+    common.PaymentStatus payment_status = 8;
 }
 
 // 秒杀结果查询
@@ -52,6 +60,43 @@ message SeckillResultResponse {
     int64 amount = 6;              // 实付金额(分)
     string status = 7;             // order_status=订单状态
     string message = 8;
+    string reservation_id = 9;
+    common.ReservationStatus reservation_status = 10;
+    common.OrderLifecycleStatus order_status = 11;
+    common.PaymentStatus payment_status = 12;
+}
+
+// Reservation 信息
+message ReservationInfo {
+    string reservation_id = 1;
+    string order_id = 2;
+    int64 user_id = 3;
+    int64 seckill_product_id = 4;
+    int64 product_id = 5;
+    int64 quantity = 6;
+    int64 amount = 7;
+    common.ReservationStatus status = 8;
+    string reason = 9;
+    int64 expire_at = 10;
+    int64 created_at = 11;
+    int64 updated_at = 12;
+}
+
+message GetReservationRequest {
+    string reservation_id = 1;
+    string order_id = 2;
+}
+
+message ReleaseReservationRequest {
+    string reservation_id = 1;
+    string order_id = 2;
+    string reason = 3;
+}
+
+message ReleaseReservationResponse {
+    bool success = 1;
+    string message = 2;
+    ReservationInfo reservation = 3;
 }
 
 // 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
@@ -98,4 +143,10 @@ service SeckillService {
 
     // 超时失败补偿（Order-Service 内部调用）
     rpc CompensateFailedOrder(CompensateFailedOrderRequest) returns (CompensateFailedOrderResponse);
+
+    // 查询预占信息
+    rpc GetReservation(GetReservationRequest) returns (ReservationInfo);
+
+    // 释放预占
+    rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
 }

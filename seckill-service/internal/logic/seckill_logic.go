@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
 	"seckill-mall/common/utils"
 	"seckill-mall/seckill-service/internal/metrics"
@@ -322,10 +323,12 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		resultLabel = "success"
 
 		return &seckill.SeckillResponse{
-			Success: true,
-			Code:    SeckillCodeSuccess,
-			Message: "抢购成功，订单正在处理中",
-			OrderId: orderId,
+			Success:           true,
+			Code:              SeckillCodeSuccess,
+			Message:           "抢购成功，订单正在处理中",
+			OrderId:           orderId,
+			ReservationId:     orderId,
+			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED,
 		}, nil
 
 	default:

@@ -52,3 +52,26 @@ func (s *SeckillServiceServer) CompensateFailedOrder(ctx context.Context, in *se
 	l := logic.NewCompensateFailedOrderLogic(ctx, s.svcCtx)
 	return l.CompensateFailedOrder(in)
 }
+
+// 查询预占信息
+func (s *SeckillServiceServer) GetReservation(ctx context.Context, in *seckill.GetReservationRequest) (*seckill.ReservationInfo, error) {
+	return &seckill.ReservationInfo{
+		ReservationId: in.ReservationId,
+		OrderId:       in.OrderId,
+		Status:        0,
+	}, nil
+}
+
+// 释放预占
+func (s *SeckillServiceServer) ReleaseReservation(ctx context.Context, in *seckill.ReleaseReservationRequest) (*seckill.ReleaseReservationResponse, error) {
+	return &seckill.ReleaseReservationResponse{
+		Success: true,
+		Message: "预占释放接口已预留，后续在 Reservation 账本落地后接入",
+		Reservation: &seckill.ReservationInfo{
+			ReservationId: in.ReservationId,
+			OrderId:       in.OrderId,
+			Reason:        in.Reason,
+			Status:        0,
+		},
+	}, nil
+}

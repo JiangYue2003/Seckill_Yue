@@ -48,21 +48,7 @@ func (l *ListUserOrdersLogic) ListUserOrders(in *order.ListUserOrdersRequest) (*
 	// 转换响应
 	var orderInfos []*order.OrderInfo
 	for _, o := range orders {
-		orderInfos = append(orderInfos, &order.OrderInfo{
-			OrderId:      o.OrderId,
-			UserId:       o.UserId,
-			ProductId:    o.ProductId,
-			ProductName:  o.ProductName,
-			Quantity:     int64(o.Quantity),
-			Amount:       o.Amount,
-			SeckillPrice: o.SeckillPrice,
-			OrderType:    o.OrderType,
-			Status:       o.Status,
-			PaymentId:    o.PaymentId,
-			PaidAt:       o.PaidAt,
-			CreatedAt:    o.CreatedAt,
-			UpdatedAt:    o.UpdatedAt,
-		})
+		orderInfos = append(orderInfos, buildOrderInfo(o))
 	}
 
 	return &order.ListUserOrdersResponse{

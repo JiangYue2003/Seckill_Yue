@@ -54,6 +54,37 @@ func (s *OrderServiceServer) PayOrder(ctx context.Context, in *order.PayOrderReq
 	return l.PayOrder(in)
 }
 
+// 创建支付单
+func (s *OrderServiceServer) CreatePayment(ctx context.Context, in *order.CreatePaymentRequest) (*order.CreatePaymentResponse, error) {
+	return &order.CreatePaymentResponse{
+		Success: true,
+		Message: "支付单接口已预留，后续在 Phase D 落地支付子域",
+		Payment: &order.PaymentInfo{
+			OrderId:   in.OrderId,
+			Channel:   in.Channel,
+			RequestId: in.RequestId,
+			Status:    commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
+		},
+	}, nil
+}
+
+// 查询支付单
+func (s *OrderServiceServer) GetPayment(ctx context.Context, in *order.GetPaymentRequest) (*order.PaymentInfo, error) {
+	return &order.PaymentInfo{
+		PaymentId: in.PaymentId,
+		OrderId:   in.OrderId,
+		Status:    commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
+	}, nil
+}
+
+// 处理支付回调
+func (s *OrderServiceServer) HandlePaymentCallback(ctx context.Context, in *order.HandlePaymentCallbackRequest) (*commonpb.BoolResponse, error) {
+	return &commonpb.BoolResponse{
+		Success: true,
+		Message: "支付回调接口已预留，后续在 Phase D 落地支付审计链路",
+	}, nil
+}
+
 // 退款
 func (s *OrderServiceServer) RefundOrder(ctx context.Context, in *order.RefundOrderRequest) (*commonpb.BoolResponse, error) {
 	l := logic.NewRefundOrderLogic(ctx, s.svcCtx)

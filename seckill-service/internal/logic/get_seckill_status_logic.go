@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
@@ -44,7 +45,9 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 	// ========== 参数校验 ==========
 	if in.UserId <= 0 || in.SeckillProductId <= 0 {
 		return &seckill.SeckillStatusResponse{
-			Status: OrderStatusFailed,
+			Status:        OrderStatusFailed,
+			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED,
+			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
 		}, nil
 	}
 
@@ -66,12 +69,16 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 
 	if startTime > 0 && now < startTime {
 		return &seckill.SeckillStatusResponse{
-			Status: OrderStatusNotStart,
+			Status:        OrderStatusNotStart,
+			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_INIT,
+			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
 		}, nil
 	}
 	if endTime > 0 && now > endTime {
 		return &seckill.SeckillStatusResponse{
-			Status: OrderStatusEnded,
+			Status:        OrderStatusEnded,
+			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_EXPIRED,
+			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_CLOSED,
 		}, nil
 	}
 
@@ -94,20 +101,26 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 		if stockErr != nil {
 			l.Logger.Errorf("查询库存失败: seckillProductId=%d, err=%v", in.SeckillProductId, stockErr)
 			return &seckill.SeckillStatusResponse{
-				Status: OrderStatusPending,
+				Status:        OrderStatusPending,
+				OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED,
+				PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
 			}, nil
 		}
 
 		// 库存为0说明已售罄
 		if stock == 0 {
 			return &seckill.SeckillStatusResponse{
-				Status: OrderStatusSoldOut,
+				Status:        OrderStatusSoldOut,
+				OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED,
+				PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
 			}, nil
 		}
 
 		// 库存还有，用户还未购买，说明在排队中
 		return &seckill.SeckillStatusResponse{
-			Status: OrderStatusPending,
+			Status:        OrderStatusPending,
+			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED,
+			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
 		}, nil
 	}
 
@@ -118,13 +131,17 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 		l.Logger.Errorf("获取用户订单号失败: userId=%d, seckillProductId=%d, err=%v",
 			in.UserId, in.SeckillProductId, err)
 		return &seckill.SeckillStatusResponse{
-			Status: OrderStatusPending,
+			Status:        OrderStatusPending,
+			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED,
+			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
 		}, nil
 	}
 
 	if orderId == "" {
 		return &seckill.SeckillStatusResponse{
-			Status: OrderStatusFailed,
+			Status:        OrderStatusFailed,
+			OrderStatus:   commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED,
+			PaymentStatus: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
 		}, nil
 	}
 
@@ -133,8 +150,12 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 	if err != nil {
 		l.Logger.Errorf("获取订单信息失败: orderId=%s, err=%v", orderId, err)
 		return &seckill.SeckillStatusResponse{
-			Status:  OrderStatusSuccess,
-			OrderId: orderId,
+			Status:            OrderStatusSuccess,
+			OrderId:           orderId,
+			ReservationId:     orderId,
+			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATED,
+			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_ORDER_CREATED,
+			PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
 		}, nil
 	}
 
@@ -142,23 +163,35 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 	switch orderInfo.Status {
 	case OrderStatusSuccess:
 		return &seckill.SeckillStatusResponse{
-			Status:    OrderStatusSuccess,
-			OrderId:   orderId,
-			ProductId: orderInfo.ProductId,
-			Quantity:  orderInfo.Quantity,
+			Status:            OrderStatusSuccess,
+			OrderId:           orderId,
+			ProductId:         orderInfo.ProductId,
+			Quantity:          orderInfo.Quantity,
+			ReservationId:     orderId,
+			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED,
+			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID,
+			PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS,
 		}, nil
 	case OrderStatusFailed:
 		return &seckill.SeckillStatusResponse{
-			Status:  OrderStatusFailed,
-			OrderId: orderId,
+			Status:            OrderStatusFailed,
+			OrderId:           orderId,
+			ReservationId:     orderId,
+			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_FAILED,
+			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED,
+			PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_FAILED,
 		}, nil
 	default:
 		// pending 或其他状态，说明订单处理中
 		return &seckill.SeckillStatusResponse{
-			Status:    OrderStatusPending,
-			OrderId:   orderId,
-			ProductId: orderInfo.ProductId,
-			Quantity:  orderInfo.Quantity,
+			Status:            OrderStatusPending,
+			OrderId:           orderId,
+			ProductId:         orderInfo.ProductId,
+			Quantity:          orderInfo.Quantity,
+			ReservationId:     orderId,
+			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED,
+			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED,
+			PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
 		}, nil
 	}
 }

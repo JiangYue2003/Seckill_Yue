@@ -55,6 +55,10 @@ message OrderInfo {
     int64 paid_at = 11;            // 支付时间
     int64 created_at = 12;
     int64 updated_at = 13;
+    string reservation_id = 14;    // 预占号
+    common.ReservationStatus reservation_status = 15;
+    common.PaymentStatus payment_status = 16;
+    int64 expired_at = 17;
 }
 
 // 创建普通订单请求
@@ -92,7 +96,55 @@ message CancelOrderRequest {
 // 支付订单请求
 message PayOrderRequest {
     string order_id = 1;
-    string payment_id = 2;        // 第三方支付流水号
+    string payment_id = 2;        // 兼容字段，后续由服务端生成支付单号
+    string channel = 3;           // 支付渠道，如 mock_alipay
+    string request_id = 4;        // 请求幂等号
+}
+
+// 支付单信息
+message PaymentInfo {
+    string payment_id = 1;
+    string order_id = 2;
+    int64 user_id = 3;
+    int64 amount = 4;
+    string channel = 5;
+    common.PaymentStatus status = 6;
+    string third_party_trade_no = 7;
+    string request_id = 8;
+    int64 paid_at = 9;
+    int64 closed_at = 10;
+    int64 created_at = 11;
+    int64 updated_at = 12;
+}
+
+// 创建支付单请求
+message CreatePaymentRequest {
+    string order_id = 1;
+    string channel = 2;
+    string request_id = 3;
+}
+
+// 创建支付单响应
+message CreatePaymentResponse {
+    bool success = 1;
+    string message = 2;
+    PaymentInfo payment = 3;
+}
+
+// 查询支付单请求
+message GetPaymentRequest {
+    string payment_id = 1;
+    string order_id = 2;
+}
+
+// 处理支付回调请求
+message HandlePaymentCallbackRequest {
+    string payment_id = 1;
+    string order_id = 2;
+    string callback_id = 3;
+    string channel = 4;
+    string third_party_trade_no = 5;
+    string raw_payload = 6;
 }
 
 // 退款请求
@@ -119,6 +171,15 @@ service OrderService {
 
     // 支付订单
     rpc PayOrder(PayOrderRequest) returns (common.BoolResponse);
+
+    // 创建支付单
+    rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
+
+    // 查询支付单
+    rpc GetPayment(GetPaymentRequest) returns (PaymentInfo);
+
+    // 处理支付回调
+    rpc HandlePaymentCallback(HandlePaymentCallbackRequest) returns (common.BoolResponse);
 
     // 退款
     rpc RefundOrder(RefundOrderRequest) returns (common.BoolResponse);

@@ -42,19 +42,5 @@ func (l *GetOrderLogic) GetOrder(in *order.GetOrderRequest) (*order.OrderInfo, e
 		return nil, errors.New("系统错误，请稍后重试")
 	}
 
-	return &order.OrderInfo{
-		OrderId:      existingOrder.OrderId,
-		UserId:       existingOrder.UserId,
-		ProductId:    existingOrder.ProductId,
-		ProductName:  existingOrder.ProductName,
-		Quantity:     int64(existingOrder.Quantity),
-		Amount:       existingOrder.Amount,
-		SeckillPrice: existingOrder.SeckillPrice,
-		OrderType:    existingOrder.OrderType,
-		Status:       existingOrder.Status,
-		PaymentId:    existingOrder.PaymentId,
-		PaidAt:       existingOrder.PaidAt,
-		CreatedAt:    existingOrder.CreatedAt,
-		UpdatedAt:    existingOrder.UpdatedAt,
-	}, nil
+	return buildOrderInfo(existingOrder), nil
 }

@@ -32,9 +32,6 @@ func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*commonpb.BoolRespo
 	if in.OrderId == "" {
 		return nil, errors.New("订单号不能为空")
 	}
-	if in.PaymentId == "" {
-		return nil, errors.New("支付流水号不能为空")
-	}
 
 	// 查询订单
 	existingOrder, err := l.svcCtx.OrderModel.FindOneByOrderId(l.ctx, in.OrderId)
@@ -51,8 +48,10 @@ func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*commonpb.BoolRespo
 		return nil, errors.New("订单状态不正确，无法支付")
 	}
 
+	paymentId := buildCompatiblePaymentID(in)
+
 	// 支付订单
-	if err := l.svcCtx.OrderModel.Pay(l.ctx, in.OrderId, in.PaymentId); err != nil {
+	if err := l.svcCtx.OrderModel.Pay(l.ctx, in.OrderId, paymentId); err != nil {
 		if errors.Is(err, model.ErrOrderCannotPay) {
 			return nil, errors.New("订单状态不正确，无法支付")
 		}
@@ -60,7 +59,7 @@ func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*commonpb.BoolRespo
 		return nil, errors.New("支付失败，请稍后重试")
 	}
 
-	l.Logger.Infof("订单支付成功: orderId=%s, paymentId=%s", in.OrderId, in.PaymentId)
+	l.Logger.Infof("订单支付成功: orderId=%s, paymentId=%s, channel=%s, requestId=%s", in.OrderId, paymentId, in.Channel, in.RequestId)
 
 	return &commonpb.BoolResponse{
 		Success: true,

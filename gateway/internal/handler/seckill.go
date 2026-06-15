@@ -82,10 +82,12 @@ func (h *SeckillHandler) Seckill(c *gin.Context) {
 	}
 
 	middleware.Success(c, gin.H{
-		"success": resp.Success,
-		"code":    resp.Code,
-		"message": resp.Message,
-		"orderId": resp.OrderId,
+		"success":           resp.Success,
+		"code":              resp.Code,
+		"message":           resp.Message,
+		"orderId":           resp.OrderId,
+		"reservationId":     resp.ReservationId,
+		"reservationStatus": resp.ReservationStatus.String(),
 	})
 }
 
@@ -118,10 +120,14 @@ func (h *SeckillHandler) GetSeckillStatus(c *gin.Context) {
 	}
 
 	middleware.Success(c, gin.H{
-		"status":    resp.Status,
-		"orderId":   resp.OrderId,
-		"productId": resp.ProductId,
-		"quantity":  resp.Quantity,
+		"status":            resp.Status,
+		"orderId":           resp.OrderId,
+		"productId":         resp.ProductId,
+		"quantity":          resp.Quantity,
+		"reservationId":     resp.ReservationId,
+		"reservationStatus": resp.ReservationStatus.String(),
+		"orderStatus":       resp.OrderStatus.String(),
+		"paymentStatus":     resp.PaymentStatus.String(),
 	})
 }
 
@@ -145,13 +151,17 @@ func (h *SeckillHandler) GetSeckillResult(c *gin.Context) {
 	}
 
 	middleware.Success(c, gin.H{
-		"success":     resp.Success,
-		"orderId":     resp.OrderId,
-		"productId":   resp.ProductId,
-		"productName": resp.ProductName,
-		"quantity":    resp.Quantity,
-		"amount":      resp.Amount,
-		"status":      resp.Status,
-		"message":     resp.Message,
+		"success":           resp.Success,
+		"orderId":           resp.OrderId,
+		"productId":         resp.ProductId,
+		"productName":       resp.ProductName,
+		"quantity":          resp.Quantity,
+		"amount":            resp.Amount,
+		"status":            resp.Status,
+		"message":           resp.Message,
+		"reservationId":     resp.ReservationId,
+		"reservationStatus": resp.ReservationStatus.String(),
+		"orderStatus":       resp.OrderStatus.String(),
+		"paymentStatus":     resp.PaymentStatus.String(),
 	})
 }

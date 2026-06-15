@@ -21,6 +21,260 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Reservation 状态枚举
+type ReservationStatus int32
+
+const (
+	ReservationStatus_RESERVATION_STATUS_RESERVED       ReservationStatus = 0
+	ReservationStatus_RESERVATION_STATUS_ORDER_CREATING ReservationStatus = 1
+	ReservationStatus_RESERVATION_STATUS_ORDER_CREATED  ReservationStatus = 2
+	ReservationStatus_RESERVATION_STATUS_PAYING         ReservationStatus = 3
+	ReservationStatus_RESERVATION_STATUS_PAID           ReservationStatus = 4
+	ReservationStatus_RESERVATION_STATUS_CONSUMED       ReservationStatus = 5
+	ReservationStatus_RESERVATION_STATUS_RELEASED       ReservationStatus = 6
+	ReservationStatus_RESERVATION_STATUS_EXPIRED        ReservationStatus = 7
+	ReservationStatus_RESERVATION_STATUS_FAILED         ReservationStatus = 8
+)
+
+// Enum value maps for ReservationStatus.
+var (
+	ReservationStatus_name = map[int32]string{
+		0: "RESERVATION_STATUS_RESERVED",
+		1: "RESERVATION_STATUS_ORDER_CREATING",
+		2: "RESERVATION_STATUS_ORDER_CREATED",
+		3: "RESERVATION_STATUS_PAYING",
+		4: "RESERVATION_STATUS_PAID",
+		5: "RESERVATION_STATUS_CONSUMED",
+		6: "RESERVATION_STATUS_RELEASED",
+		7: "RESERVATION_STATUS_EXPIRED",
+		8: "RESERVATION_STATUS_FAILED",
+	}
+	ReservationStatus_value = map[string]int32{
+		"RESERVATION_STATUS_RESERVED":       0,
+		"RESERVATION_STATUS_ORDER_CREATING": 1,
+		"RESERVATION_STATUS_ORDER_CREATED":  2,
+		"RESERVATION_STATUS_PAYING":         3,
+		"RESERVATION_STATUS_PAID":           4,
+		"RESERVATION_STATUS_CONSUMED":       5,
+		"RESERVATION_STATUS_RELEASED":       6,
+		"RESERVATION_STATUS_EXPIRED":        7,
+		"RESERVATION_STATUS_FAILED":         8,
+	}
+)
+
+func (x ReservationStatus) Enum() *ReservationStatus {
+	p := new(ReservationStatus)
+	*p = x
+	return p
+}
+
+func (x ReservationStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ReservationStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_common_proto_enumTypes[0].Descriptor()
+}
+
+func (ReservationStatus) Type() protoreflect.EnumType {
+	return &file_proto_common_proto_enumTypes[0]
+}
+
+func (x ReservationStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ReservationStatus.Descriptor instead.
+func (ReservationStatus) EnumDescriptor() ([]byte, []int) {
+	return file_proto_common_proto_rawDescGZIP(), []int{0}
+}
+
+// 订单生命周期状态枚举
+type OrderLifecycleStatus int32
+
+const (
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_INIT          OrderLifecycleStatus = 0
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED      OrderLifecycleStatus = 1
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_ORDER_CREATED OrderLifecycleStatus = 2
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAYING        OrderLifecycleStatus = 3
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID          OrderLifecycleStatus = 4
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED     OrderLifecycleStatus = 5
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_CANCELLED     OrderLifecycleStatus = 6
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_EXPIRED       OrderLifecycleStatus = 7
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED        OrderLifecycleStatus = 8
+	OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_REFUNDED      OrderLifecycleStatus = 9
+)
+
+// Enum value maps for OrderLifecycleStatus.
+var (
+	OrderLifecycleStatus_name = map[int32]string{
+		0: "ORDER_LIFECYCLE_STATUS_INIT",
+		1: "ORDER_LIFECYCLE_STATUS_RESERVED",
+		2: "ORDER_LIFECYCLE_STATUS_ORDER_CREATED",
+		3: "ORDER_LIFECYCLE_STATUS_PAYING",
+		4: "ORDER_LIFECYCLE_STATUS_PAID",
+		5: "ORDER_LIFECYCLE_STATUS_COMPLETED",
+		6: "ORDER_LIFECYCLE_STATUS_CANCELLED",
+		7: "ORDER_LIFECYCLE_STATUS_EXPIRED",
+		8: "ORDER_LIFECYCLE_STATUS_FAILED",
+		9: "ORDER_LIFECYCLE_STATUS_REFUNDED",
+	}
+	OrderLifecycleStatus_value = map[string]int32{
+		"ORDER_LIFECYCLE_STATUS_INIT":          0,
+		"ORDER_LIFECYCLE_STATUS_RESERVED":      1,
+		"ORDER_LIFECYCLE_STATUS_ORDER_CREATED": 2,
+		"ORDER_LIFECYCLE_STATUS_PAYING":        3,
+		"ORDER_LIFECYCLE_STATUS_PAID":          4,
+		"ORDER_LIFECYCLE_STATUS_COMPLETED":     5,
+		"ORDER_LIFECYCLE_STATUS_CANCELLED":     6,
+		"ORDER_LIFECYCLE_STATUS_EXPIRED":       7,
+		"ORDER_LIFECYCLE_STATUS_FAILED":        8,
+		"ORDER_LIFECYCLE_STATUS_REFUNDED":      9,
+	}
+)
+
+func (x OrderLifecycleStatus) Enum() *OrderLifecycleStatus {
+	p := new(OrderLifecycleStatus)
+	*p = x
+	return p
+}
+
+func (x OrderLifecycleStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OrderLifecycleStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_common_proto_enumTypes[1].Descriptor()
+}
+
+func (OrderLifecycleStatus) Type() protoreflect.EnumType {
+	return &file_proto_common_proto_enumTypes[1]
+}
+
+func (x OrderLifecycleStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OrderLifecycleStatus.Descriptor instead.
+func (OrderLifecycleStatus) EnumDescriptor() ([]byte, []int) {
+	return file_proto_common_proto_rawDescGZIP(), []int{1}
+}
+
+// 支付状态枚举
+type PaymentStatus int32
+
+const (
+	PaymentStatus_PAYMENT_STATUS_INIT      PaymentStatus = 0
+	PaymentStatus_PAYMENT_STATUS_REQUESTED PaymentStatus = 1
+	PaymentStatus_PAYMENT_STATUS_SUCCESS   PaymentStatus = 2
+	PaymentStatus_PAYMENT_STATUS_FAILED    PaymentStatus = 3
+	PaymentStatus_PAYMENT_STATUS_CLOSED    PaymentStatus = 4
+	PaymentStatus_PAYMENT_STATUS_REFUNDED  PaymentStatus = 5
+)
+
+// Enum value maps for PaymentStatus.
+var (
+	PaymentStatus_name = map[int32]string{
+		0: "PAYMENT_STATUS_INIT",
+		1: "PAYMENT_STATUS_REQUESTED",
+		2: "PAYMENT_STATUS_SUCCESS",
+		3: "PAYMENT_STATUS_FAILED",
+		4: "PAYMENT_STATUS_CLOSED",
+		5: "PAYMENT_STATUS_REFUNDED",
+	}
+	PaymentStatus_value = map[string]int32{
+		"PAYMENT_STATUS_INIT":      0,
+		"PAYMENT_STATUS_REQUESTED": 1,
+		"PAYMENT_STATUS_SUCCESS":   2,
+		"PAYMENT_STATUS_FAILED":    3,
+		"PAYMENT_STATUS_CLOSED":    4,
+		"PAYMENT_STATUS_REFUNDED":  5,
+	}
+)
+
+func (x PaymentStatus) Enum() *PaymentStatus {
+	p := new(PaymentStatus)
+	*p = x
+	return p
+}
+
+func (x PaymentStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PaymentStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_common_proto_enumTypes[2].Descriptor()
+}
+
+func (PaymentStatus) Type() protoreflect.EnumType {
+	return &file_proto_common_proto_enumTypes[2]
+}
+
+func (x PaymentStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PaymentStatus.Descriptor instead.
+func (PaymentStatus) EnumDescriptor() ([]byte, []int) {
+	return file_proto_common_proto_rawDescGZIP(), []int{2}
+}
+
+// Outbox 状态枚举
+type OutboxStatus int32
+
+const (
+	OutboxStatus_OUTBOX_STATUS_NEW            OutboxStatus = 0
+	OutboxStatus_OUTBOX_STATUS_PUBLISHED      OutboxStatus = 1
+	OutboxStatus_OUTBOX_STATUS_CONSUMED_ACKED OutboxStatus = 2
+	OutboxStatus_OUTBOX_STATUS_FAILED         OutboxStatus = 3
+	OutboxStatus_OUTBOX_STATUS_DEAD           OutboxStatus = 4
+)
+
+// Enum value maps for OutboxStatus.
+var (
+	OutboxStatus_name = map[int32]string{
+		0: "OUTBOX_STATUS_NEW",
+		1: "OUTBOX_STATUS_PUBLISHED",
+		2: "OUTBOX_STATUS_CONSUMED_ACKED",
+		3: "OUTBOX_STATUS_FAILED",
+		4: "OUTBOX_STATUS_DEAD",
+	}
+	OutboxStatus_value = map[string]int32{
+		"OUTBOX_STATUS_NEW":            0,
+		"OUTBOX_STATUS_PUBLISHED":      1,
+		"OUTBOX_STATUS_CONSUMED_ACKED": 2,
+		"OUTBOX_STATUS_FAILED":         3,
+		"OUTBOX_STATUS_DEAD":           4,
+	}
+)
+
+func (x OutboxStatus) Enum() *OutboxStatus {
+	p := new(OutboxStatus)
+	*p = x
+	return p
+}
+
+func (x OutboxStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OutboxStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_proto_common_proto_enumTypes[3].Descriptor()
+}
+
+func (OutboxStatus) Type() protoreflect.EnumType {
+	return &file_proto_common_proto_enumTypes[3]
+}
+
+func (x OutboxStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OutboxStatus.Descriptor instead.
+func (OutboxStatus) EnumDescriptor() ([]byte, []int) {
+	return file_proto_common_proto_rawDescGZIP(), []int{3}
+}
+
 // 通用基础响应（用于无返回数据的 RPC）
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -334,7 +588,41 @@ const file_proto_common_proto_rawDesc = "" +
 	"\fPageResponse\x12\x14\n" +
 	"\x05total\x18\x01 \x01(\x03R\x05total\x12\x12\n" +
 	"\x04page\x18\x02 \x01(\x03R\x04page\x12\x1b\n" +
-	"\tpage_size\x18\x03 \x01(\x03R\bpageSizeB\x1cZ\x1aseckill-mall/common/commonb\x06proto3"
+	"\tpage_size\x18\x03 \x01(\x03R\bpageSize*\xbe\x02\n" +
+	"\x11ReservationStatus\x12\x1f\n" +
+	"\x1bRESERVATION_STATUS_RESERVED\x10\x00\x12%\n" +
+	"!RESERVATION_STATUS_ORDER_CREATING\x10\x01\x12$\n" +
+	" RESERVATION_STATUS_ORDER_CREATED\x10\x02\x12\x1d\n" +
+	"\x19RESERVATION_STATUS_PAYING\x10\x03\x12\x1b\n" +
+	"\x17RESERVATION_STATUS_PAID\x10\x04\x12\x1f\n" +
+	"\x1bRESERVATION_STATUS_CONSUMED\x10\x05\x12\x1f\n" +
+	"\x1bRESERVATION_STATUS_RELEASED\x10\x06\x12\x1e\n" +
+	"\x1aRESERVATION_STATUS_EXPIRED\x10\a\x12\x1d\n" +
+	"\x19RESERVATION_STATUS_FAILED\x10\b*\x82\x03\n" +
+	"\x14OrderLifecycleStatus\x12\x1f\n" +
+	"\x1bORDER_LIFECYCLE_STATUS_INIT\x10\x00\x12#\n" +
+	"\x1fORDER_LIFECYCLE_STATUS_RESERVED\x10\x01\x12(\n" +
+	"$ORDER_LIFECYCLE_STATUS_ORDER_CREATED\x10\x02\x12!\n" +
+	"\x1dORDER_LIFECYCLE_STATUS_PAYING\x10\x03\x12\x1f\n" +
+	"\x1bORDER_LIFECYCLE_STATUS_PAID\x10\x04\x12$\n" +
+	" ORDER_LIFECYCLE_STATUS_COMPLETED\x10\x05\x12$\n" +
+	" ORDER_LIFECYCLE_STATUS_CANCELLED\x10\x06\x12\"\n" +
+	"\x1eORDER_LIFECYCLE_STATUS_EXPIRED\x10\a\x12!\n" +
+	"\x1dORDER_LIFECYCLE_STATUS_FAILED\x10\b\x12#\n" +
+	"\x1fORDER_LIFECYCLE_STATUS_REFUNDED\x10\t*\xb5\x01\n" +
+	"\rPaymentStatus\x12\x17\n" +
+	"\x13PAYMENT_STATUS_INIT\x10\x00\x12\x1c\n" +
+	"\x18PAYMENT_STATUS_REQUESTED\x10\x01\x12\x1a\n" +
+	"\x16PAYMENT_STATUS_SUCCESS\x10\x02\x12\x19\n" +
+	"\x15PAYMENT_STATUS_FAILED\x10\x03\x12\x19\n" +
+	"\x15PAYMENT_STATUS_CLOSED\x10\x04\x12\x1b\n" +
+	"\x17PAYMENT_STATUS_REFUNDED\x10\x05*\x96\x01\n" +
+	"\fOutboxStatus\x12\x15\n" +
+	"\x11OUTBOX_STATUS_NEW\x10\x00\x12\x1b\n" +
+	"\x17OUTBOX_STATUS_PUBLISHED\x10\x01\x12 \n" +
+	"\x1cOUTBOX_STATUS_CONSUMED_ACKED\x10\x02\x12\x18\n" +
+	"\x14OUTBOX_STATUS_FAILED\x10\x03\x12\x16\n" +
+	"\x12OUTBOX_STATUS_DEAD\x10\x04B\x1cZ\x1aseckill-mall/common/commonb\x06proto3"
 
 var (
 	file_proto_common_proto_rawDescOnce sync.Once
@@ -348,14 +636,19 @@ func file_proto_common_proto_rawDescGZIP() []byte {
 	return file_proto_common_proto_rawDescData
 }
 
+var file_proto_common_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
 var file_proto_common_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_proto_common_proto_goTypes = []any{
-	(*Empty)(nil),          // 0: common.Empty
-	(*BoolResponse)(nil),   // 1: common.BoolResponse
-	(*IdRequest)(nil),      // 2: common.IdRequest
-	(*BatchIdRequest)(nil), // 3: common.BatchIdRequest
-	(*PageRequest)(nil),    // 4: common.PageRequest
-	(*PageResponse)(nil),   // 5: common.PageResponse
+	(ReservationStatus)(0),    // 0: common.ReservationStatus
+	(OrderLifecycleStatus)(0), // 1: common.OrderLifecycleStatus
+	(PaymentStatus)(0),        // 2: common.PaymentStatus
+	(OutboxStatus)(0),         // 3: common.OutboxStatus
+	(*Empty)(nil),             // 4: common.Empty
+	(*BoolResponse)(nil),      // 5: common.BoolResponse
+	(*IdRequest)(nil),         // 6: common.IdRequest
+	(*BatchIdRequest)(nil),    // 7: common.BatchIdRequest
+	(*PageRequest)(nil),       // 8: common.PageRequest
+	(*PageResponse)(nil),      // 9: common.PageResponse
 }
 var file_proto_common_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for method output_type
@@ -375,13 +668,14 @@ func file_proto_common_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_common_proto_rawDesc), len(file_proto_common_proto_rawDesc)),
-			NumEnums:      0,
+			NumEnums:      4,
 			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_proto_common_proto_goTypes,
 		DependencyIndexes: file_proto_common_proto_depIdxs,
+		EnumInfos:         file_proto_common_proto_enumTypes,
 		MessageInfos:      file_proto_common_proto_msgTypes,
 	}.Build()
 	File_proto_common_proto = out.File

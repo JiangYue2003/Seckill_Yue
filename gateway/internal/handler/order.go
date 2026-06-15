@@ -49,19 +49,23 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	}
 
 	middleware.Success(c, gin.H{
-		"orderId":      resp.OrderId,
-		"userId":       resp.UserId,
-		"productId":    resp.ProductId,
-		"productName":  resp.ProductName,
-		"quantity":     resp.Quantity,
-		"amount":       resp.Amount,
-		"seckillPrice": resp.SeckillPrice,
-		"orderType":    resp.OrderType,
-		"status":       resp.Status,
-		"paymentId":    resp.PaymentId,
-		"paidAt":       resp.PaidAt,
-		"createdAt":    resp.CreatedAt,
-		"updatedAt":    resp.UpdatedAt,
+		"orderId":           resp.OrderId,
+		"userId":            resp.UserId,
+		"productId":         resp.ProductId,
+		"productName":       resp.ProductName,
+		"quantity":          resp.Quantity,
+		"amount":            resp.Amount,
+		"seckillPrice":      resp.SeckillPrice,
+		"orderType":         resp.OrderType,
+		"status":            resp.Status,
+		"paymentId":         resp.PaymentId,
+		"reservationId":     resp.ReservationId,
+		"reservationStatus": resp.ReservationStatus.String(),
+		"paymentStatus":     resp.PaymentStatus.String(),
+		"paidAt":            resp.PaidAt,
+		"expiredAt":         resp.ExpiredAt,
+		"createdAt":         resp.CreatedAt,
+		"updatedAt":         resp.UpdatedAt,
 	})
 }
 
@@ -96,14 +100,17 @@ func (h *OrderHandler) ListOrders(c *gin.Context) {
 	orders := make([]gin.H, 0, len(resp.Orders))
 	for _, o := range resp.Orders {
 		orders = append(orders, gin.H{
-			"orderId":     o.OrderId,
-			"productId":   o.ProductId,
-			"productName": o.ProductName,
-			"quantity":    o.Quantity,
-			"amount":      o.Amount,
-			"orderType":   o.OrderType,
-			"status":      o.Status,
-			"createdAt":   o.CreatedAt,
+			"orderId":           o.OrderId,
+			"productId":         o.ProductId,
+			"productName":       o.ProductName,
+			"quantity":          o.Quantity,
+			"amount":            o.Amount,
+			"orderType":         o.OrderType,
+			"status":            o.Status,
+			"reservationId":     o.ReservationId,
+			"reservationStatus": o.ReservationStatus.String(),
+			"paymentStatus":     o.PaymentStatus.String(),
+			"createdAt":         o.CreatedAt,
 		})
 	}
 
@@ -157,7 +164,9 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 // PayOrderRequest 支付订单请求
 type PayOrderRequest struct {
 	OrderId   string `json:"orderId" binding:"required"`
-	PaymentId string `json:"paymentId" binding:"required"`
+	Channel   string `json:"channel"`
+	RequestId string `json:"requestId"`
+	PaymentId string `json:"paymentId"`
 }
 
 // PayOrder 支付订单
@@ -181,6 +190,8 @@ func (h *OrderHandler) PayOrder(c *gin.Context) {
 
 	resp, err := h.orderSvc.PayOrder(ctx, &order.PayOrderRequest{
 		OrderId:   req.OrderId,
+		Channel:   req.Channel,
+		RequestId: req.RequestId,
 		PaymentId: req.PaymentId,
 	})
 	if err != nil {

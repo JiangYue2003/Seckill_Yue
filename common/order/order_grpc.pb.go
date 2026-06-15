@@ -20,12 +20,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	OrderService_CreateNormalOrder_FullMethodName = "/order.OrderService/CreateNormalOrder"
-	OrderService_GetOrder_FullMethodName          = "/order.OrderService/GetOrder"
-	OrderService_ListUserOrders_FullMethodName    = "/order.OrderService/ListUserOrders"
-	OrderService_CancelOrder_FullMethodName       = "/order.OrderService/CancelOrder"
-	OrderService_PayOrder_FullMethodName          = "/order.OrderService/PayOrder"
-	OrderService_RefundOrder_FullMethodName       = "/order.OrderService/RefundOrder"
+	OrderService_CreateNormalOrder_FullMethodName     = "/order.OrderService/CreateNormalOrder"
+	OrderService_GetOrder_FullMethodName              = "/order.OrderService/GetOrder"
+	OrderService_ListUserOrders_FullMethodName        = "/order.OrderService/ListUserOrders"
+	OrderService_CancelOrder_FullMethodName           = "/order.OrderService/CancelOrder"
+	OrderService_PayOrder_FullMethodName              = "/order.OrderService/PayOrder"
+	OrderService_CreatePayment_FullMethodName         = "/order.OrderService/CreatePayment"
+	OrderService_GetPayment_FullMethodName            = "/order.OrderService/GetPayment"
+	OrderService_HandlePaymentCallback_FullMethodName = "/order.OrderService/HandlePaymentCallback"
+	OrderService_RefundOrder_FullMethodName           = "/order.OrderService/RefundOrder"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -45,6 +48,12 @@ type OrderServiceClient interface {
 	CancelOrder(ctx context.Context, in *CancelOrderRequest, opts ...grpc.CallOption) (*common.BoolResponse, error)
 	// 支付订单
 	PayOrder(ctx context.Context, in *PayOrderRequest, opts ...grpc.CallOption) (*common.BoolResponse, error)
+	// 创建支付单
+	CreatePayment(ctx context.Context, in *CreatePaymentRequest, opts ...grpc.CallOption) (*CreatePaymentResponse, error)
+	// 查询支付单
+	GetPayment(ctx context.Context, in *GetPaymentRequest, opts ...grpc.CallOption) (*PaymentInfo, error)
+	// 处理支付回调
+	HandlePaymentCallback(ctx context.Context, in *HandlePaymentCallbackRequest, opts ...grpc.CallOption) (*common.BoolResponse, error)
 	// 退款
 	RefundOrder(ctx context.Context, in *RefundOrderRequest, opts ...grpc.CallOption) (*common.BoolResponse, error)
 }
@@ -107,6 +116,36 @@ func (c *orderServiceClient) PayOrder(ctx context.Context, in *PayOrderRequest, 
 	return out, nil
 }
 
+func (c *orderServiceClient) CreatePayment(ctx context.Context, in *CreatePaymentRequest, opts ...grpc.CallOption) (*CreatePaymentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreatePaymentResponse)
+	err := c.cc.Invoke(ctx, OrderService_CreatePayment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) GetPayment(ctx context.Context, in *GetPaymentRequest, opts ...grpc.CallOption) (*PaymentInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PaymentInfo)
+	err := c.cc.Invoke(ctx, OrderService_GetPayment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *orderServiceClient) HandlePaymentCallback(ctx context.Context, in *HandlePaymentCallbackRequest, opts ...grpc.CallOption) (*common.BoolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(common.BoolResponse)
+	err := c.cc.Invoke(ctx, OrderService_HandlePaymentCallback_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *orderServiceClient) RefundOrder(ctx context.Context, in *RefundOrderRequest, opts ...grpc.CallOption) (*common.BoolResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(common.BoolResponse)
@@ -134,6 +173,12 @@ type OrderServiceServer interface {
 	CancelOrder(context.Context, *CancelOrderRequest) (*common.BoolResponse, error)
 	// 支付订单
 	PayOrder(context.Context, *PayOrderRequest) (*common.BoolResponse, error)
+	// 创建支付单
+	CreatePayment(context.Context, *CreatePaymentRequest) (*CreatePaymentResponse, error)
+	// 查询支付单
+	GetPayment(context.Context, *GetPaymentRequest) (*PaymentInfo, error)
+	// 处理支付回调
+	HandlePaymentCallback(context.Context, *HandlePaymentCallbackRequest) (*common.BoolResponse, error)
 	// 退款
 	RefundOrder(context.Context, *RefundOrderRequest) (*common.BoolResponse, error)
 	mustEmbedUnimplementedOrderServiceServer()
@@ -160,6 +205,15 @@ func (UnimplementedOrderServiceServer) CancelOrder(context.Context, *CancelOrder
 }
 func (UnimplementedOrderServiceServer) PayOrder(context.Context, *PayOrderRequest) (*common.BoolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PayOrder not implemented")
+}
+func (UnimplementedOrderServiceServer) CreatePayment(context.Context, *CreatePaymentRequest) (*CreatePaymentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreatePayment not implemented")
+}
+func (UnimplementedOrderServiceServer) GetPayment(context.Context, *GetPaymentRequest) (*PaymentInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPayment not implemented")
+}
+func (UnimplementedOrderServiceServer) HandlePaymentCallback(context.Context, *HandlePaymentCallbackRequest) (*common.BoolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method HandlePaymentCallback not implemented")
 }
 func (UnimplementedOrderServiceServer) RefundOrder(context.Context, *RefundOrderRequest) (*common.BoolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RefundOrder not implemented")
@@ -275,6 +329,60 @@ func _OrderService_PayOrder_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _OrderService_CreatePayment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreatePaymentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).CreatePayment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_CreatePayment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).CreatePayment(ctx, req.(*CreatePaymentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_GetPayment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPaymentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).GetPayment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_GetPayment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).GetPayment(ctx, req.(*GetPaymentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OrderService_HandlePaymentCallback_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HandlePaymentCallbackRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).HandlePaymentCallback(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_HandlePaymentCallback_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).HandlePaymentCallback(ctx, req.(*HandlePaymentCallbackRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _OrderService_RefundOrder_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RefundOrderRequest)
 	if err := dec(in); err != nil {
@@ -319,6 +427,18 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PayOrder",
 			Handler:    _OrderService_PayOrder_Handler,
+		},
+		{
+			MethodName: "CreatePayment",
+			Handler:    _OrderService_CreatePayment_Handler,
+		},
+		{
+			MethodName: "GetPayment",
+			Handler:    _OrderService_GetPayment_Handler,
+		},
+		{
+			MethodName: "HandlePaymentCallback",
+			Handler:    _OrderService_HandlePaymentCallback_Handler,
 		},
 		{
 			MethodName: "RefundOrder",
