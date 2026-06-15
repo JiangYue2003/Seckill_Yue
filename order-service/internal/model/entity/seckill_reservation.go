@@ -20,3 +20,15 @@ type SeckillReservation struct {
 func (SeckillReservation) TableName() string {
 	return "seckill_reservations"
 }
+
+const (
+	ReservationStatusReserved      int32 = 0
+	ReservationStatusOrderCreating int32 = 1
+	ReservationStatusOrderCreated  int32 = 2
+	ReservationStatusPaying        int32 = 3
+	ReservationStatusPaid          int32 = 4
+	ReservationStatusConsumed      int32 = 5
+	ReservationStatusReleased      int32 = 6
+	ReservationStatusExpired       int32 = 7
+	ReservationStatusFailed        int32 = 8
+)

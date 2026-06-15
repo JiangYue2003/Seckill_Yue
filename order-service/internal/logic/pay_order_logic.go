@@ -7,6 +7,8 @@ import (
 
 	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/model"
+	"seckill-mall/order-service/internal/model/entity"
+	"seckill-mall/order-service/internal/payment"
 	"seckill-mall/order-service/internal/svc"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -44,22 +46,40 @@ func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*commonpb.BoolRespo
 	}
 
 	// 检查订单状态
-	if existingOrder.Status != 0 { // 非待支付状态不能支付
+	if existingOrder.PayStatus == entity.OrderPayStatusSuccess &&
+		(existingOrder.Status == entity.OrderStatusPaid || existingOrder.Status == entity.OrderStatusCompleted) {
+		return &commonpb.BoolResponse{
+			Success: true,
+			Message: "支付成功",
+		}, nil
+	}
+	if existingOrder.Status != entity.OrderStatusOrderCreated && existingOrder.Status != entity.OrderStatusPaying {
 		return nil, errors.New("订单状态不正确，无法支付")
 	}
 
-	paymentId := buildCompatiblePaymentID(in)
-
-	// 支付订单
-	if err := l.svcCtx.OrderModel.Pay(l.ctx, in.OrderId, paymentId); err != nil {
+	requestID := in.GetRequestId()
+	if requestID == "" {
+		requestID = buildCompatiblePaymentID(in)
+	}
+	created, err := l.svcCtx.PaymentService.CreatePayment(l.ctx, &payment.CreatePaymentInput{
+		OrderID:      in.OrderId,
+		Channel:      in.Channel,
+		RequestID:    requestID,
+		Operator:     "user",
+		CallbackFrom: "mock_adapter",
+	})
+	if err != nil {
 		if errors.Is(err, model.ErrOrderCannotPay) {
 			return nil, errors.New("订单状态不正确，无法支付")
 		}
-		l.Logger.Errorf("支付订单失败: orderId=%s, err=%v", in.OrderId, err)
+		if errors.Is(err, model.ErrNotFound) {
+			return nil, errors.New("订单不存在")
+		}
+		l.Logger.Errorf("创建支付请求失败: orderId=%s, err=%v", in.OrderId, err)
 		return nil, errors.New("支付失败，请稍后重试")
 	}
 
-	l.Logger.Infof("订单支付成功: orderId=%s, paymentId=%s, channel=%s, requestId=%s", in.OrderId, paymentId, in.Channel, in.RequestId)
+	l.Logger.Infof("订单支付链路完成: orderId=%s, paymentId=%s, channel=%s, requestId=%s", in.OrderId, created.PaymentId, in.Channel, requestID)
 
 	return &commonpb.BoolResponse{
 		Success: true,

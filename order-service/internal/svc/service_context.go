@@ -4,6 +4,7 @@ import (
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/mq"
+	"seckill-mall/order-service/internal/payment"
 	"seckill-mall/order-service/internal/rpc"
 	"seckill-mall/order-service/internal/service"
 
@@ -18,6 +19,7 @@ type ServiceContext struct {
 	CheckConsumer     *mq.RocketMQCheckConsumer // 超时检查队列消费者
 	DLQConsumer       *mq.RocketMQDLQConsumer   // 死信队列监控消费者
 	OrderService      *service.OrderService
+	PaymentService    *payment.Service
 	ProductServiceRPC *rpc.ProductServiceClient
 	SeckillServiceRPC *rpc.SeckillServiceClient
 }
@@ -32,6 +34,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	orderModel := model.NewOrderModelWithDB(db)
 	seckillOrderModel := model.NewSeckillOrderModelWithDB(db)
 	seckillOrderTxManager := model.NewSeckillOrderTxManager(db)
+	paymentLedger := model.NewPaymentLedger(db)
 	// 初始化订单模型
 	_, err = model.NewOrderModel(c)
 	if err != nil {
@@ -56,6 +59,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	} else {
 		orderService.SetSeckillServiceRPC(seckillSvc)
 	}
+	paymentService := payment.NewService(paymentLedger, payment.NewMockAdapter(), seckillSvc)
 
 	rmqCfg := mq.RocketMQConsumerConfig{
 		NameServer:         c.RocketMQ.NameServer,
@@ -101,6 +105,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		CheckConsumer:     checkConsumer,
 		DLQConsumer:       dlqConsumer,
 		OrderService:      orderService,
+		PaymentService:    paymentService,
 		ProductServiceRPC: productSvc,
 		SeckillServiceRPC: seckillSvc,
 	}

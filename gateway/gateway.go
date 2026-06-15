@@ -119,6 +119,7 @@ func main() {
 		seckillGroup.GET("/result", seckillHandler.GetSeckillResult)
 
 		orderHandler := handler.NewOrderHandler(clients.OrderService)
+		r.POST("/api/v1/payment/callback/mock", orderHandler.HandleMockPaymentCallback)
 		authGroup.POST("/order", orderHandler.CreateNormalOrder)
 		authGroup.GET("/order/:orderId", orderHandler.GetOrder)
 		authGroup.GET("/orders", orderHandler.ListOrders)

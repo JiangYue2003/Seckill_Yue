@@ -10,6 +10,7 @@ import (
 
 	"seckill-mall/common/order"
 	"seckill-mall/order-service/internal/logic"
+	"seckill-mall/order-service/internal/payment"
 	"seckill-mall/order-service/internal/svc"
 )
 
@@ -56,32 +57,49 @@ func (s *OrderServiceServer) PayOrder(ctx context.Context, in *order.PayOrderReq
 
 // 创建支付单
 func (s *OrderServiceServer) CreatePayment(ctx context.Context, in *order.CreatePaymentRequest) (*order.CreatePaymentResponse, error) {
+	created, err := s.svcCtx.PaymentService.CreatePayment(ctx, &payment.CreatePaymentInput{
+		OrderID:      in.GetOrderId(),
+		Channel:      in.GetChannel(),
+		RequestID:    in.GetRequestId(),
+		Operator:     "rpc",
+		CallbackFrom: "mock_adapter",
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &order.CreatePaymentResponse{
 		Success: true,
-		Message: "支付单接口已预留，后续在 Phase D 落地支付子域",
-		Payment: &order.PaymentInfo{
-			OrderId:   in.OrderId,
-			Channel:   in.Channel,
-			RequestId: in.RequestId,
-			Status:    commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
-		},
+		Message: "支付单创建成功",
+		Payment: buildPaymentInfo(created),
 	}, nil
 }
 
 // 查询支付单
 func (s *OrderServiceServer) GetPayment(ctx context.Context, in *order.GetPaymentRequest) (*order.PaymentInfo, error) {
-	return &order.PaymentInfo{
-		PaymentId: in.PaymentId,
-		OrderId:   in.OrderId,
-		Status:    commonpb.PaymentStatus_PAYMENT_STATUS_INIT,
-	}, nil
+	paymentRecord, err := s.svcCtx.PaymentService.GetPayment(ctx, in.GetPaymentId(), in.GetOrderId())
+	if err != nil {
+		return nil, err
+	}
+	return buildPaymentInfo(paymentRecord), nil
 }
 
 // 处理支付回调
 func (s *OrderServiceServer) HandlePaymentCallback(ctx context.Context, in *order.HandlePaymentCallbackRequest) (*commonpb.BoolResponse, error) {
+	_, err := s.svcCtx.PaymentService.HandlePaymentCallback(ctx, &payment.HandlePaymentCallbackInput{
+		PaymentID:         in.GetPaymentId(),
+		OrderID:           in.GetOrderId(),
+		CallbackID:        in.GetCallbackId(),
+		Channel:           in.GetChannel(),
+		ThirdPartyTradeNo: in.GetThirdPartyTradeNo(),
+		RawPayload:        in.GetRawPayload(),
+		Operator:          "payment_callback",
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &commonpb.BoolResponse{
 		Success: true,
-		Message: "支付回调接口已预留，后续在 Phase D 落地支付审计链路",
+		Message: "支付回调处理成功",
 	}, nil
 }
 

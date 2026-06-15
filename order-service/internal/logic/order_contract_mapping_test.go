@@ -43,3 +43,26 @@ func TestBuildCompatiblePaymentRequestID(t *testing.T) {
 		t.Fatalf("buildCompatiblePaymentID() = %s, want pay-1", got)
 	}
 }
+
+func TestMapPaymentStatusUsesPayStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int32
+		want   commonpb.PaymentStatus
+	}{
+		{name: "init", status: entity.OrderPayStatusInit, want: commonpb.PaymentStatus_PAYMENT_STATUS_INIT},
+		{name: "requested", status: entity.OrderPayStatusRequested, want: commonpb.PaymentStatus_PAYMENT_STATUS_REQUESTED},
+		{name: "success", status: entity.OrderPayStatusSuccess, want: commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS},
+		{name: "failed", status: entity.OrderPayStatusFailed, want: commonpb.PaymentStatus_PAYMENT_STATUS_FAILED},
+		{name: "closed", status: entity.OrderPayStatusClosed, want: commonpb.PaymentStatus_PAYMENT_STATUS_CLOSED},
+		{name: "refunded", status: entity.OrderPayStatusRefunded, want: commonpb.PaymentStatus_PAYMENT_STATUS_REFUNDED},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mapPaymentStatus(tt.status); got != tt.want {
+				t.Fatalf("mapPaymentStatus(%d) = %v, want %v", tt.status, got, tt.want)
+			}
+		})
+	}
+}

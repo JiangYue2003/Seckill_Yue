@@ -86,12 +86,12 @@ func TestProcessSeckillOrderUsesTransactionalPersistence(t *testing.T) {
 	if txManager.last.ConsumerName != seckillOrderConsumerName {
 		t.Fatalf("expected consumer name %s, got %s", seckillOrderConsumerName, txManager.last.ConsumerName)
 	}
-	if seckillRPC.updateCalls != 1 {
-		t.Fatalf("expected one seckill status update, got %d", seckillRPC.updateCalls)
+	if seckillRPC.updateCalls != 0 {
+		t.Fatalf("expected no seckill hot status update before payment, got %d", seckillRPC.updateCalls)
 	}
 }
 
-func TestProcessSeckillOrderDuplicateStillMarksSuccess(t *testing.T) {
+func TestProcessSeckillOrderDuplicateDoesNotMarkSuccessBeforePayment(t *testing.T) {
 	txManager := &fakeSeckillOrderTxManager{
 		result: &model.PersistSeckillOrderResult{AlreadyProcessed: true},
 	}
@@ -110,11 +110,8 @@ func TestProcessSeckillOrderDuplicateStillMarksSuccess(t *testing.T) {
 		t.Fatalf("ProcessSeckillOrder() error = %v", err)
 	}
 
-	if seckillRPC.updateCalls != 1 {
-		t.Fatalf("expected duplicate message to still trigger status repair, got %d updates", seckillRPC.updateCalls)
-	}
-	if seckillRPC.lastStatus != "success" {
-		t.Fatalf("expected success status update, got %s", seckillRPC.lastStatus)
+	if seckillRPC.updateCalls != 0 {
+		t.Fatalf("expected duplicate message not to mark success before payment, got %d updates", seckillRPC.updateCalls)
 	}
 }
 

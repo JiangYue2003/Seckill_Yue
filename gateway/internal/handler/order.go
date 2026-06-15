@@ -166,7 +166,6 @@ type PayOrderRequest struct {
 	OrderId   string `json:"orderId" binding:"required"`
 	Channel   string `json:"channel"`
 	RequestId string `json:"requestId"`
-	PaymentId string `json:"paymentId"`
 }
 
 // PayOrder 支付订单
@@ -192,13 +191,54 @@ func (h *OrderHandler) PayOrder(c *gin.Context) {
 		OrderId:   req.OrderId,
 		Channel:   req.Channel,
 		RequestId: req.RequestId,
-		PaymentId: req.PaymentId,
 	})
 	if err != nil {
 		handleRPCError(c, err, "支付订单")
 		return
 	}
 
+	if !resp.Success {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, resp.Message)
+		return
+	}
+
+	middleware.Success(c, gin.H{
+		"success": true,
+		"message": resp.Message,
+	})
+}
+
+type MockPaymentCallbackRequest struct {
+	PaymentId         string `json:"paymentId" binding:"required"`
+	OrderId           string `json:"orderId" binding:"required"`
+	CallbackId        string `json:"callbackId" binding:"required"`
+	Channel           string `json:"channel"`
+	ThirdPartyTradeNo string `json:"thirdPartyTradeNo"`
+	RawPayload        string `json:"rawPayload"`
+}
+
+func (h *OrderHandler) HandleMockPaymentCallback(c *gin.Context) {
+	var req MockPaymentCallbackRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, "参数错误: "+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	resp, err := h.orderSvc.HandlePaymentCallback(ctx, &order.HandlePaymentCallbackRequest{
+		PaymentId:         req.PaymentId,
+		OrderId:           req.OrderId,
+		CallbackId:        req.CallbackId,
+		Channel:           req.Channel,
+		ThirdPartyTradeNo: req.ThirdPartyTradeNo,
+		RawPayload:        req.RawPayload,
+	})
+	if err != nil {
+		handleRPCError(c, err, "处理支付回调")
+		return
+	}
 	if !resp.Success {
 		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, resp.Message)
 		return
