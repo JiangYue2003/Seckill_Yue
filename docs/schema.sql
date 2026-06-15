@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS `seckill_products` (
 
 
 CREATE TABLE IF NOT EXISTS `orders` (
-    `order_id` VARCHAR(32) NOT NULL COMMENT '订单号',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
+    `reservation_id` VARCHAR(64) DEFAULT NULL COMMENT '预占号',
     `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
     `product_id` BIGINT UNSIGNED NOT NULL COMMENT '商品ID',
     `product_name` VARCHAR(200) NOT NULL COMMENT '商品名称（冗余）',
@@ -73,22 +74,28 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `amount` BIGINT NOT NULL COMMENT '实付金额（分）',
     `seckill_price` BIGINT DEFAULT 0 COMMENT '秒杀价格（分，普通订单为0）',
     `order_type` TINYINT NOT NULL DEFAULT 0 COMMENT '订单类型: 0=普通订单, 1=秒杀订单',
-    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0=待支付, 1=已支付, 2=已取消, 3=已退款, 4=已完成',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0=INIT, 1=RESERVED, 2=ORDER_CREATED, 3=PAYING, 4=PAID, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED, 8=FAILED, 9=REFUNDED',
+    `pay_status` TINYINT NOT NULL DEFAULT 0 COMMENT '支付状态: 0=PAY_INIT, 1=PAY_REQUESTED, 2=PAY_SUCCESS, 3=PAY_FAILED, 4=PAY_CLOSED, 5=PAY_REFUNDED',
     `payment_id` VARCHAR(64) DEFAULT NULL COMMENT '支付流水号',
     `paid_at` BIGINT DEFAULT NULL COMMENT '支付时间戳',
+    `closed_at` BIGINT DEFAULT NULL COMMENT '订单关闭时间戳',
+    `expired_at` BIGINT DEFAULT NULL COMMENT '订单过期时间戳',
+    `version` INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
     `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
     `updated_at` BIGINT NOT NULL COMMENT '更新时间戳',
     PRIMARY KEY (`order_id`),
+    KEY `idx_reservation_id` (`reservation_id`),
     KEY `idx_user_id` (`user_id`),
     KEY `idx_product_id` (`product_id`),
     KEY `idx_status` (`status`),
+    KEY `idx_pay_status` (`pay_status`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表';
 
 CREATE TABLE IF NOT EXISTS `stock_logs` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '日志ID',
     `product_id` BIGINT UNSIGNED NOT NULL COMMENT '商品ID',
-    `order_id` VARCHAR(32) NOT NULL COMMENT '订单号',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
     `change_type` TINYINT NOT NULL COMMENT '变更类型: 1=扣减, 2=回滚',
     `quantity` INT NOT NULL COMMENT '变更数量',
     `before_stock` INT NOT NULL COMMENT '变更前库存',
@@ -104,14 +111,129 @@ CREATE TABLE IF NOT EXISTS `seckill_orders` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '记录ID',
     `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
     `seckill_product_id` BIGINT UNSIGNED NOT NULL COMMENT '秒杀商品ID',
-    `order_id` VARCHAR(32) NOT NULL COMMENT '订单号',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
+    `reservation_id` VARCHAR(64) DEFAULT NULL COMMENT '预占号',
     `quantity` INT NOT NULL DEFAULT 1 COMMENT '购买数量',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '记录状态: 0=RESERVED, 1=ORDER_CREATED, 2=PAID, 3=COMPLETED, 4=RELEASED, 5=FAILED',
     `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_user_seckill` (`user_id`, `seckill_product_id`),
+    UNIQUE KEY `uk_seckill_order_id` (`order_id`),
     KEY `idx_seckill_product_id` (`seckill_product_id`),
-    KEY `idx_order_id` (`order_id`)
+    KEY `idx_order_id` (`order_id`),
+    KEY `idx_reservation_id` (`reservation_id`),
+    KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户秒杀购买记录表';
+
+CREATE TABLE IF NOT EXISTS `seckill_reservations` (
+    `reservation_id` VARCHAR(64) NOT NULL COMMENT '预占号',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '业务订单号',
+    `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
+    `seckill_product_id` BIGINT UNSIGNED NOT NULL COMMENT '秒杀商品ID',
+    `product_id` BIGINT UNSIGNED NOT NULL COMMENT '商品ID',
+    `quantity` INT NOT NULL DEFAULT 1 COMMENT '预占数量',
+    `amount` BIGINT NOT NULL COMMENT '预占金额（分）',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '预占状态: 0=RESERVED, 1=ORDER_CREATING, 2=ORDER_CREATED, 3=PAYING, 4=PAID, 5=CONSUMED, 6=RELEASED, 7=EXPIRED, 8=FAILED',
+    `source` VARCHAR(32) NOT NULL DEFAULT 'gateway' COMMENT '来源: gateway/reconcile/system',
+    `reason` VARCHAR(64) DEFAULT NULL COMMENT '状态变更原因',
+    `redis_order_key` VARCHAR(128) DEFAULT NULL COMMENT 'Redis 热状态 key 快照',
+    `expire_at` BIGINT DEFAULT NULL COMMENT '预占过期时间戳',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    `updated_at` BIGINT NOT NULL COMMENT '更新时间戳',
+    PRIMARY KEY (`reservation_id`),
+    UNIQUE KEY `uk_reservation_order_id` (`order_id`),
+    KEY `idx_reservation_user_spid` (`user_id`, `seckill_product_id`),
+    KEY `idx_reservation_status_expire_at` (`status`, `expire_at`),
+    KEY `idx_reservation_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='秒杀预占账本表';
+
+CREATE TABLE IF NOT EXISTS `event_outbox` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `event_id` VARCHAR(64) NOT NULL COMMENT '全局事件ID',
+    `aggregate_type` VARCHAR(32) NOT NULL COMMENT '聚合类型: reservation/order/payment',
+    `aggregate_id` VARCHAR(64) NOT NULL COMMENT '聚合ID',
+    `event_type` VARCHAR(64) NOT NULL COMMENT '事件类型',
+    `payload_json` JSON NOT NULL COMMENT '事件负载',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '投递状态: 0=NEW, 1=PUBLISHED, 2=CONSUMED_ACKED, 3=FAILED, 4=DEAD',
+    `retry_count` INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+    `next_retry_at` BIGINT DEFAULT NULL COMMENT '下次重试时间戳',
+    `last_error` VARCHAR(512) DEFAULT NULL COMMENT '最后一次错误',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    `updated_at` BIGINT NOT NULL COMMENT '更新时间戳',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_outbox_event_id` (`event_id`),
+    KEY `idx_outbox_status_next_retry` (`status`, `next_retry_at`),
+    KEY `idx_outbox_aggregate` (`aggregate_type`, `aggregate_id`),
+    KEY `idx_outbox_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='事件外发箱表';
+
+CREATE TABLE IF NOT EXISTS `processed_messages` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `message_id` VARCHAR(64) NOT NULL COMMENT '消息ID',
+    `consumer_name` VARCHAR(64) NOT NULL COMMENT '消费者名称',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '处理状态: 0=PROCESSING, 1=SUCCEEDED, 2=FAILED',
+    `processed_at` BIGINT DEFAULT NULL COMMENT '处理完成时间戳',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_message_consumer` (`message_id`, `consumer_name`),
+    KEY `idx_processed_status` (`status`),
+    KEY `idx_processed_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='消息消费幂等表';
+
+CREATE TABLE IF NOT EXISTS `payments` (
+    `payment_id` VARCHAR(64) NOT NULL COMMENT '支付单号',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
+    `user_id` BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
+    `amount` BIGINT NOT NULL COMMENT '支付金额（分）',
+    `channel` VARCHAR(32) NOT NULL COMMENT '支付渠道',
+    `status` TINYINT NOT NULL DEFAULT 0 COMMENT '支付状态: 0=PAY_INIT, 1=PAY_REQUESTED, 2=PAY_SUCCESS, 3=PAY_FAILED, 4=PAY_CLOSED, 5=PAY_REFUNDED',
+    `third_party_trade_no` VARCHAR(64) DEFAULT NULL COMMENT '第三方交易流水号',
+    `request_id` VARCHAR(64) NOT NULL COMMENT '支付请求幂等号',
+    `paid_at` BIGINT DEFAULT NULL COMMENT '支付成功时间戳',
+    `closed_at` BIGINT DEFAULT NULL COMMENT '支付关闭时间戳',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    `updated_at` BIGINT NOT NULL COMMENT '更新时间戳',
+    PRIMARY KEY (`payment_id`),
+    UNIQUE KEY `uk_payment_order_id` (`order_id`),
+    UNIQUE KEY `uk_payment_request_id` (`request_id`),
+    KEY `idx_payment_user_id` (`user_id`),
+    KEY `idx_payment_status` (`status`),
+    KEY `idx_payment_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付账本表';
+
+CREATE TABLE IF NOT EXISTS `payment_callbacks` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `payment_id` VARCHAR(64) NOT NULL COMMENT '支付单号',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
+    `callback_id` VARCHAR(64) NOT NULL COMMENT '回调幂等号/通知号',
+    `channel` VARCHAR(32) NOT NULL COMMENT '支付渠道',
+    `raw_payload` JSON NOT NULL COMMENT '原始回调载荷',
+    `verify_result` TINYINT NOT NULL DEFAULT 0 COMMENT '验签结果: 0=UNKNOWN, 1=PASS, 2=FAIL',
+    `process_result` TINYINT NOT NULL DEFAULT 0 COMMENT '处理结果: 0=INIT, 1=SUCCEEDED, 2=FAILED, 3=DUPLICATE',
+    `received_at` BIGINT NOT NULL COMMENT '接收时间戳',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_callback_id` (`callback_id`),
+    KEY `idx_callback_payment_id` (`payment_id`),
+    KEY `idx_callback_order_id` (`order_id`),
+    KEY `idx_callback_received_at` (`received_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付回调审计表';
+
+CREATE TABLE IF NOT EXISTS `order_status_logs` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
+    `from_status` TINYINT NOT NULL COMMENT '原订单状态',
+    `to_status` TINYINT NOT NULL COMMENT '新订单状态',
+    `event_type` VARCHAR(64) NOT NULL COMMENT '驱动事件类型',
+    `reason` VARCHAR(128) DEFAULT NULL COMMENT '状态变更原因',
+    `operator` VARCHAR(64) NOT NULL DEFAULT 'system' COMMENT '操作者: system/manual/reconcile/payment_callback',
+    `trace_id` VARCHAR(64) DEFAULT NULL COMMENT '链路追踪ID',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    PRIMARY KEY (`id`),
+    KEY `idx_order_status_log_order_id` (`order_id`),
+    KEY `idx_order_status_log_event_type` (`event_type`),
+    KEY `idx_order_status_log_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单状态流转日志表';
 
 
 -- 插入测试用户（密码都是 123456，使用 bcrypt 加密）
