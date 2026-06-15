@@ -48,8 +48,8 @@ func (l *CancelOrderLogic) CancelOrder(in *order.CancelOrderRequest) (*commonpb.
 	}
 
 	// 检查订单状态
-	if existingOrder.Status != entity.OrderStatusPending {
-		return nil, errors.New("只有待支付的订单才能取消")
+	if existingOrder.Status != entity.OrderStatusReserved && existingOrder.Status != entity.OrderStatusOrderCreated {
+		return nil, errors.New("只有待支付前阶段的订单才能取消")
 	}
 
 	// 检查用户权限

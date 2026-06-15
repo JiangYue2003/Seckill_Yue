@@ -51,8 +51,7 @@ type OrderModel interface {
 	BatchCheckIdempotency(ctx context.Context, orderIds []string) (map[string]bool, error)
 }
 
-// NewOrderModel 创建 OrderModel 实例
-func NewOrderModel(c config.Config) (OrderModel, error) {
+func NewDB(c config.Config) (*gorm.DB, error) {
 	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
 		Logger: newGormLogger(),
 	})
@@ -64,11 +63,24 @@ func NewOrderModel(c config.Config) (OrderModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
-	sqlDB.SetMaxIdleConns(50)  // 10 → 50，增加空闲连接
-	sqlDB.SetMaxOpenConns(300) // 100 → 300，增加最大连接数
+	sqlDB.SetMaxIdleConns(50)
+	sqlDB.SetMaxOpenConns(300)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	return &orderModel{db: db}, nil
+	return db, nil
+}
+
+// NewOrderModel 创建 OrderModel 实例
+func NewOrderModel(c config.Config) (OrderModel, error) {
+	db, err := NewDB(c)
+	if err != nil {
+		return nil, err
+	}
+	return NewOrderModelWithDB(db), nil
+}
+
+func NewOrderModelWithDB(db *gorm.DB) OrderModel {
+	return &orderModel{db: db}
 }
 
 // orderModel 实现 OrderModel 接口
@@ -146,9 +158,10 @@ func (m *orderModel) UpdateStatus(ctx context.Context, orderId string, status in
 // Pay 支付订单
 func (m *orderModel) Pay(ctx context.Context, orderId string, paymentId string) error {
 	result := m.db.WithContext(ctx).Model(&entity.Order{}).
-		Where("order_id = ? AND status = ?", orderId, entity.OrderStatusPending).
+		Where("order_id = ? AND status = ?", orderId, entity.OrderStatusOrderCreated).
 		Updates(map[string]interface{}{
 			"status":     entity.OrderStatusPaid,
+			"pay_status": entity.OrderPayStatusSuccess,
 			"payment_id": paymentId,
 			"paid_at":    time.Now().Unix(),
 		})
@@ -163,7 +176,7 @@ func (m *orderModel) Pay(ctx context.Context, orderId string, paymentId string) 
 // Cancel 取消订单
 func (m *orderModel) Cancel(ctx context.Context, orderId string, userId int64) error {
 	result := m.db.WithContext(ctx).Model(&entity.Order{}).
-		Where("order_id = ? AND user_id = ? AND status = ?", orderId, userId, entity.OrderStatusPending).
+		Where("order_id = ? AND user_id = ? AND status IN (?, ?)", orderId, userId, entity.OrderStatusReserved, entity.OrderStatusOrderCreated).
 		Update("status", entity.OrderStatusCancelled)
 
 	if result.RowsAffected == 0 {
@@ -177,7 +190,10 @@ func (m *orderModel) Cancel(ctx context.Context, orderId string, userId int64) e
 func (m *orderModel) Refund(ctx context.Context, orderId string) error {
 	result := m.db.WithContext(ctx).Model(&entity.Order{}).
 		Where("order_id = ? AND status IN (?, ?)", orderId, entity.OrderStatusPaid, entity.OrderStatusCompleted).
-		Update("status", entity.OrderStatusRefunded)
+		Updates(map[string]interface{}{
+			"status":     entity.OrderStatusRefunded,
+			"pay_status": entity.OrderPayStatusRefunded,
+		})
 
 	if result.RowsAffected == 0 {
 		return ErrOrderCannotRefund

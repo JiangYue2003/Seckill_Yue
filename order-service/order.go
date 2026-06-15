@@ -73,12 +73,7 @@ func main() {
 			_ = ctx.DLQConsumer.Stop()
 		}
 
-		// 2. 刷完 BatchWriter 缓冲区
-		if ctx.BatchWriter != nil {
-			ctx.BatchWriter.Shutdown()
-		}
-
-		// 3. 停止 gRPC 服务
+		// 2. 停止 gRPC 服务
 		s.Stop()
 	}()
 

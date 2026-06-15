@@ -31,6 +31,7 @@ const (
 
 // SeckillOrderMessage 秒杀订单消息
 type SeckillOrderMessage struct {
+	MessageId        string `json:"message_id"`
 	OrderId          string `json:"order_id"`
 	UserId           int64  `json:"user_id"`
 	SeckillProductId int64  `json:"seckill_product_id"`

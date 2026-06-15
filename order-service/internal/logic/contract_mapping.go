@@ -10,7 +10,9 @@ import (
 
 func mapOrderLifecycleStatus(status int32) commonpb.OrderLifecycleStatus {
 	switch status {
-	case entity.OrderStatusPending:
+	case entity.OrderStatusReserved:
+		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED
+	case entity.OrderStatusOrderCreated:
 		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_ORDER_CREATED
 	case entity.OrderStatusPaid:
 		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID
@@ -29,6 +31,8 @@ func mapPaymentStatus(status int32) commonpb.PaymentStatus {
 	switch status {
 	case entity.OrderStatusPaid, entity.OrderStatusCompleted:
 		return commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS
+	case entity.OrderStatusOrderCreated, entity.OrderStatusReserved:
+		return commonpb.PaymentStatus_PAYMENT_STATUS_INIT
 	case entity.OrderStatusCancelled:
 		return commonpb.PaymentStatus_PAYMENT_STATUS_CLOSED
 	case entity.OrderStatusRefunded:
@@ -51,9 +55,11 @@ func buildOrderInfo(o *entity.Order) *orderpb.OrderInfo {
 		Status:            o.Status,
 		PaymentId:         o.PaymentId,
 		PaidAt:            o.PaidAt,
+		ReservationId:     o.ReservationId,
 		CreatedAt:         o.CreatedAt,
 		UpdatedAt:         o.UpdatedAt,
-		ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED,
+		ExpiredAt:         o.ExpiredAt,
+		ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATED,
 		PaymentStatus:     mapPaymentStatus(o.Status),
 	}
 }

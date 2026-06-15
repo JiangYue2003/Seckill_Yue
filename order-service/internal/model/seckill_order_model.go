@@ -3,13 +3,10 @@ package model
 import (
 	"context"
 	"errors"
-	"fmt"
-	"time"
 
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/model/entity"
 
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -31,22 +28,15 @@ type SeckillOrderModel interface {
 
 // NewSeckillOrderModel 创建 SeckillOrderModel 实例
 func NewSeckillOrderModel(c config.Config) (SeckillOrderModel, error) {
-	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
-		Logger: newGormLogger(),
-	})
+	db, err := NewDB(c)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
+		return nil, err
 	}
+	return NewSeckillOrderModelWithDB(db), nil
+}
 
-	sqlDB, err := db.DB()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database instance: %w", err)
-	}
-	sqlDB.SetMaxIdleConns(50)  // 10 → 50，增加空闲连接
-	sqlDB.SetMaxOpenConns(300) // 100 → 300，增加最大连接数
-	sqlDB.SetConnMaxLifetime(time.Hour)
-
-	return &seckillOrderModel{db: db}, nil
+func NewSeckillOrderModelWithDB(db *gorm.DB) SeckillOrderModel {
+	return &seckillOrderModel{db: db}
 }
 
 // seckillOrderModel 实现 SeckillOrderModel 接口

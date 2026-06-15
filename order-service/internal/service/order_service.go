@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"seckill-mall/order-service/internal/batch"
+	seckill "seckill-mall/common/seckill"
 	"seckill-mall/order-service/internal/metrics"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/model/entity"
@@ -17,18 +17,25 @@ import (
 
 // OrderService 订单服务
 type OrderService struct {
-	orderModel        model.OrderModel
-	seckillOrderModel model.SeckillOrderModel
-	productSvcRPC     *rpc.ProductServiceClient
-	seckillSvcRPC     *rpc.SeckillServiceClient
-	batchWriter       *batch.BatchWriter
+	orderModel            model.OrderModel
+	seckillOrderModel     model.SeckillOrderModel
+	productSvcRPC         *rpc.ProductServiceClient
+	seckillSvcRPC         seckillStatusWriter
+	seckillOrderTxManager model.SeckillOrderTxManager
 }
 
-func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.SeckillOrderModel, batchWriter *batch.BatchWriter) *OrderService {
+const seckillOrderConsumerName = "order-service.seckill-order"
+
+type seckillStatusWriter interface {
+	UpdateOrderStatus(ctx context.Context, orderId, status string, allowRecover bool) error
+	CompensateFailedOrder(ctx context.Context, orderId string, seckillProductId, userId, quantity int64, reason string) (*seckill.CompensateFailedOrderResponse, error)
+}
+
+func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.SeckillOrderModel, txManager model.SeckillOrderTxManager) *OrderService {
 	return &OrderService{
-		orderModel:        orderModel,
-		seckillOrderModel: seckillOrderModel,
-		batchWriter:       batchWriter,
+		orderModel:            orderModel,
+		seckillOrderModel:     seckillOrderModel,
+		seckillOrderTxManager: txManager,
 	}
 }
 
@@ -69,65 +76,35 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	//     }
 	// }
 
-	// ========== 1. 构造订单对象 ==========
-	now := time.Now().Unix()
-	order := &entity.Order{
-		OrderId:      msg.OrderId,
-		UserId:       msg.UserId,
-		ProductId:    msg.ProductId,
-		ProductName:  "",
-		Quantity:     int(msg.Quantity),
-		Amount:       msg.Amount,
-		SeckillPrice: msg.SeckillPrice,
-		OrderType:    entity.OrderTypeSeckill,
-		Status:       entity.OrderStatusPending,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+	if s.seckillOrderTxManager == nil {
+		resultLabel = "tx_manager_nil"
+		return errors.New("seckill order tx manager is nil")
 	}
 
-	seckillRecord := &entity.SeckillOrder{
-		UserId:           msg.UserId,
-		SeckillProductId: msg.SeckillProductId,
-		OrderId:          msg.OrderId,
-		Quantity:         int(msg.Quantity),
-		CreatedAt:        now,
+	persistResult, err := s.seckillOrderTxManager.PersistSeckillOrder(ctx, &model.PersistSeckillOrderInput{
+		MessageID:        msg.MessageId,
+		ConsumerName:     seckillOrderConsumerName,
+		OrderID:          msg.OrderId,
+		UserID:           msg.UserId,
+		SeckillProductID: msg.SeckillProductId,
+		ProductID:        msg.ProductId,
+		Quantity:         msg.Quantity,
+		Amount:           msg.Amount,
+		SeckillPrice:     msg.SeckillPrice,
+	})
+	if err != nil {
+		logger.Errorf("事务化持久化秒杀订单失败: orderId=%s, messageId=%s, err=%v", msg.OrderId, msg.MessageId, err)
+		resultLabel = "persist_order_error"
+		return err
 	}
 
-	// ========== 2. 加入批量写入缓冲区（幂等检查在 BatchWriter 内部）==========
-	if s.batchWriter != nil {
-		s.batchWriter.AddOrder(order, seckillRecord, func(persisted bool) {
-			if !persisted {
-				return
-			}
-			s.markSeckillOrderSuccess(context.Background(), msg.OrderId)
-		})
-	} else {
-		// 降级：BatchWriter 未初始化时，回退到同步写入（需要单独检查幂等）
-		exists, err := s.orderModel.CheckIdempotency(ctx, msg.OrderId)
-		if err != nil {
-			logger.Errorf("检查幂等性失败: orderId=%s, err=%v", msg.OrderId, err)
-			resultLabel = "idempotency_error"
-			return err
-		}
-		if exists {
-			logger.Debugf("订单已存在，跳过处理: orderId=%s", msg.OrderId)
-			s.markSeckillOrderSuccess(ctx, msg.OrderId)
-			resultLabel = "idempotent_skip"
-			return nil
-		}
-
-		if err := s.orderModel.Insert(ctx, order); err != nil {
-			logger.Errorf("创建订单失败: orderId=%s, err=%v", msg.OrderId, err)
-			resultLabel = "create_order_error"
-			return err
-		}
-		if err := s.seckillOrderModel.Insert(ctx, seckillRecord); err != nil {
-			logger.Errorf("写入秒杀购买记录失败: orderId=%s, err=%v", msg.OrderId, err)
-		}
-		s.markSeckillOrderSuccess(ctx, msg.OrderId)
+	if persistResult != nil && persistResult.AlreadyProcessed {
+		logger.Infof("秒杀订单消息已处理，执行热状态幂等修复: orderId=%s, messageId=%s", msg.OrderId, msg.MessageId)
 	}
 
-	logger.Debugf("秒杀订单处理成功（已加入批量写入队列）: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
+	s.markSeckillOrderSuccess(ctx, msg.OrderId)
+
+	logger.Debugf("秒杀订单处理成功（已完成事务落库）: orderId=%s, userId=%d", msg.OrderId, msg.UserId)
 	resultLabel = "success"
 	return nil
 }

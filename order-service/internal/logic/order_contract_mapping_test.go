@@ -14,7 +14,8 @@ func TestMapOrderLifecycleStatus(t *testing.T) {
 		status int32
 		want   commonpb.OrderLifecycleStatus
 	}{
-		{name: "pending", status: entity.OrderStatusPending, want: commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_ORDER_CREATED},
+		{name: "reserved", status: entity.OrderStatusReserved, want: commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_RESERVED},
+		{name: "order_created", status: entity.OrderStatusOrderCreated, want: commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_ORDER_CREATED},
 		{name: "paid", status: entity.OrderStatusPaid, want: commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID},
 		{name: "cancelled", status: entity.OrderStatusCancelled, want: commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_CANCELLED},
 		{name: "refunded", status: entity.OrderStatusRefunded, want: commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_REFUNDED},

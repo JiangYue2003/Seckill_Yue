@@ -289,6 +289,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 
 		// 构建秒杀成功消息
 		seckillMsg := &mq.SeckillOrderMessage{
+			MessageId:        orderId,
 			OrderId:          orderId,
 			UserId:           in.UserId,
 			SeckillProductId: in.SeckillProductId,

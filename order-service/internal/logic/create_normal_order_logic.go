@@ -63,7 +63,8 @@ func (l *CreateNormalOrderLogic) CreateNormalOrder(in *order.CreateNormalOrderRe
 		Quantity:    int(in.Quantity),
 		Amount:      amount,
 		OrderType:   entity.OrderTypeNormal,
-		Status:      entity.OrderStatusPending,
+		Status:      entity.OrderStatusOrderCreated,
+		PayStatus:   entity.OrderPayStatusInit,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
