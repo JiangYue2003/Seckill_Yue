@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"seckill-mall/common/events"
 	"seckill-mall/seckill-service/internal/config"
 	"seckill-mall/seckill-service/internal/model/entity"
 
@@ -132,19 +133,25 @@ func (m *reservationLedger) PersistReservation(ctx context.Context, in *PersistR
 			return err
 		}
 
-		payload, err := json.Marshal(map[string]any{
-			"message_id":          in.OrderID,
-			"reservation_id":     in.ReservationID,
-			"order_id":           in.OrderID,
-			"user_id":            in.UserID,
-			"seckill_product_id": in.SeckillProductID,
-			"product_id":         in.ProductID,
-			"quantity":           in.Quantity,
-			"seckill_price":      in.SeckillPrice,
-			"amount":             in.Amount,
-			"status":             entity.ReservationStatusReserved,
-			"expire_at":          in.ExpireAt,
-			"occurred_at":        now,
+		payload, err := events.BuildReservationCreatedPayload(events.ReservationCreatedInput{
+			EventID:          "evt-reservation-created-" + in.ReservationID,
+			EventType:        "reservation.created",
+			OccurredAt:       now,
+			AggregateID:      in.ReservationID,
+			TraceID:          in.OrderID,
+			Source:           in.Source,
+			Version:          1,
+			MessageID:        in.OrderID,
+			ReservationID:    in.ReservationID,
+			OrderID:          in.OrderID,
+			UserID:           in.UserID,
+			SeckillProductID: in.SeckillProductID,
+			ProductID:        in.ProductID,
+			Quantity:         in.Quantity,
+			SeckillPrice:     in.SeckillPrice,
+			Amount:           in.Amount,
+			Status:           entity.ReservationStatusReserved,
+			ExpireAt:         in.ExpireAt,
 		})
 		if err != nil {
 			return err

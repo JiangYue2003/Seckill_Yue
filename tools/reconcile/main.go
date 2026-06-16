@@ -473,7 +473,7 @@ func (r *sqlRepo) GetOutboxEvents(ctx context.Context, orderIDs []string) (map[s
 	}
 
 	query := fmt.Sprintf(`
-SELECT id, aggregate_id, event_type, status
+SELECT id, aggregate_id, event_type, status, payload_json
 FROM event_outbox
 WHERE aggregate_id IN (%s)
    OR JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.order_id')) IN (%s)
@@ -491,8 +491,9 @@ ORDER BY id ASC`, strings.Join(placeholders, ","), strings.Join(placeholders, ",
 			aggregateID string
 			eventType   string
 			status      int32
+			payloadJSON string
 		)
-		if err := rows.Scan(&id, &aggregateID, &eventType, &status); err != nil {
+		if err := rows.Scan(&id, &aggregateID, &eventType, &status, &payloadJSON); err != nil {
 			return nil, err
 		}
 		orderID := aggregateID
@@ -501,9 +502,10 @@ ORDER BY id ASC`, strings.Join(placeholders, ","), strings.Join(placeholders, ",
 			orderID = aggregateID
 		}
 		result[orderID] = append(result[orderID], reconcile.OutboxEventRow{
-			ID:        id,
-			EventType: eventType,
-			Status:    status,
+			ID:          id,
+			EventType:   eventType,
+			Status:      status,
+			PayloadJSON: payloadJSON,
 		})
 	}
 	if err := rows.Err(); err != nil {

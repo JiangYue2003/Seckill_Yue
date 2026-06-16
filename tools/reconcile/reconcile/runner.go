@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"time"
@@ -230,6 +231,10 @@ func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row O
 			seenOrderCompleted = true
 		}
 
+		if requiresStrictPayloadContract(outbox.EventType) && !hasRequiredOutboxFields(outbox) {
+			r.markManualAnomaly(sum, AnomalyOutboxPayloadMissingFields, row.OrderID)
+		}
+
 		if outbox.Status == OutboxStatusFailed {
 			r.markRepairableAnomaly(sum, AnomalyOutboxRetryablePending, row.OrderID)
 			retryableIDs = append(retryableIDs, outbox.ID)
@@ -350,4 +355,105 @@ func expectsPayment(row OrderRow) bool {
 
 func hasPaymentSuccess(row OrderRow) bool {
 	return row.PayStatus == OrderPayStatusSuccess || row.PaymentStatus == PaymentStatusSuccess || row.Status == OrderStatusPaid || row.Status == OrderStatusCompleted
+}
+
+func requiresStrictPayloadContract(eventType string) bool {
+	switch eventType {
+	case "reservation.created", "order.created", "payment.succeeded", "order.completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
+	if outbox.PayloadJSON == "" {
+		return false
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(outbox.PayloadJSON), &payload); err != nil {
+		return false
+	}
+
+	required := []string{
+		"event_id",
+		"event_type",
+		"occurred_at",
+		"aggregate_type",
+		"aggregate_id",
+		"trace_id",
+		"source",
+		"version",
+	}
+
+	switch outbox.EventType {
+	case "reservation.created":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"status",
+			"expire_at",
+		)
+	case "order.created":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"status",
+			"order_type",
+			"pay_status",
+		)
+	case "payment.succeeded":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"payment_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"status",
+			"channel",
+			"third_party_trade_no",
+			"paid_at",
+			"callback_id",
+		)
+	case "order.completed":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"payment_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"status",
+			"order_type",
+			"pay_status",
+			"paid_at",
+		)
+	}
+
+	for _, key := range required {
+		if _, ok := payload[key]; !ok {
+			return false
+		}
+	}
+	return true
 }

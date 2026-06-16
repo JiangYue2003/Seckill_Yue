@@ -52,6 +52,17 @@
 3. 在同一事务内写入 `orders`、`seckill_orders`、`seckill_reservations`、`order_status_logs`、`event_outbox(order.created)`
 4. 支付链路完成后再回写 `seckill-service` 的 Redis 热状态为 `success`
 
+当前 `event_outbox` 已开始按统一事件契约收口，核心事件至少包含：
+
+- `event_id`
+- `event_type`
+- `occurred_at`
+- `aggregate_type`
+- `aggregate_id`
+- `trace_id`
+- `source`
+- `version`
+
 ### 2.3 超时补偿链路
 
 1. `reservation.timeout.check` 事件进入延迟检查队列

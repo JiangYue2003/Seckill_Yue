@@ -95,6 +95,7 @@ const (
 	AnomalyOutboxMissingOrderCreated              = "outbox_missing_order_created"
 	AnomalyOutboxMissingPaymentSucceeded          = "outbox_missing_payment_succeeded"
 	AnomalyOutboxMissingOrderCompleted            = "outbox_missing_order_completed"
+	AnomalyOutboxPayloadMissingFields             = "outbox_payload_missing_fields"
 	AnomalyOutboxRetryablePending                 = "outbox_retryable_pending"
 	AnomalyOutboxDead                             = "outbox_dead"
 	AnomalyRedisNotSuccessOnDBSuccess             = "redis_not_success_on_db_success"
@@ -157,9 +158,10 @@ type StockLogCount struct {
 }
 
 type OutboxEventRow struct {
-	ID        int64
-	EventType string
-	Status    int32
+	ID          int64
+	EventType   string
+	Status      int32
+	PayloadJSON string
 }
 
 type Repo interface {

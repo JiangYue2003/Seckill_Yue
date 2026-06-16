@@ -2,11 +2,11 @@ package model
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"seckill-mall/common/events"
 	"seckill-mall/order-service/internal/model/entity"
 
 	"gorm.io/gorm"
@@ -134,17 +134,25 @@ func (m *seckillOrderTxManager) PersistSeckillOrder(ctx context.Context, in *Per
 			return err
 		}
 
-		payload, err := json.Marshal(map[string]any{
-			"event_id":           "evt-" + in.MessageID,
-			"order_id":           in.OrderID,
-			"reservation_id":     in.OrderID,
-			"user_id":            in.UserID,
-			"seckill_product_id": in.SeckillProductID,
-			"product_id":         in.ProductID,
-			"quantity":           in.Quantity,
-			"amount":             in.Amount,
-			"status":             entity.OrderStatusOrderCreated,
-			"occurred_at":        now,
+		payload, err := events.BuildOrderCreatedPayload(events.OrderCreatedInput{
+			EventID:          "evt-" + in.MessageID,
+			EventType:        "order.created",
+			OccurredAt:       now,
+			AggregateID:      in.OrderID,
+			TraceID:          in.MessageID,
+			Source:           "order-service",
+			Version:          1,
+			MessageID:        in.MessageID,
+			ReservationID:    in.OrderID,
+			OrderID:          in.OrderID,
+			UserID:           in.UserID,
+			SeckillProductID: in.SeckillProductID,
+			ProductID:        in.ProductID,
+			Quantity:         in.Quantity,
+			Amount:           in.Amount,
+			Status:           entity.OrderStatusOrderCreated,
+			OrderType:        entity.OrderTypeSeckill,
+			PayStatus:        entity.OrderPayStatusInit,
 		})
 		if err != nil {
 			return err

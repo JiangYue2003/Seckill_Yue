@@ -2,11 +2,11 @@ package model
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
+	"seckill-mall/common/events"
 	"seckill-mall/common/utils"
 	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/payment"
@@ -202,6 +202,14 @@ func (m *paymentLedger) HandlePaymentCallback(ctx context.Context, in *payment.H
 		if err != nil {
 			return err
 		}
+		var orderSnapshot entity.Order
+		if err := tx.Where("order_id = ?", paymentRecord.OrderId).First(&orderSnapshot).Error; err != nil {
+			return err
+		}
+		var reservationSnapshot entity.SeckillReservation
+		if err := tx.Where("order_id = ?", paymentRecord.OrderId).First(&reservationSnapshot).Error; err != nil {
+			return err
+		}
 
 		now := time.Now().Unix()
 		callback := entity.PaymentCallback{
@@ -286,21 +294,53 @@ func (m *paymentLedger) HandlePaymentCallback(ctx context.Context, in *payment.H
 			return err
 		}
 
-		paymentPayload, err := json.Marshal(map[string]any{
-			"payment_id":           paymentRecord.PaymentId,
-			"order_id":             paymentRecord.OrderId,
-			"status":               entity.PaymentStatusSuccess,
-			"third_party_trade_no": in.ThirdPartyTradeNo,
-			"paid_at":              now,
+		paymentPayload, err := events.BuildPaymentSucceededPayload(events.PaymentSucceededInput{
+			EventID:           fmt.Sprintf("evt-payment-succeeded-%s", in.CallbackID),
+			EventType:         "payment.succeeded",
+			OccurredAt:        now,
+			AggregateID:       paymentRecord.PaymentId,
+			TraceID:           paymentRecord.OrderId,
+			Source:            "order-service",
+			Version:           1,
+			MessageID:         paymentRecord.OrderId,
+			ReservationID:     orderSnapshot.ReservationId,
+			OrderID:           paymentRecord.OrderId,
+			PaymentID:         paymentRecord.PaymentId,
+			UserID:            paymentRecord.UserId,
+			SeckillProductID:  reservationSnapshot.SeckillProductId,
+			ProductID:         orderSnapshot.ProductId,
+			Quantity:          int64(orderSnapshot.Quantity),
+			Amount:            paymentRecord.Amount,
+			Status:            entity.PaymentStatusSuccess,
+			Channel:           choosePaymentChannel(in.Channel, paymentRecord.Channel),
+			ThirdPartyTradeNo: in.ThirdPartyTradeNo,
+			PaidAt:            now,
+			CallbackID:        in.CallbackID,
 		})
 		if err != nil {
 			return err
 		}
-		completedPayload, err := json.Marshal(map[string]any{
-			"payment_id": paymentRecord.PaymentId,
-			"order_id":   paymentRecord.OrderId,
-			"status":     entity.OrderStatusCompleted,
-			"paid_at":    now,
+		completedPayload, err := events.BuildOrderCompletedPayload(events.OrderCompletedInput{
+			EventID:          fmt.Sprintf("evt-order-completed-%s", paymentRecord.OrderId),
+			EventType:        "order.completed",
+			OccurredAt:       now,
+			AggregateID:      paymentRecord.OrderId,
+			TraceID:          paymentRecord.OrderId,
+			Source:           "order-service",
+			Version:          1,
+			MessageID:        paymentRecord.OrderId,
+			ReservationID:    orderSnapshot.ReservationId,
+			OrderID:          paymentRecord.OrderId,
+			PaymentID:        paymentRecord.PaymentId,
+			UserID:           paymentRecord.UserId,
+			SeckillProductID: reservationSnapshot.SeckillProductId,
+			ProductID:        orderSnapshot.ProductId,
+			Quantity:         int64(orderSnapshot.Quantity),
+			Amount:           paymentRecord.Amount,
+			Status:           entity.OrderStatusCompleted,
+			OrderType:        orderSnapshot.OrderType,
+			PayStatus:        entity.OrderPayStatusSuccess,
+			PaidAt:           now,
 		})
 		if err != nil {
 			return err
