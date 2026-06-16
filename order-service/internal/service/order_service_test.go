@@ -7,6 +7,7 @@ import (
 
 	seckillpb "seckill-mall/common/seckill"
 	"seckill-mall/order-service/internal/model"
+	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/mq"
 )
 
@@ -15,6 +16,56 @@ type fakeSeckillOrderTxManager struct {
 	last   *model.PersistSeckillOrderInput
 	result *model.PersistSeckillOrderResult
 	err    error
+}
+
+type fakeOrderModel struct {
+	findOrderID string
+	findResult  *entity.Order
+	findErr     error
+}
+
+func (f *fakeOrderModel) FindOneByOrderId(ctx context.Context, orderId string) (*entity.Order, error) {
+	f.findOrderID = orderId
+	if f.findErr != nil {
+		return nil, f.findErr
+	}
+	return f.findResult, nil
+}
+
+func (f *fakeOrderModel) FindByUserId(ctx context.Context, userId int64, status int32, page, pageSize int64) ([]*entity.Order, int64, error) {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) Insert(ctx context.Context, order *entity.Order) error {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) BatchInsert(ctx context.Context, orders []*entity.Order) (int64, error) {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) Update(ctx context.Context, order *entity.Order) error {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) UpdateStatus(ctx context.Context, orderId string, status int32) error {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) Cancel(ctx context.Context, orderId string, userId int64) error {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) Refund(ctx context.Context, orderId string) error {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) CheckIdempotency(ctx context.Context, orderId string) (bool, error) {
+	panic("not implemented")
+}
+
+func (f *fakeOrderModel) BatchCheckIdempotency(ctx context.Context, orderIds []string) (map[string]bool, error) {
+	panic("not implemented")
 }
 
 func (f *fakeSeckillOrderTxManager) PersistSeckillOrder(ctx context.Context, in *model.PersistSeckillOrderInput) (*model.PersistSeckillOrderResult, error) {
@@ -34,6 +85,14 @@ type fakeSeckillServiceRPC struct {
 	lastOrderID string
 	lastStatus  string
 	lastRecover bool
+	compensateCalls int
+	lastCompensateOrderID string
+	lastCompensateProductID int64
+	lastCompensateUserID int64
+	lastCompensateQuantity int64
+	lastCompensateReason string
+	compensateResp *seckillpb.CompensateFailedOrderResponse
+	compensateErr error
 }
 
 func (f *fakeSeckillServiceRPC) UpdateOrderStatus(ctx context.Context, orderId, status string, allowRecover bool) error {
@@ -45,6 +104,18 @@ func (f *fakeSeckillServiceRPC) UpdateOrderStatus(ctx context.Context, orderId, 
 }
 
 func (f *fakeSeckillServiceRPC) CompensateFailedOrder(ctx context.Context, orderId string, seckillProductId int64, userId int64, quantity int64, reason string) (*seckillpb.CompensateFailedOrderResponse, error) {
+	f.compensateCalls++
+	f.lastCompensateOrderID = orderId
+	f.lastCompensateProductID = seckillProductId
+	f.lastCompensateUserID = userId
+	f.lastCompensateQuantity = quantity
+	f.lastCompensateReason = reason
+	if f.compensateErr != nil {
+		return nil, f.compensateErr
+	}
+	if f.compensateResp != nil {
+		return f.compensateResp, nil
+	}
 	return &seckillpb.CompensateFailedOrderResponse{
 		Success: true,
 		Result:  "compensated",
@@ -128,5 +199,86 @@ func TestProcessSeckillOrderReturnsErrorWhenTransactionalPersistenceFails(t *tes
 	}
 	if seckillRPC.updateCalls != 0 {
 		t.Fatalf("expected no success callback on persistence error, got %d", seckillRPC.updateCalls)
+	}
+}
+
+func TestProcessOrderTimeoutCompensatesWhenOrderNotFound(t *testing.T) {
+	seckillRPC := &fakeSeckillServiceRPC{}
+	svc := &OrderService{
+		orderModel:     &fakeOrderModel{findErr: model.ErrNotFound},
+		seckillSvcRPC:  seckillRPC,
+	}
+
+	msg := &mq.SeckillOrderMessage{
+		OrderId:          "order-timeout-1",
+		UserId:           1001,
+		SeckillProductId: 2001,
+		Quantity:         2,
+	}
+
+	if err := svc.ProcessOrderTimeout(msg); err != nil {
+		t.Fatalf("ProcessOrderTimeout() error = %v", err)
+	}
+	if seckillRPC.compensateCalls != 1 {
+		t.Fatalf("expected compensate called once, got %d", seckillRPC.compensateCalls)
+	}
+	if seckillRPC.lastCompensateOrderID != "order-timeout-1" ||
+		seckillRPC.lastCompensateProductID != 2001 ||
+		seckillRPC.lastCompensateUserID != 1001 ||
+		seckillRPC.lastCompensateQuantity != 2 ||
+		seckillRPC.lastCompensateReason != "timeout_not_found_in_db" {
+		t.Fatalf("unexpected compensate args: order=%s product=%d user=%d quantity=%d reason=%s",
+			seckillRPC.lastCompensateOrderID,
+			seckillRPC.lastCompensateProductID,
+			seckillRPC.lastCompensateUserID,
+			seckillRPC.lastCompensateQuantity,
+			seckillRPC.lastCompensateReason,
+		)
+	}
+}
+
+func TestProcessOrderTimeoutSkipsCompensationWhenOrderExists(t *testing.T) {
+	seckillRPC := &fakeSeckillServiceRPC{}
+	svc := &OrderService{
+		orderModel: &fakeOrderModel{findResult: &entity.Order{
+			OrderId: "order-timeout-2",
+		}},
+		seckillSvcRPC: seckillRPC,
+	}
+
+	msg := &mq.SeckillOrderMessage{
+		OrderId:          "order-timeout-2",
+		UserId:           1002,
+		SeckillProductId: 2002,
+		Quantity:         1,
+	}
+
+	if err := svc.ProcessOrderTimeout(msg); err != nil {
+		t.Fatalf("ProcessOrderTimeout() error = %v", err)
+	}
+	if seckillRPC.compensateCalls != 0 {
+		t.Fatalf("expected no compensation when order exists, got %d", seckillRPC.compensateCalls)
+	}
+}
+
+func TestProcessOrderTimeoutReturnsErrorWhenCompensationFails(t *testing.T) {
+	seckillRPC := &fakeSeckillServiceRPC{compensateErr: errors.New("rpc failed")}
+	svc := &OrderService{
+		orderModel:    &fakeOrderModel{findErr: model.ErrNotFound},
+		seckillSvcRPC: seckillRPC,
+	}
+
+	msg := &mq.SeckillOrderMessage{
+		OrderId:          "order-timeout-3",
+		UserId:           1003,
+		SeckillProductId: 2003,
+		Quantity:         1,
+	}
+
+	if err := svc.ProcessOrderTimeout(msg); err == nil {
+		t.Fatal("expected compensation rpc error")
+	}
+	if seckillRPC.compensateCalls != 1 {
+		t.Fatalf("expected compensate called once, got %d", seckillRPC.compensateCalls)
 	}
 }

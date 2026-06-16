@@ -14,6 +14,148 @@ type fakeRepo struct {
 	requeueCalls int
 }
 
+func TestRunnerRepairsReservationOnlyOnceOnPaymentSuccessGap(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S116_S50012",
+				ReservationID:                 "S116_S50012",
+				PaymentID:                     "P50012",
+				UserID:                        109,
+				ProductID:                     22,
+				Quantity:                      1,
+				Amount:                        23900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710001100,
+				SeckillProductID:              116,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             109,
+				ReservationProductID:          22,
+				ReservationQuantity:           1,
+				ReservationAmount:             23900,
+				ReservationStatus:             ReservationStatusPaying,
+				PaymentFound:                  true,
+				PaymentUserID:                 109,
+				PaymentAmount:                 23900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S116_S50012": {
+				{ID: 51, EventType: "order.created", Status: OutboxStatusPublished},
+				{ID: 52, EventType: "payment.requested", Status: OutboxStatusPublished},
+				{ID: 53, EventType: "payment.succeeded", Status: OutboxStatusPublished},
+				{ID: 54, EventType: "order.completed", Status: OutboxStatusPublished},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S116_S50012": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(client.advanceCalls) != 1 {
+		t.Fatalf("expected one reservation repair call, got %+v", client.advanceCalls)
+	}
+	if client.advanceCalls[0].orderID != "S116_S50012" || client.advanceCalls[0].targetStatus != ReservationStatusConsumed {
+		t.Fatalf("unexpected advance call: %+v", client.advanceCalls[0])
+	}
+	if got := sum.RepairableAnomalyCount[AnomalyReservationNotConsumedOnPaymentSuccess]; got != 1 {
+		t.Fatalf("expected one repairable reservation anomaly, got %d", got)
+	}
+}
+
+func TestRunnerMarksDeadOutboxAsManualInterventionForCompletedOrder(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S117_S50013",
+				ReservationID:                 "S117_S50013",
+				PaymentID:                     "P50013",
+				UserID:                        110,
+				ProductID:                     23,
+				Quantity:                      1,
+				Amount:                        24900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710001200,
+				SeckillProductID:              117,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             110,
+				ReservationProductID:          23,
+				ReservationQuantity:           1,
+				ReservationAmount:             24900,
+				ReservationStatus:             ReservationStatusConsumed,
+				PaymentFound:                  true,
+				PaymentUserID:                 110,
+				PaymentAmount:                 24900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S117_S50013": {
+				{ID: 61, EventType: "order.created", Status: OutboxStatusPublished},
+				{ID: 62, EventType: "payment.requested", Status: OutboxStatusPublished},
+				{ID: 63, EventType: "payment.succeeded", Status: OutboxStatusDead},
+				{ID: 64, EventType: "order.completed", Status: OutboxStatusPublished},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S117_S50013": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxDead]; got != 1 {
+		t.Fatalf("expected one outbox dead anomaly, got %d", got)
+	}
+	if len(client.updateCalls) != 0 || len(client.advanceCalls) != 0 || len(client.compensateCalls) != 0 {
+		t.Fatalf("expected dead outbox to stay manual-only, got update=%+v advance=%+v compensate=%+v",
+			client.updateCalls, client.advanceCalls, client.compensateCalls)
+	}
+}
+
 func (f *fakeRepo) ListOrders(ctx context.Context, windowStartUnix, windowEndUnix int64, limit, offset int) ([]OrderRow, error) {
 	f.listCalls++
 	if offset > 0 {
