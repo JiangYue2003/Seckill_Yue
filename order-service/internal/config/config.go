@@ -22,8 +22,10 @@ type Config struct {
 		OrderConsumerGroup string `json:",optional"` // 主链路消费者组
 		CheckConsumerGroup string `json:",optional"` // 超时检查消费者组
 		DLQConsumerGroup   string `json:",optional"` // 死信队列监控消费者组
+		ProducerGroup      string `json:",optional"` // 事件生产者组
 		OrderTopic         string `json:",optional"` // 主链路 Topic
 		CheckTopic         string `json:",optional"` // 超时检查 Topic
+		EventTopic         string `json:",optional"` // 订单域事件 Topic
 	}
 
 	// Product Service gRPC 配置（通过 etcd 发现）

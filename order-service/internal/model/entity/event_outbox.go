@@ -18,3 +18,11 @@ type EventOutbox struct {
 func (EventOutbox) TableName() string {
 	return "event_outbox"
 }
+
+const (
+	OutboxStatusNew           int32 = 0
+	OutboxStatusPublished     int32 = 1
+	OutboxStatusConsumedAcked int32 = 2
+	OutboxStatusFailed        int32 = 3
+	OutboxStatusDead          int32 = 4
+)

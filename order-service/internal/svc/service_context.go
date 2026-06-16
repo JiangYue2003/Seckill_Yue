@@ -1,12 +1,15 @@
 package svc
 
 import (
+	"context"
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/mq"
+	"seckill-mall/order-service/internal/outbox"
 	"seckill-mall/order-service/internal/payment"
 	"seckill-mall/order-service/internal/rpc"
 	"seckill-mall/order-service/internal/service"
+	"sync"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -18,10 +21,17 @@ type ServiceContext struct {
 	Consumer          *mq.RocketMQOrderConsumer // 主处理队列消费者
 	CheckConsumer     *mq.RocketMQCheckConsumer // 超时检查队列消费者
 	DLQConsumer       *mq.RocketMQDLQConsumer   // 死信队列监控消费者
+	SyncMQProducer    *mq.RocketMQProducer
+	OutboxPublisher   *outbox.Publisher
 	OrderService      *service.OrderService
 	PaymentService    *payment.Service
 	ProductServiceRPC *rpc.ProductServiceClient
 	SeckillServiceRPC *rpc.SeckillServiceClient
+
+	bgCtx    context.Context
+	bgCancel context.CancelFunc
+	bgWg     sync.WaitGroup
+	stopOnce sync.Once
 }
 
 func NewServiceContext(c config.Config) *ServiceContext {
@@ -60,6 +70,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		orderService.SetSeckillServiceRPC(seckillSvc)
 	}
 	paymentService := payment.NewService(paymentLedger, payment.NewMockAdapter(), seckillSvc)
+	outboxStore := model.NewOutboxStore(db)
 
 	rmqCfg := mq.RocketMQConsumerConfig{
 		NameServer:         c.RocketMQ.NameServer,
@@ -97,16 +108,68 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		dlqConsumer = nil
 	}
 
-	return &ServiceContext{
+	producerCfg := mq.RocketMQConfig{
+		NameServer:    c.RocketMQ.NameServer,
+		ProducerGroup: c.RocketMQ.ProducerGroup,
+		EventTopic:    c.RocketMQ.EventTopic,
+	}
+	syncProducer, err := mq.NewRocketMQProducer(producerCfg)
+	if err != nil {
+		logx.Errorf("failed to initialize RocketMQ event producer: %v", err)
+		panic(err)
+	}
+
+	ctx := &ServiceContext{
 		Config:            c,
 		OrderModel:        orderModel,
 		SeckillOrderModel: seckillOrderModel,
 		Consumer:          consumer,
 		CheckConsumer:     checkConsumer,
 		DLQConsumer:       dlqConsumer,
+		SyncMQProducer:    syncProducer,
+		OutboxPublisher:   outbox.NewPublisher(outboxStore, syncProducer),
 		OrderService:      orderService,
 		PaymentService:    paymentService,
 		ProductServiceRPC: productSvc,
 		SeckillServiceRPC: seckillSvc,
 	}
+	ctx.startOutboxPublisher()
+
+	return ctx
+}
+
+func (s *ServiceContext) startOutboxPublisher() {
+	if s == nil || s.OutboxPublisher == nil {
+		return
+	}
+	bgCtx := s.ensureBackgroundContext()
+	s.bgWg.Add(1)
+	go func() {
+		defer s.bgWg.Done()
+		s.OutboxPublisher.Run(bgCtx)
+	}()
+}
+
+func (s *ServiceContext) ensureBackgroundContext() context.Context {
+	if s.bgCtx != nil {
+		return s.bgCtx
+	}
+	bgCtx, cancel := context.WithCancel(context.Background())
+	s.bgCtx = bgCtx
+	s.bgCancel = cancel
+	return bgCtx
+}
+
+func (s *ServiceContext) Stop() {
+	s.stopOnce.Do(func() {
+		if s.bgCancel != nil {
+			s.bgCancel()
+			s.bgWg.Wait()
+		}
+		if s.SyncMQProducer != nil {
+			if err := s.SyncMQProducer.Close(); err != nil {
+				logx.Errorf("failed to close RocketMQ producer: %v", err)
+			}
+		}
+	})
 }

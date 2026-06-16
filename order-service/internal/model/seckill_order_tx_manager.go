@@ -19,7 +19,6 @@ const (
 	seckillOrderRecordStatusReserved     = 0
 	seckillOrderRecordStatusOrderCreated = 1
 	seckillReservationStatusOrderCreated = 2
-	outboxStatusNew                      = 0
 )
 
 type seckillOrderTxManager struct {
@@ -157,7 +156,7 @@ func (m *seckillOrderTxManager) PersistSeckillOrder(ctx context.Context, in *Per
 			AggregateId:   in.OrderID,
 			EventType:     "order.created",
 			PayloadJSON:   string(payload),
-			Status:        outboxStatusNew,
+			Status:        entity.OutboxStatusNew,
 			CreatedAt:     now,
 			UpdatedAt:     now,
 		}

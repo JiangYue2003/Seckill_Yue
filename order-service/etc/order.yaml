@@ -39,8 +39,10 @@ RocketMQ:
   OrderConsumerGroup: seckill_order_consumer
   CheckConsumerGroup: seckill_check_consumer
   DLQConsumerGroup: seckill_dlq_consumer
+  ProducerGroup: order_event_producer
   OrderTopic: seckill_order
   CheckTopic: seckill_order_check
+  EventTopic: order_event
 
 # Product Service gRPC（通过 etcd发现）
 ProductService:

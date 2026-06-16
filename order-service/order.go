@@ -4,7 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
+	"time"
 
 	"seckill-mall/common/logutil"
 	"seckill-mall/common/order"
@@ -61,8 +65,14 @@ func main() {
 			reflection.Register(grpcServer)
 		}
 	})
-	defer func() {
-		// 1. 停止消费新消息
+
+	shutdownDone := make(chan struct{})
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		logx.Info("received shutdown signal, stopping service...")
+
 		if ctx.Consumer != nil {
 			_ = ctx.Consumer.Stop()
 		}
@@ -72,13 +82,19 @@ func main() {
 		if ctx.DLQConsumer != nil {
 			_ = ctx.DLQConsumer.Stop()
 		}
-
-		// 2. 停止 gRPC 服务
+		ctx.Stop()
 		s.Stop()
+
+		time.Sleep(2 * time.Second)
+		logx.Info("shutdown complete, exiting...")
+		close(shutdownDone)
+		os.Exit(0)
 	}()
 
 	logx.Infof("Starting rpc server at %s...", c.ListenOn)
 	s.Start()
+
+	<-shutdownDone
 }
 
 func overridePorts(c *config.Config) {
