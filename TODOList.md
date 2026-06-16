@@ -1266,78 +1266,350 @@ Publisher 周期扫描 `event_outbox where status in (NEW, FAILED)`：
 
 ## 22. 事件定义清单
 
-建议统一定义以下事件：
+这一节不再只是“建议列表”，而是后续继续完善系统时必须遵守的统一契约基线。
+
+目标不是把所有事件都做成一个超大 DTO，而是做到：
+
+1. 事件名稳定
+2. 基础字段稳定
+3. 生产者和消费者对同一事件的语义一致
+4. reconcile / 审计 / 补偿工具可以不读业务实现，只读事件和账本就能判断事实
+
+### 22.1 先以当前代码事实作为统一范围
+
+当前代码中已经真实存在、并进入账本或对账逻辑的事件，至少包括：
 
 - `reservation.created`
+- `reservation.timeout.check`
 - `reservation.released`
-- `reservation.expired`
+- `reservation.advanced`
 - `order.created`
-- `order.cancelled`
-- `order.expired`
-- `payment.created`
+- `payment.requested`
 - `payment.succeeded`
-- `payment.failed`
-- `payment.refunded`
 - `order.completed`
 
-每个事件 payload 最低要求包含：
+后续可以继续扩展：
+
+- `reservation.expired`
+- `order.cancelled`
+- `order.expired`
+- `payment.failed`
+- `payment.refunded`
+
+但是在没有真正落库、真正发布、真正消费之前，不应在 README / TODO / proto 中把这些“预留事件”表述成已经完整实现。
+
+### 22.2 事件统一分层
+
+后续统一事件时，按下面三层来约束：
+
+1. 领域事实事件  
+   代表已经落账本、可以被审计的事实，例如：
+   - `reservation.created`
+   - `order.created`
+   - `payment.succeeded`
+   - `order.completed`
+
+2. 流程控制事件  
+   代表驱动下一步检查或补偿的流程指令，例如：
+   - `reservation.timeout.check`
+
+3. 状态推进事件  
+   代表某一账本状态从一个状态推进到另一个状态，例如：
+   - `reservation.released`
+   - `reservation.advanced`
+
+要求：
+
+- `tools/reconcile` 必须显式区分“事实事件”和“流程事件”，不能把两者混为同一强度的购买事实
+- README 和后续文档中，必须明确 `reservation.timeout.check` 只是流程检查触发，不代表订单事实
+- 若未来补 `payment.failed` / `payment.refunded`，也必须先明确它属于事实事件还是补偿事件
+
+### 22.3 统一事件信封字段
+
+后续所有写入 `event_outbox` 的事件，都应统一拥有以下 envelope 字段。
+
+必填字段：
 
 - `event_id`
-- `trace_id`
+- `event_type`
 - `occurred_at`
 - `aggregate_type`
 - `aggregate_id`
+- `trace_id`
+- `source`
+- `version`
+
+建议字段：
+
+- `operator`
+- `reason`
+- `message_id`
+
+约束说明：
+
+- `event_id`：全局唯一，作为事件幂等和审计主键
+- `event_type`：稳定事件名，不允许同义多写
+- `occurred_at`：事件事实发生时间，不是 publisher 发送时间
+- `aggregate_type`：建议限定为 `reservation` / `order` / `payment`
+- `aggregate_id`：对应聚合主键，如 `reservation_id` / `order_id` / `payment_id`
+- `trace_id`：贯穿一次抢购链路；没有上游透传时，也必须在入口生成
+- `source`：建议固定为 `gateway` / `seckill-service` / `order-service` / `reconcile`
+- `version`：事件 schema 版本，默认从 `1` 起
+- `message_id`：若该事件要被 MQ 消费端做幂等消费，必须提供稳定值
+
+### 22.4 统一业务载荷字段
+
+除 envelope 外，秒杀购买主链路事件 payload 至少应能表达以下业务字段：
+
 - `order_id`
 - `reservation_id`
+- `payment_id`
 - `user_id`
 - `seckill_product_id`
+- `product_id`
+- `quantity`
 - `amount`
 - `status`
+
+按事件类型补充：
+
+- Reservation 相关事件补：
+  - `expire_at`
+  - `from_status`
+  - `to_status`
+
+- Payment 相关事件补：
+  - `channel`
+  - `third_party_trade_no`
+  - `paid_at`
+  - `callback_id`
+
+- Order 相关事件补：
+  - `order_type`
+  - `pay_status`
+
+约束：
+
+- 同一字段名必须全局统一，不允许同时出现 `paid_at` / `pay_time` 这类并行命名
+- 枚举值必须与数据库状态语义对齐，不能让 payload 状态和订单账本状态各说各话
+- 所有金额字段统一用“分”为单位，不在事件中传浮点金额
+
+### 22.5 当前代码需要继续收口的差距
+
+结合当前实现，后续应重点收口以下差距：
+
+1. `reservation.created`、`payment.succeeded`、`order.completed` 的 payload 结构还没有完全统一到同一 envelope 规范
+2. 有些事件已经具备 `occurred_at`，但缺少稳定 `trace_id` / `version` / `source`
+3. `reservation.advanced` 目前更偏内部推进事实，后续要明确它是否继续对外发布，还是只作为内部审计事件
+4. `payment.requested` 已存在于代码事实中，但 README / TODO 目前没有把它当成正式事件族成员完整约束
+5. `tools/reconcile` 目前主要识别事件名，还应继续升级为“校验事件字段完整性 + 事件链闭环完整性”
+
+### 22.6 后续执行顺序
+
+这一块建议按下面顺序实施，不要同时大改所有服务：
+
+1. 先定义统一事件 envelope struct / helper
+2. 再统一 `seckill-service` 的 reservation 事件 payload
+3. 再统一 `order-service` 的 order / payment 事件 payload
+4. 再升级 `tools/reconcile` 校验事件字段和事件链完整性
+5. 最后再考虑新增 `payment.failed` / `payment.refunded` / `order.cancelled` 等扩展事件
+
+### 22.7 完成判定
+
+这一节完成，不是“文档写完”就算结束，而至少要满足：
+
+1. `event_outbox` 的生产代码不再手写风格各异的 payload key
+2. `README.md`、`TODOList.md`、代码中的事件名列表一致
+3. `tools/reconcile` 能识别缺失关键字段、缺失关键事件、事件顺序异常
+4. 至少为 `reservation.created`、`order.created`、`payment.succeeded`、`order.completed` 增加字段级测试
+5. 任意一个服务升级事件 payload 时，不需要改动其他服务的 internal 实现，只需要兼容契约和消费端解析
 
 ---
 
 ## 23. 测试与验收矩阵
 
-### 23.1 单元测试
+这一节的目标，是把系统从“功能能跑”推进到“事实闭环可以长期演进”。  
+后续执行时，不要再只按服务拆测试，而要按“账本事实 + 事件推进 + 幂等补偿”三层来补。
 
-必须新增：
+### 23.1 测试分层原则
 
-- Reservation 状态流转测试
-- Outbox 重试测试
-- processed_messages 幂等测试
-- Payment callback 幂等测试
-- 订单状态推进测试
+后续测试统一分成五层：
 
-### 23.2 集成测试
+1. 纯状态机测试  
+   不依赖 DB / MQ / Redis，直接验证状态推进是否合法
 
-必须覆盖：
+2. 事务账本测试  
+   验证一次业务动作是否把该落的表一次性落齐
+
+3. 事件发布与消费幂等测试  
+   验证 outbox publisher、processed_messages、重复投递处理
+
+4. 链路集成测试  
+   验证从秒杀入口到支付完成的主链路是否真的闭环
+
+5. 对账与修复测试  
+   验证 reconcile 能发现异常、区分自动修复和人工介入，并在可修场景完成修复
+
+### 23.2 单元测试基线
+
+必须补齐或持续扩展以下单元测试：
+
+1. Reservation 状态流转测试
+   - `RESERVED -> ORDER_CREATING -> ORDER_CREATED -> PAYING -> PAID -> CONSUMED`
+   - `RESERVED -> RELEASED`
+   - `RESERVED -> FAILED`
+   - 校验非法回退是否被拒绝
+   - 校验 `allowRecover=true` 时是否允许受控恢复
+
+2. 订单状态推进测试
+   - `CREATED -> PAYING -> PAID -> COMPLETED`
+   - 支付成功重复回调不应重复推进
+   - 已完成订单不应再次推进到前置状态
+
+3. Payment callback 幂等测试
+   - 同一 `callback_id` 重复写入不产生重复支付成功事实
+   - 同一订单重复成功回调不重复写 `order.completed`
+   - 兼容 `PayOrder` 路径时不允许外部随意注入业务主键
+
+4. Outbox Publisher 重试测试
+   - `NEW -> PUBLISHED`
+   - `FAILED -> PUBLISHED`
+   - 超过重试上限进入 `DEAD`
+   - 发布成功后不重复发送
+
+5. processed_messages 幂等测试
+   - 同一 `(message_id, consumer_name)` 只生效一次
+   - 已写幂等记录但事务失败时，不能留下“已消费但未落单”的假成功
+
+6. 事件 payload 结构测试
+   - 至少校验 `reservation.created`
+   - `order.created`
+   - `payment.requested`
+   - `payment.succeeded`
+   - `order.completed`
+   的关键字段齐全且命名一致
+
+### 23.3 事务账本测试基线
+
+这一层是当前系统最需要强化的部分，必须覆盖“写事实不是只写一张表”。
+
+至少要验证以下动作的同事务落账结果：
+
+1. 秒杀预占成功
+   - `seckill_reservations`
+   - `event_outbox(reservation.created)`
+   - `event_outbox(reservation.timeout.check)`
+
+2. 秒杀订单创建成功
+   - `orders`
+   - `seckill_orders`
+   - `seckill_reservations`
+   - `order_status_logs`
+   - `processed_messages`
+   - `event_outbox(order.created)`
+
+3. 支付成功
+   - `payments`
+   - `payment_callbacks`
+   - `orders`
+   - `seckill_reservations`
+   - `order_status_logs`
+   - `event_outbox(payment.succeeded)`
+   - `event_outbox(order.completed)`
+
+4. 超时释放或补偿失败
+   - `seckill_reservations`
+   - 必要时回补库存日志 / 用户占位释放
+   - `event_outbox(reservation.released)` 或后续统一失败事件
+
+要求：
+
+- 不能只断言“返回 success”
+- 必须断言涉及的每张事实表状态是否一致
+- 必须断言 outbox 是否同步写入，而不是业务线程异步顺手补发
+
+### 23.4 链路集成测试基线
+
+必须覆盖以下主链路场景：
 
 1. 秒杀成功 -> 订单创建 -> 支付成功 -> 完成
+   - 断言 Reservation / Order / Payment / Outbox / Redis 热状态一致
+
 2. 秒杀成功 -> 订单未创建 -> 超时释放
+   - 断言最终回补库存
+   - 断言 Reservation 不是悬挂在 `RESERVED`
+
 3. Outbox 发布失败 -> 重试成功
+   - 断言 publisher 不依赖业务线程现场重发
+
 4. 回调重复通知 -> 不重复推进
+   - 断言不会重复写支付成功、不重复写完成事件
+
 5. MQ 重复消息 -> 不重复建单
+   - 断言 `processed_messages` 生效
+   - 断言不会产生重复 `orders` / `seckill_orders`
 
-### 23.3 回归测试
+6. reconcile 发现支付成功但 Reservation 未推进
+   - 断言可自动修复到目标状态
 
-必须回归：
+7. reconcile 遇到 `DEAD` outbox
+   - 断言能标为需人工介入，而不是误判为已完成
+
+### 23.5 回归测试基线
+
+必须持续回归以下原有能力，防止完善秒杀链路时把普通电商路径带坏：
 
 - 普通订单创建
 - 普通订单取消
 - 普通订单退款
 - 秒杀查询接口
-- 网关鉴权和限流
+- 网关鉴权
+- 网关限流
+- 老兼容查询形状
+- `PayOrder` 兼容入口仍然可用，但语义被限制为兼容层
 
-### 23.4 可观测性指标
+### 23.6 可观测性与验收指标
 
-建议新增 Prometheus 指标：
+后续建议把以下指标真正落到代码或对账输出中，而不是只写在文档里：
 
 - `reservation_created_total`
 - `reservation_released_total`
-- `outbox_publish_total{status=...}`
+- `reservation_advanced_total{to_status=...}`
+- `outbox_publish_total{event_type=...,status=...}`
+- `outbox_dead_total{event_type=...}`
 - `payment_request_total{channel=...,status=...}`
 - `payment_callback_total{status=...}`
+- `processed_message_dedup_total{consumer=...}`
 - `reconcile_anomaly_total{type=...}`
+- `reconcile_repair_total{type=...,result=...}`
+
+### 23.7 验收出口
+
+后续如果要宣称“这一轮完善收口了”，至少要满足下面的验收出口：
+
+1. `go test ./...` 在主仓范围内通过
+2. 关键服务的单测覆盖到主状态机和幂等分支
+3. 至少一套链路级集成测试可以稳定复现“预占 -> 建单 -> 支付 -> 完成”
+4. 至少一套异常链路可以稳定复现“超时释放”或“对账修复”
+5. `tools/reconcile` 输出中能明确区分：
+   - 正常
+   - 可自动修复
+   - 需人工介入
+6. README 与 TODOList 对系统链路的叙述与代码事实一致
+
+### 23.8 建议拆成两个后续执行批次
+
+为了避免一次改太散，建议把后续收口拆成两个执行批次：
+
+1. 批次一：事件契约统一
+   - 统一 outbox payload
+   - 增加字段级测试
+   - 升级 reconcile 的事件字段校验
+
+2. 批次二：测试与验收补齐
+   - 补主链路集成测试
+   - 补异常链路集成测试
+   - 补回归测试与指标输出
 
 ---
 
