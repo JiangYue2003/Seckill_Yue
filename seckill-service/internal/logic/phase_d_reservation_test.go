@@ -107,6 +107,14 @@ func (f *fakeReservationLedger) ReleaseReservation(ctx context.Context, in *mode
 	if f.releaseResult != nil {
 		return f.releaseResult, nil
 	}
+	if in != nil && in.ReservationID == "" && in.OrderID != "" && f.byOrderID != nil {
+		if existing, ok := f.byOrderID[in.OrderID]; ok {
+			existing.Status = in.TargetStatus
+			existing.Reason = in.Reason
+			existing.UpdatedAt = time.Now().Unix()
+			return existing, nil
+		}
+	}
 	reservation := &entity.SeckillReservation{
 		ReservationId: in.ReservationID,
 		OrderId:       in.OrderID,
@@ -506,6 +514,126 @@ func TestMainChainRedisSuccessMirrorReturnsCompleted(t *testing.T) {
 	}
 	if resultResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS {
 		t.Fatalf("expected success payment status from redis result query, got %v", resultResp.PaymentStatus)
+	}
+}
+
+func TestTimeoutCompensationChainReturnsFailedAndRestoresHotState(t *testing.T) {
+	ledger := &fakeReservationLedger{}
+	producer := &fakeOrderProducer{}
+	svcCtx := newTestServiceContext(t, ledger, producer)
+	initSeckillProduct(t, svcCtx, 108, 1008, 1, 2200)
+
+	seckillResp, err := NewSeckillLogic(context.Background(), svcCtx).Seckill(&seckillpb.SeckillRequest{
+		UserId:           2008,
+		SeckillProductId: 108,
+		Quantity:         1,
+	})
+	if err != nil {
+		t.Fatalf("Seckill() error = %v", err)
+	}
+	if !seckillResp.Success {
+		t.Fatalf("expected seckill success, got %+v", seckillResp)
+	}
+
+	stock, err := svcCtx.Redis.GetStock(context.Background(), 108)
+	if err != nil {
+		t.Fatalf("GetStock() before compensation error = %v", err)
+	}
+	if stock != 0 {
+		t.Fatalf("expected stock deducted to 0 before compensation, got %d", stock)
+	}
+
+	userKey := redisstore.KeyUser(108, 2008)
+	exists, err := svcCtx.Redis.CheckUserKeyExists(context.Background(), userKey)
+	if err != nil {
+		t.Fatalf("CheckUserKeyExists() before compensation error = %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected user key to exist before compensation, order_id=%s", seckillResp.OrderId)
+	}
+
+	compensateResp, err := NewCompensateFailedOrderLogic(context.Background(), svcCtx).CompensateFailedOrder(&seckillpb.CompensateFailedOrderRequest{
+		OrderId:          seckillResp.OrderId,
+		SeckillProductId: 108,
+		UserId:           2008,
+		Quantity:         1,
+		Reason:           "timeout_not_found_in_db",
+	})
+	if err != nil {
+		t.Fatalf("CompensateFailedOrder() error = %v", err)
+	}
+	if !compensateResp.Success || compensateResp.Result != "compensated" {
+		t.Fatalf("expected compensated response, got %+v", compensateResp)
+	}
+
+	stock, err = svcCtx.Redis.GetStock(context.Background(), 108)
+	if err != nil {
+		t.Fatalf("GetStock() after compensation error = %v", err)
+	}
+	if stock != 1 {
+		t.Fatalf("expected stock restored to 1 after compensation, got %d", stock)
+	}
+
+	exists, err = svcCtx.Redis.CheckUserKeyExists(context.Background(), userKey)
+	if err != nil {
+		t.Fatalf("CheckUserKeyExists() after compensation error = %v", err)
+	}
+	if exists {
+		t.Fatalf("expected user key released after compensation, order_id=%s", seckillResp.OrderId)
+	}
+
+	orderInfo, err := svcCtx.Redis.GetOrderInfo(context.Background(), seckillResp.OrderId)
+	if err != nil {
+		t.Fatalf("GetOrderInfo() after compensation error = %v", err)
+	}
+	if orderInfo == nil || orderInfo.Status != OrderStatusFailed {
+		t.Fatalf("expected failed order hot state after compensation, got %+v", orderInfo)
+	}
+
+	if len(ledger.releaseCalls) != 1 {
+		t.Fatalf("expected one reservation release call, got %d", len(ledger.releaseCalls))
+	}
+	if ledger.releaseCalls[0].TargetStatus != entity.ReservationStatusFailed {
+		t.Fatalf("expected reservation target failed, got %d", ledger.releaseCalls[0].TargetStatus)
+	}
+
+	statusResp, err := NewGetSeckillStatusLogic(context.Background(), svcCtx).GetSeckillStatus(&seckillpb.SeckillStatusRequest{
+		UserId:           2008,
+		SeckillProductId: 108,
+	})
+	if err != nil {
+		t.Fatalf("GetSeckillStatus() error = %v", err)
+	}
+	if statusResp.Status != OrderStatusFailed {
+		t.Fatalf("expected failed status after timeout compensation, got %+v", statusResp)
+	}
+	if statusResp.ReservationStatus != commonpb.ReservationStatus_RESERVATION_STATUS_FAILED {
+		t.Fatalf("expected failed reservation status, got %v", statusResp.ReservationStatus)
+	}
+	if statusResp.OrderStatus != commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED {
+		t.Fatalf("expected failed order lifecycle status, got %v", statusResp.OrderStatus)
+	}
+	if statusResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_FAILED {
+		t.Fatalf("expected failed payment status, got %v", statusResp.PaymentStatus)
+	}
+
+	resultResp, err := NewGetSeckillResultLogic(context.Background(), svcCtx).GetSeckillResult(&seckillpb.SeckillResultRequest{
+		OrderId: seckillResp.OrderId,
+	})
+	if err != nil {
+		t.Fatalf("GetSeckillResult() error = %v", err)
+	}
+	if resultResp.Success {
+		t.Fatalf("expected failed result after timeout compensation, got %+v", resultResp)
+	}
+	if resultResp.ReservationStatus != commonpb.ReservationStatus_RESERVATION_STATUS_FAILED {
+		t.Fatalf("expected failed reservation result status, got %v", resultResp.ReservationStatus)
+	}
+	if resultResp.OrderStatus != commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_FAILED {
+		t.Fatalf("expected failed order result lifecycle status, got %v", resultResp.OrderStatus)
+	}
+	if resultResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_FAILED {
+		t.Fatalf("expected failed payment result status, got %v", resultResp.PaymentStatus)
 	}
 }
 
