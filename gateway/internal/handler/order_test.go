@@ -209,3 +209,49 @@ func TestGetPaymentReturnsPaymentPayload(t *testing.T) {
 		t.Fatalf("unexpected payment status: %s", resp.Data.Status)
 	}
 }
+
+func TestHandleMockPaymentCallbackForwardsPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	client := &fakeOrderServiceClient{
+		callbackResp: &commonpb.BoolResponse{Success: true, Message: "回调处理成功"},
+	}
+	handler := NewOrderHandler(client)
+
+	body := `{"paymentId":"pay-3","orderId":"order-3","callbackId":"cb-3","channel":"mock_alipay","thirdPartyTradeNo":"trade-3","rawPayload":"{\"ok\":true}"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/payment/callback/mock", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	handler.HandleMockPaymentCallback(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if client.callbackReq == nil {
+		t.Fatal("expected HandlePaymentCallback rpc to be called")
+	}
+	if client.callbackReq.GetPaymentId() != "pay-3" ||
+		client.callbackReq.GetOrderId() != "order-3" ||
+		client.callbackReq.GetCallbackId() != "cb-3" ||
+		client.callbackReq.GetChannel() != "mock_alipay" ||
+		client.callbackReq.GetThirdPartyTradeNo() != "trade-3" ||
+		client.callbackReq.GetRawPayload() != "{\"ok\":true}" {
+		t.Fatalf("unexpected callback req: %+v", client.callbackReq)
+	}
+
+	var resp struct {
+		Code int `json:"code"`
+		Data struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Data.Success || resp.Data.Message != "回调处理成功" {
+		t.Fatalf("unexpected response body: %s", w.Body.String())
+	}
+}
