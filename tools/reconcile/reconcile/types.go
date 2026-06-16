@@ -96,6 +96,7 @@ const (
 	AnomalyOutboxMissingPaymentRequested          = "outbox_missing_payment_requested"
 	AnomalyOutboxMissingPaymentSucceeded          = "outbox_missing_payment_succeeded"
 	AnomalyOutboxMissingOrderCompleted            = "outbox_missing_order_completed"
+	AnomalyOutboxEventOrderInvalid                = "outbox_event_order_invalid"
 	AnomalyOutboxPayloadMissingFields             = "outbox_payload_missing_fields"
 	AnomalyOutboxRetryablePending                 = "outbox_retryable_pending"
 	AnomalyOutboxDead                             = "outbox_dead"

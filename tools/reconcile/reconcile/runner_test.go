@@ -352,3 +352,69 @@ func TestRunnerDoesNotTreatNewOutboxAsRepairableAnomaly(t *testing.T) {
 		t.Fatalf("expected no requeue for new outbox status, got calls=%d summary=%+v", repo.requeueCalls, sum)
 	}
 }
+
+func TestRunnerDoesNotFlagEventOrderWhenPrimaryChainIsOrdered(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S115_S50011",
+				ReservationID:                 "S115_S50011",
+				PaymentID:                     "P50011",
+				UserID:                        108,
+				ProductID:                     21,
+				Quantity:                      1,
+				Amount:                        22900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710001000,
+				SeckillProductID:              115,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             108,
+				ReservationProductID:          21,
+				ReservationQuantity:           1,
+				ReservationAmount:             22900,
+				ReservationStatus:             ReservationStatusConsumed,
+				PaymentFound:                  true,
+				PaymentUserID:                 108,
+				PaymentAmount:                 22900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S115_S50011": {
+				{ID: 41, EventType: "order.created", Status: OutboxStatusPublished},
+				{ID: 42, EventType: "payment.requested", Status: OutboxStatusPublished},
+				{ID: 43, EventType: "payment.succeeded", Status: OutboxStatusPublished},
+				{ID: 44, EventType: "order.completed", Status: OutboxStatusPublished},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S115_S50011": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxEventOrderInvalid]; got != 0 {
+		t.Fatalf("expected no event order invalid anomaly, got %d", got)
+	}
+}

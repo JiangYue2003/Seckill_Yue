@@ -379,3 +379,69 @@ func TestRunnerDoesNotFlagPaymentRequestedWhenPayloadIsComplete(t *testing.T) {
 		t.Fatalf("expected no payload missing fields anomaly, got %d", got)
 	}
 }
+
+func TestRunnerFlagsManualAnomalyWhenOutboxEventOrderIsInvalid(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S114_S50010",
+				ReservationID:                 "S114_S50010",
+				PaymentID:                     "P50010",
+				UserID:                        107,
+				ProductID:                     20,
+				Quantity:                      1,
+				Amount:                        21900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710000900,
+				SeckillProductID:              114,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             107,
+				ReservationProductID:          20,
+				ReservationQuantity:           1,
+				ReservationAmount:             21900,
+				ReservationStatus:             ReservationStatusConsumed,
+				PaymentFound:                  true,
+				PaymentUserID:                 107,
+				PaymentAmount:                 21900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S114_S50010": {
+				{ID: 101, EventType: "order.created", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-101","event_type":"order.created","occurred_at":1710000900,"aggregate_type":"order","aggregate_id":"S114_S50010","trace_id":"trace-101","source":"order-service","version":1,"message_id":"S114_S50010","reservation_id":"S114_S50010","order_id":"S114_S50010","user_id":107,"seckill_product_id":114,"product_id":20,"quantity":1,"amount":21900,"status":2,"order_type":1,"pay_status":0}`},
+				{ID: 102, EventType: "payment.succeeded", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-102","event_type":"payment.succeeded","occurred_at":1710000901,"aggregate_type":"payment","aggregate_id":"P50010","trace_id":"trace-102","source":"order-service","version":1,"message_id":"S114_S50010","reservation_id":"S114_S50010","order_id":"S114_S50010","payment_id":"P50010","user_id":107,"seckill_product_id":114,"product_id":20,"quantity":1,"amount":21900,"status":2,"channel":"mock_alipay","third_party_trade_no":"trade-102","paid_at":1710000901,"callback_id":"cb-102"}`},
+				{ID: 103, EventType: "payment.requested", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-103","event_type":"payment.requested","occurred_at":1710000902,"aggregate_type":"payment","aggregate_id":"P50010","trace_id":"trace-103","source":"order-service","version":1,"message_id":"S114_S50010","reservation_id":"S114_S50010","order_id":"S114_S50010","payment_id":"P50010","user_id":107,"seckill_product_id":114,"product_id":20,"quantity":1,"amount":21900,"status":1,"channel":"mock_alipay"}`},
+				{ID: 104, EventType: "order.completed", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-104","event_type":"order.completed","occurred_at":1710000902,"aggregate_type":"order","aggregate_id":"S114_S50010","trace_id":"trace-104","source":"order-service","version":1,"message_id":"S114_S50010","reservation_id":"S114_S50010","order_id":"S114_S50010","payment_id":"P50010","user_id":107,"seckill_product_id":114,"product_id":20,"quantity":1,"amount":21900,"status":5,"order_type":1,"pay_status":2,"paid_at":1710000902}`},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S114_S50010": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxEventOrderInvalid]; got != 1 {
+		t.Fatalf("expected outbox event order invalid anomaly count=1, got %d", got)
+	}
+}

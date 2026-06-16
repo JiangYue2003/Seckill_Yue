@@ -221,17 +221,33 @@ func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row O
 	seenPaymentSucceeded := false
 	seenOrderCompleted := false
 	retryableIDs := make([]int64, 0)
+	orderCreatedID := int64(0)
+	paymentRequestedID := int64(0)
+	paymentSucceededID := int64(0)
+	orderCompletedID := int64(0)
 
 	for _, outbox := range outboxes {
 		switch outbox.EventType {
 		case "order.created":
 			seenOrderCreated = true
+			if orderCreatedID == 0 {
+				orderCreatedID = outbox.ID
+			}
 		case "payment.requested":
 			seenPaymentRequested = true
+			if paymentRequestedID == 0 {
+				paymentRequestedID = outbox.ID
+			}
 		case "payment.succeeded":
 			seenPaymentSucceeded = true
+			if paymentSucceededID == 0 {
+				paymentSucceededID = outbox.ID
+			}
 		case "order.completed":
 			seenOrderCompleted = true
+			if orderCompletedID == 0 {
+				orderCompletedID = outbox.ID
+			}
 		}
 
 		if requiresStrictPayloadContract(outbox.EventType) && !hasRequiredOutboxFields(outbox) {
@@ -259,6 +275,9 @@ func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row O
 	}
 	if row.Status == OrderStatusCompleted && !seenOrderCompleted {
 		r.markManualAnomaly(sum, AnomalyOutboxMissingOrderCompleted, row.OrderID)
+	}
+	if violatesPrimaryEventOrder(orderCreatedID, paymentRequestedID, paymentSucceededID, orderCompletedID) {
+		r.markManualAnomaly(sum, AnomalyOutboxEventOrderInvalid, row.OrderID)
 	}
 
 	if len(retryableIDs) > 0 {
@@ -505,4 +524,17 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 		}
 	}
 	return true
+}
+
+func violatesPrimaryEventOrder(orderCreatedID, paymentRequestedID, paymentSucceededID, orderCompletedID int64) bool {
+	if orderCreatedID > 0 && paymentRequestedID > 0 && orderCreatedID >= paymentRequestedID {
+		return true
+	}
+	if paymentRequestedID > 0 && paymentSucceededID > 0 && paymentRequestedID >= paymentSucceededID {
+		return true
+	}
+	if paymentSucceededID > 0 && orderCompletedID > 0 && paymentSucceededID >= orderCompletedID {
+		return true
+	}
+	return false
 }
