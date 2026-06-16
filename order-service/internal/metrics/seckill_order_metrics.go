@@ -33,4 +33,13 @@ var (
 		},
 		[]string{"result"},
 	)
+
+	// ProcessedMessageDedupTotal records duplicate processed-message skips by consumer.
+	ProcessedMessageDedupTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "processed_message_dedup_total",
+			Help: "Total duplicate processed-message skips by consumer.",
+		},
+		[]string{"consumer"},
+	)
 )

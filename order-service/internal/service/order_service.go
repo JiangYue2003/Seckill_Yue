@@ -101,6 +101,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 
 	if persistResult != nil && persistResult.AlreadyProcessed {
 		logger.Infof("秒杀订单消息已处理，跳过重复建单: orderId=%s, messageId=%s", msg.OrderId, msg.MessageId)
+		metrics.ProcessedMessageDedupTotal.WithLabelValues(seckillOrderConsumerName).Inc()
 	}
 
 	logger.Debugf("秒杀订单处理成功（已完成事务落库）: orderId=%s, userId=%d", msg.OrderId, msg.UserId)

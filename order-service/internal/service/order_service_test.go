@@ -6,9 +6,12 @@ import (
 	"testing"
 
 	seckillpb "seckill-mall/common/seckill"
+	"seckill-mall/order-service/internal/metrics"
 	"seckill-mall/order-service/internal/model"
 	"seckill-mall/order-service/internal/model/entity"
 	"seckill-mall/order-service/internal/mq"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type fakeSeckillOrderTxManager struct {
@@ -198,6 +201,29 @@ func TestProcessSeckillOrderDuplicateDoesNotMarkSuccessBeforePayment(t *testing.
 	}
 	if seckillRPC.compensateCalls != 0 {
 		t.Fatalf("expected duplicate message not to trigger compensation, got %d calls", seckillRPC.compensateCalls)
+	}
+}
+
+func TestProcessSeckillOrderDuplicateIncrementsDedupMetric(t *testing.T) {
+	txManager := &fakeSeckillOrderTxManager{
+		result: &model.PersistSeckillOrderResult{AlreadyProcessed: true},
+	}
+	svc := &OrderService{
+		seckillOrderTxManager: txManager,
+	}
+
+	before := testutil.ToFloat64(metrics.ProcessedMessageDedupTotal.WithLabelValues(seckillOrderConsumerName))
+
+	if err := svc.ProcessSeckillOrder(&mq.SeckillOrderMessage{
+		MessageId: "msg-dedup-1",
+		OrderId:   "order-dedup-1",
+	}); err != nil {
+		t.Fatalf("ProcessSeckillOrder() error = %v", err)
+	}
+
+	after := testutil.ToFloat64(metrics.ProcessedMessageDedupTotal.WithLabelValues(seckillOrderConsumerName))
+	if after-before != 1 {
+		t.Fatalf("expected dedup metric increment 1, got before=%v after=%v", before, after)
 	}
 }
 

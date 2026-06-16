@@ -9,6 +9,7 @@ import (
 	commonpb "seckill-mall/common/common"
 	seckillpb "seckill-mall/common/seckill"
 	"seckill-mall/seckill-service/internal/config"
+	"seckill-mall/seckill-service/internal/metrics"
 	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/model/entity"
 	"seckill-mall/seckill-service/internal/mq"
@@ -16,6 +17,7 @@ import (
 	"seckill-mall/seckill-service/internal/svc"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 type fakeReservationLedger struct {
@@ -295,6 +297,32 @@ func TestSeckillCompensatesRedisWhenReservationPersistFails(t *testing.T) {
 	}
 	if producer.delayCalls != 0 || producer.asyncCalls != 0 {
 		t.Fatalf("expected no mq send on persistence failure, got delay=%d async=%d", producer.delayCalls, producer.asyncCalls)
+	}
+}
+
+func TestSeckillSoldOutByLocalPrefilterIncrementsRejectMetric(t *testing.T) {
+	ledger := &fakeReservationLedger{}
+	svcCtx := newTestServiceContext(t, ledger, nil)
+	initSeckillProduct(t, svcCtx, 109, 1009, 0, 1100)
+
+	svcCtx.Redis.GetOrInitLocalStockWithValue(109, 0)
+	before := testutil.ToFloat64(metrics.SeckillLocalStockRejectTotal)
+
+	resp, err := NewSeckillLogic(context.Background(), svcCtx).Seckill(&seckillpb.SeckillRequest{
+		UserId:           2009,
+		SeckillProductId: 109,
+		Quantity:         1,
+	})
+	if err != nil {
+		t.Fatalf("Seckill() error = %v", err)
+	}
+	if resp.Success || resp.Code != SeckillCodeSoldOut {
+		t.Fatalf("expected sold out by local prefilter, got %+v", resp)
+	}
+
+	after := testutil.ToFloat64(metrics.SeckillLocalStockRejectTotal)
+	if after-before != 1 {
+		t.Fatalf("expected local reject metric increment 1, got before=%v after=%v", before, after)
 	}
 }
 
