@@ -8,7 +8,9 @@ import (
 )
 
 const (
-	reconcileReasonDBFailed = "reconcile_db_failed_status"
+	reconcileReasonDBFailed          = "reconcile_db_failed_status"
+	reconcileReasonPaymentSuccessFix = "reconcile_payment_success_fix"
+	reconcileReasonRetryOutbox       = "reconcile_retry_outbox"
 )
 
 type Runner struct {
@@ -43,7 +45,7 @@ func NewRunner(cfg Config, repo Repo, store Store, client SeckillClient, logf fu
 		logf = func(string, ...any) {}
 	}
 
-	r := &Runner{
+	return &Runner{
 		cfg:    cfg,
 		repo:   repo,
 		store:  store,
@@ -54,13 +56,13 @@ func NewRunner(cfg Config, repo Repo, store Store, client SeckillClient, logf fu
 			time.Now().UnixNano(),
 			rand.Int63(), //nolint:gosec
 		),
-	}
-	return r, nil
+	}, nil
 }
 
 func (r *Runner) Run(ctx context.Context) (Summary, error) {
 	sum := Summary{
-		AnomalyCount: make(map[string]int),
+		RepairableAnomalyCount: make(map[string]int),
+		ManualAnomalyCount:     make(map[string]int),
 	}
 
 	locked, err := r.store.AcquireLock(ctx, r.cfg.LockKey, r.lockVal, r.cfg.LockTTLSeconds)
@@ -104,67 +106,29 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 			return sum, fmt.Errorf("get stock logs failed: %w", err)
 		}
 
+		outboxMap, err := r.repo.GetOutboxEvents(ctx, orderIDs)
+		if err != nil {
+			return sum, fmt.Errorf("get outbox events failed: %w", err)
+		}
+
 		for _, row := range rows {
 			redisStatus := redisStatuses[row.OrderID]
 			if redisStatus == "" {
 				redisStatus = RedisStatusMissing
 			}
 			stock := stockLogMap[row.OrderID]
+			outboxes := outboxMap[row.OrderID]
 
-			if row.SeckillProductID <= 0 {
-				r.markAnomaly(&sum, AnomalyMissingSeckillOrderRecord, row.OrderID)
+			r.checkProcessedMessage(&sum, row)
+			r.checkReservationConsistency(ctx, &sum, row)
+			r.checkPaymentConsistency(&sum, row)
+			r.checkCallbackConsistency(&sum, row)
+			if err := r.checkOutboxConsistency(ctx, &sum, row, outboxes); err != nil {
+				return sum, err
 			}
-
-			if stock.RollbackCount > 0 && stock.DeductCount == 0 {
-				r.markAnomaly(&sum, AnomalyStockRollbackWithoutDeduct, row.OrderID)
-			}
-			if isDBSuccess(row.Status) && stock.RollbackCount > 0 && stock.DeductCount > 0 {
-				r.markAnomaly(&sum, AnomalyStockRollbackButOrderSuccess, row.OrderID)
-			}
-			if isDBFailed(row.Status) && stock.DeductCount > 0 && stock.RollbackCount == 0 {
-				r.markAnomaly(&sum, AnomalyStockMissingRollbackOnFailed, row.OrderID)
-			}
-
-			if isDBSuccess(row.Status) && redisStatus != "success" {
-				r.markAnomaly(&sum, AnomalyRedisNotSuccessOnDBSuccess, row.OrderID)
-				r.doRepair(
-					ctx,
-					&sum,
-					func(ctx context.Context) error {
-						return r.client.UpdateOrderStatus(ctx, row.OrderID, "success", true)
-					},
-				)
-			}
-
-			if isDBFailed(row.Status) && (redisStatus == "pending" || redisStatus == "success") {
-				r.markAnomaly(&sum, AnomalyRedisNotFailedOnDBFailed, row.OrderID)
-				quantity := row.SeckillQuantity
-				if quantity <= 0 {
-					quantity = row.Quantity
-				}
-				if row.SeckillProductID <= 0 || row.UserID <= 0 || quantity <= 0 {
-					r.logf(
-						"level=warn msg=\"skip failed compensation due to incomplete fields\" order_id=%s seckill_product_id=%d user_id=%d quantity=%d",
-						row.OrderID, row.SeckillProductID, row.UserID, quantity,
-					)
-					continue
-				}
-
-				r.doRepair(
-					ctx,
-					&sum,
-					func(ctx context.Context) error {
-						_, err := r.client.CompensateFailedOrder(
-							ctx,
-							row.OrderID,
-							row.SeckillProductID,
-							row.UserID,
-							quantity,
-							reconcileReasonDBFailed,
-						)
-						return err
-					},
-				)
+			r.checkStockConsistency(&sum, row, stock)
+			if err := r.checkRedisConsistency(ctx, &sum, row, redisStatus); err != nil {
+				return sum, err
 			}
 		}
 
@@ -174,27 +138,202 @@ func (r *Runner) Run(ctx context.Context) (Summary, error) {
 	return sum, nil
 }
 
-func (r *Runner) doRepair(ctx context.Context, sum *Summary, fn func(context.Context) error) {
-	if r.cfg.DryRun {
+func (r *Runner) checkProcessedMessage(sum *Summary, row OrderRow) {
+	if !row.ProcessedMessageFound {
+		r.markManualAnomaly(sum, AnomalyProcessedMessageMissing, row.OrderID)
 		return
+	}
+	if row.ProcessedMessageStatus != ProcessedMessageStatusSucceeded {
+		r.markManualAnomaly(sum, AnomalyProcessedMessageNotSucceeded, row.OrderID)
+	}
+}
+
+func (r *Runner) checkReservationConsistency(ctx context.Context, sum *Summary, row OrderRow) {
+	if row.SeckillProductID <= 0 {
+		r.markManualAnomaly(sum, AnomalyMissingSeckillOrderRecord, row.OrderID)
+	}
+	if !row.ReservationFound {
+		r.markManualAnomaly(sum, AnomalyReservationMissing, row.OrderID)
+		return
+	}
+	if row.ReservationUserID != 0 && row.ReservationUserID != row.UserID {
+		r.markManualAnomaly(sum, AnomalyReservationUserMismatch, row.OrderID)
+	}
+	if row.ReservationProductID != 0 && row.ReservationProductID != row.ProductID {
+		r.markManualAnomaly(sum, AnomalyReservationProductMismatch, row.OrderID)
+	}
+	if row.ReservationQuantity != 0 && row.ReservationQuantity != row.Quantity {
+		r.markManualAnomaly(sum, AnomalyReservationQuantityMismatch, row.OrderID)
+	}
+	if row.ReservationAmount != 0 && row.ReservationAmount != row.Amount {
+		r.markManualAnomaly(sum, AnomalyReservationAmountMismatch, row.OrderID)
+	}
+
+	if row.Status >= OrderStatusOrderCreated && row.ReservationStatus < ReservationStatusOrderCreated {
+		r.markManualAnomaly(sum, AnomalyReservationMissingOrderCreated, row.OrderID)
+	}
+	if hasPaymentSuccess(row) && row.ReservationStatus < ReservationStatusConsumed {
+		r.markRepairableAnomaly(sum, AnomalyReservationNotConsumedOnPaymentSuccess, row.OrderID)
+		r.doRepair(ctx, sum, func(ctx context.Context) error {
+			return r.client.AdvanceReservation(ctx, row.OrderID, ReservationStatusConsumed, reconcileReasonPaymentSuccessFix, true)
+		})
+	}
+}
+
+func (r *Runner) checkPaymentConsistency(sum *Summary, row OrderRow) {
+	if expectsPayment(row) && !row.PaymentFound {
+		r.markManualAnomaly(sum, AnomalyPaymentMissing, row.OrderID)
+		return
+	}
+	if !row.PaymentFound {
+		return
+	}
+	if row.PaymentUserID != 0 && row.PaymentUserID != row.UserID {
+		r.markManualAnomaly(sum, AnomalyPaymentUserMismatch, row.OrderID)
+	}
+	if row.PaymentAmount != 0 && row.PaymentAmount != row.Amount {
+		r.markManualAnomaly(sum, AnomalyPaymentAmountMismatch, row.OrderID)
+	}
+	if hasPaymentSuccess(row) && row.PaymentStatus != PaymentStatusSuccess {
+		r.markManualAnomaly(sum, AnomalyPaymentStatusMismatch, row.OrderID)
+	}
+}
+
+func (r *Runner) checkCallbackConsistency(sum *Summary, row OrderRow) {
+	if !row.PaymentFound || row.PaymentStatus != PaymentStatusSuccess {
+		return
+	}
+	if row.CallbackCount == 0 {
+		r.markManualAnomaly(sum, AnomalyCallbackMissingOnPaymentSuccess, row.OrderID)
+	}
+	if row.CallbackVerifyFailCount > 0 {
+		r.markManualAnomaly(sum, AnomalyCallbackVerifyFailedOnPaymentSuccess, row.OrderID)
+	}
+	if row.CallbackProcessFailedCount > 0 {
+		r.markManualAnomaly(sum, AnomalyCallbackProcessFailedOnPaymentSuccess, row.OrderID)
+	}
+}
+
+func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row OrderRow, outboxes []OutboxEventRow) error {
+	seenOrderCreated := false
+	seenPaymentSucceeded := false
+	seenOrderCompleted := false
+	retryableIDs := make([]int64, 0)
+
+	for _, outbox := range outboxes {
+		switch outbox.EventType {
+		case "order.created":
+			seenOrderCreated = true
+		case "payment.succeeded":
+			seenPaymentSucceeded = true
+		case "order.completed":
+			seenOrderCompleted = true
+		}
+
+		if outbox.Status == OutboxStatusFailed {
+			r.markRepairableAnomaly(sum, AnomalyOutboxRetryablePending, row.OrderID)
+			retryableIDs = append(retryableIDs, outbox.ID)
+			continue
+		}
+		if outbox.Status == OutboxStatusDead {
+			r.markManualAnomaly(sum, AnomalyOutboxDead, row.OrderID)
+		}
+	}
+
+	if row.Status >= OrderStatusOrderCreated && !seenOrderCreated {
+		r.markManualAnomaly(sum, AnomalyOutboxMissingOrderCreated, row.OrderID)
+	}
+	if hasPaymentSuccess(row) && !seenPaymentSucceeded {
+		r.markManualAnomaly(sum, AnomalyOutboxMissingPaymentSucceeded, row.OrderID)
+	}
+	if row.Status == OrderStatusCompleted && !seenOrderCompleted {
+		r.markManualAnomaly(sum, AnomalyOutboxMissingOrderCompleted, row.OrderID)
+	}
+
+	if len(retryableIDs) > 0 {
+		return r.doRepair(ctx, sum, func(ctx context.Context) error {
+			return r.repo.RequeueOutbox(ctx, retryableIDs)
+		})
+	}
+	return nil
+}
+
+func (r *Runner) checkRedisConsistency(ctx context.Context, sum *Summary, row OrderRow, redisStatus string) error {
+	if isDBSuccess(row.Status) && redisStatus != "success" {
+		r.markRepairableAnomaly(sum, AnomalyRedisNotSuccessOnDBSuccess, row.OrderID)
+		return r.doRepair(ctx, sum, func(ctx context.Context) error {
+			return r.client.UpdateOrderStatus(ctx, row.OrderID, "success", true)
+		})
+	}
+
+	if isDBFailed(row.Status) && (redisStatus == "pending" || redisStatus == "success") {
+		r.markRepairableAnomaly(sum, AnomalyRedisNotFailedOnDBFailed, row.OrderID)
+		quantity := row.SeckillQuantity
+		if quantity <= 0 {
+			quantity = row.Quantity
+		}
+		if row.SeckillProductID <= 0 || row.UserID <= 0 || quantity <= 0 {
+			r.logf(
+				"level=warn msg=\"skip failed compensation due to incomplete fields\" order_id=%s seckill_product_id=%d user_id=%d quantity=%d",
+				row.OrderID, row.SeckillProductID, row.UserID, quantity,
+			)
+			return nil
+		}
+
+		return r.doRepair(ctx, sum, func(ctx context.Context) error {
+			_, err := r.client.CompensateFailedOrder(
+				ctx,
+				row.OrderID,
+				row.SeckillProductID,
+				row.UserID,
+				quantity,
+				reconcileReasonDBFailed,
+			)
+			return err
+		})
+	}
+	return nil
+}
+
+func (r *Runner) checkStockConsistency(sum *Summary, row OrderRow, stock StockLogCount) {
+	if stock.RollbackCount > 0 && stock.DeductCount == 0 {
+		r.markManualAnomaly(sum, AnomalyStockRollbackWithoutDeduct, row.OrderID)
+	}
+	if isDBSuccess(row.Status) && stock.RollbackCount > 0 && stock.DeductCount > 0 {
+		r.markManualAnomaly(sum, AnomalyStockRollbackButOrderSuccess, row.OrderID)
+	}
+	if isDBFailed(row.Status) && stock.DeductCount > 0 && stock.RollbackCount == 0 {
+		r.markManualAnomaly(sum, AnomalyStockMissingRollbackOnFailed, row.OrderID)
+	}
+}
+
+func (r *Runner) doRepair(ctx context.Context, sum *Summary, fn func(context.Context) error) error {
+	if r.cfg.DryRun {
+		return nil
 	}
 	if sum.RepairAttempted >= r.cfg.MaxRepair {
 		sum.RepairSkippedLimit++
-		return
+		return nil
 	}
 
 	sum.RepairAttempted++
 	if err := fn(ctx); err != nil {
 		sum.RepairFailed++
 		r.logf("level=error msg=\"repair failed\" err=%v", err)
-		return
+		return err
 	}
 	sum.RepairSucceeded++
+	return nil
 }
 
-func (r *Runner) markAnomaly(sum *Summary, anomalyType, orderID string) {
-	sum.AnomalyCount[anomalyType]++
-	r.logf("level=warn msg=\"anomaly found\" order_id=%s type=%s", orderID, anomalyType)
+func (r *Runner) markRepairableAnomaly(sum *Summary, anomalyType, orderID string) {
+	sum.RepairableAnomalyCount[anomalyType]++
+	r.logf("level=warn msg=\"repairable anomaly found\" order_id=%s type=%s", orderID, anomalyType)
+}
+
+func (r *Runner) markManualAnomaly(sum *Summary, anomalyType, orderID string) {
+	sum.ManualAnomalyCount[anomalyType]++
+	r.logf("level=warn msg=\"manual anomaly found\" order_id=%s type=%s", orderID, anomalyType)
 }
 
 func isDBSuccess(status int32) bool {
@@ -202,5 +341,13 @@ func isDBSuccess(status int32) bool {
 }
 
 func isDBFailed(status int32) bool {
-	return status == OrderStatusCancelled || status == OrderStatusRefunded
+	return status == OrderStatusCancelled || status == OrderStatusExpired || status == OrderStatusFailed || status == OrderStatusRefunded
+}
+
+func expectsPayment(row OrderRow) bool {
+	return row.Status >= OrderStatusPaying || row.PayStatus > OrderPayStatusInit || row.PaymentID != ""
+}
+
+func hasPaymentSuccess(row OrderRow) bool {
+	return row.PayStatus == OrderPayStatusSuccess || row.PaymentStatus == PaymentStatusSuccess || row.Status == OrderStatusPaid || row.Status == OrderStatusCompleted
 }

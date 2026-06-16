@@ -18,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/seckill-mall/reconcile-tool/reconcile"
+	commonpb "seckill-mall/common/common"
 	seckillpb "seckill-mall/common/seckill"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -165,14 +166,15 @@ func run(opts cliOptions) error {
 	}
 
 	log.Printf(
-		"level=info msg=\"reconcile done\" locked=%t scanned=%d attempted=%d succeeded=%d failed=%d skipped_limit=%d anomalies=%v",
+		"level=info msg=\"reconcile done\" locked=%t scanned=%d attempted=%d succeeded=%d failed=%d skipped_limit=%d repairable=%v manual=%v",
 		sum.Locked,
 		sum.ScannedOrders,
 		sum.RepairAttempted,
 		sum.RepairSucceeded,
 		sum.RepairFailed,
 		sum.RepairSkippedLimit,
-		sum.AnomalyCount,
+		sum.RepairableAnomalyCount,
+		sum.ManualAnomalyCount,
 	)
 	return nil
 }
@@ -250,15 +252,52 @@ func (r *sqlRepo) ListOrders(ctx context.Context, windowStartUnix, windowEndUnix
 	const query = `
 SELECT
   o.order_id,
+  o.reservation_id,
+  o.payment_id,
   o.user_id,
   o.product_id,
   o.quantity,
+  o.amount,
   o.status,
+  o.pay_status,
   o.created_at,
   so.seckill_product_id,
-  so.quantity
+  so.quantity,
+  sr.reservation_id IS NOT NULL AS reservation_found,
+  sr.user_id,
+  sr.product_id,
+  sr.quantity,
+  sr.amount,
+  sr.status,
+  p.payment_id IS NOT NULL AS payment_found,
+  p.user_id,
+  p.amount,
+  p.status,
+  COALESCE(cb.callback_count, 0) AS callback_count,
+  COALESCE(cb.verify_pass_count, 0) AS verify_pass_count,
+  COALESCE(cb.verify_fail_count, 0) AS verify_fail_count,
+  COALESCE(cb.process_succeeded_count, 0) AS process_succeeded_count,
+  COALESCE(cb.process_failed_count, 0) AS process_failed_count,
+  COALESCE(cb.process_duplicate_count, 0) AS process_duplicate_count,
+  pm.message_id IS NOT NULL AS processed_message_found,
+  pm.status
 FROM orders o
 LEFT JOIN seckill_orders so ON so.order_id = o.order_id
+LEFT JOIN seckill_reservations sr ON sr.order_id = o.order_id
+LEFT JOIN payments p ON p.order_id = o.order_id
+LEFT JOIN (
+  SELECT
+    order_id,
+    COUNT(*) AS callback_count,
+    SUM(CASE WHEN verify_result = 1 THEN 1 ELSE 0 END) AS verify_pass_count,
+    SUM(CASE WHEN verify_result = 2 THEN 1 ELSE 0 END) AS verify_fail_count,
+    SUM(CASE WHEN process_result = 1 THEN 1 ELSE 0 END) AS process_succeeded_count,
+    SUM(CASE WHEN process_result = 2 THEN 1 ELSE 0 END) AS process_failed_count,
+    SUM(CASE WHEN process_result = 3 THEN 1 ELSE 0 END) AS process_duplicate_count
+  FROM payment_callbacks
+  GROUP BY order_id
+) cb ON cb.order_id = o.order_id
+LEFT JOIN processed_messages pm ON pm.message_id = o.order_id AND pm.consumer_name = 'order-service.seckill-order'
 WHERE o.order_type = 1
   AND o.created_at >= ?
   AND o.created_at < ?
@@ -275,25 +314,97 @@ OFFSET ?`
 	result := make([]reconcile.OrderRow, 0, limit)
 	for rows.Next() {
 		var row reconcile.OrderRow
+		var reservationID sql.NullString
+		var paymentID sql.NullString
 		var seckillProductID sql.NullInt64
 		var seckillQuantity sql.NullInt64
+		var reservationFound bool
+		var reservationUserID sql.NullInt64
+		var reservationProductID sql.NullInt64
+		var reservationQuantity sql.NullInt64
+		var reservationAmount sql.NullInt64
+		var reservationStatus sql.NullInt64
+		var paymentFound bool
+		var paymentUserID sql.NullInt64
+		var paymentAmount sql.NullInt64
+		var paymentStatus sql.NullInt64
+		var processedFound bool
+		var processedStatus sql.NullInt64
 		if err := rows.Scan(
 			&row.OrderID,
+			&reservationID,
+			&paymentID,
 			&row.UserID,
 			&row.ProductID,
 			&row.Quantity,
+			&row.Amount,
 			&row.Status,
+			&row.PayStatus,
 			&row.CreatedAt,
 			&seckillProductID,
 			&seckillQuantity,
+			&reservationFound,
+			&reservationUserID,
+			&reservationProductID,
+			&reservationQuantity,
+			&reservationAmount,
+			&reservationStatus,
+			&paymentFound,
+			&paymentUserID,
+			&paymentAmount,
+			&paymentStatus,
+			&row.CallbackCount,
+			&row.CallbackVerifyPassCount,
+			&row.CallbackVerifyFailCount,
+			&row.CallbackProcessSucceededCount,
+			&row.CallbackProcessFailedCount,
+			&row.CallbackProcessDuplicateCount,
+			&processedFound,
+			&processedStatus,
 		); err != nil {
 			return nil, err
+		}
+		if reservationID.Valid {
+			row.ReservationID = reservationID.String
+		}
+		if paymentID.Valid {
+			row.PaymentID = paymentID.String
 		}
 		if seckillProductID.Valid {
 			row.SeckillProductID = seckillProductID.Int64
 		}
 		if seckillQuantity.Valid {
 			row.SeckillQuantity = seckillQuantity.Int64
+		}
+		row.ReservationFound = reservationFound
+		if reservationUserID.Valid {
+			row.ReservationUserID = reservationUserID.Int64
+		}
+		if reservationProductID.Valid {
+			row.ReservationProductID = reservationProductID.Int64
+		}
+		if reservationQuantity.Valid {
+			row.ReservationQuantity = reservationQuantity.Int64
+		}
+		if reservationAmount.Valid {
+			row.ReservationAmount = reservationAmount.Int64
+		}
+		if reservationStatus.Valid {
+			row.ReservationStatus = int32(reservationStatus.Int64)
+		}
+		row.PaymentFound = paymentFound
+		if paymentUserID.Valid {
+			row.PaymentUserID = paymentUserID.Int64
+		}
+		if paymentAmount.Valid {
+			row.PaymentAmount = paymentAmount.Int64
+		}
+		if paymentStatus.Valid {
+			row.PaymentStatus = int32(paymentStatus.Int64)
+		}
+		row.ProcessedMessageFound = processedFound
+		if processedStatus.Valid {
+			row.ProcessedMessageStatus = int32(processedStatus.Int64)
 		}
 		result = append(result, row)
 	}
@@ -345,6 +456,84 @@ GROUP BY order_id`, strings.Join(placeholders, ","))
 	return result, nil
 }
 
+func (r *sqlRepo) GetOutboxEvents(ctx context.Context, orderIDs []string) (map[string][]reconcile.OutboxEventRow, error) {
+	result := make(map[string][]reconcile.OutboxEventRow, len(orderIDs))
+	if len(orderIDs) == 0 {
+		return result, nil
+	}
+
+	placeholders := make([]string, 0, len(orderIDs))
+	args := make([]any, 0, len(orderIDs)*2)
+	for _, id := range orderIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	for _, id := range orderIDs {
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+SELECT id, aggregate_id, event_type, status
+FROM event_outbox
+WHERE aggregate_id IN (%s)
+   OR JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.order_id')) IN (%s)
+ORDER BY id ASC`, strings.Join(placeholders, ","), strings.Join(placeholders, ","))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id          int64
+			aggregateID string
+			eventType   string
+			status      int32
+		)
+		if err := rows.Scan(&id, &aggregateID, &eventType, &status); err != nil {
+			return nil, err
+		}
+		orderID := aggregateID
+		if eventType == "reservation.created" || eventType == "reservation.timeout.check" || eventType == "reservation.released" || eventType == "reservation.advanced" {
+			// reservation aggregate_id is reservation_id; current system keeps reservation_id == order_id
+			orderID = aggregateID
+		}
+		result[orderID] = append(result[orderID], reconcile.OutboxEventRow{
+			ID:        id,
+			EventType: eventType,
+			Status:    status,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *sqlRepo) RequeueOutbox(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	args = append([]any{time.Now().Unix()}, args...)
+
+	query := fmt.Sprintf(`
+UPDATE event_outbox
+SET status = 0, next_retry_at = 0, last_error = '', updated_at = ?
+WHERE id IN (%s) AND status IN (0, 3)`, strings.Join(placeholders, ","))
+
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
 func (r *redisStore) AcquireLock(ctx context.Context, key, token string, ttlSeconds int64) (bool, error) {
 	if ttlSeconds <= 0 {
 		ttlSeconds = defaultLockTTL
@@ -370,26 +559,37 @@ func (r *redisStore) GetOrderStatuses(ctx context.Context, orderIDs []string) (m
 	}
 
 	pipe := r.client.Pipeline()
-	cmds := make(map[string]*redis.StringCmd, len(orderIDs))
+	cmds := make(map[string][]*redis.StringCmd, len(orderIDs))
 	for _, orderID := range orderIDs {
-		key := "seckill:order:" + orderID
-		cmds[orderID] = pipe.Get(ctx, key)
+		keys := buildRedisOrderKeys(orderID)
+		orderCmds := make([]*redis.StringCmd, 0, len(keys))
+		for _, key := range keys {
+			orderCmds = append(orderCmds, pipe.Get(ctx, key))
+		}
+		cmds[orderID] = orderCmds
 	}
 	_, err := pipe.Exec(ctx)
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
 	}
 
-	for orderID, cmd := range cmds {
-		val, getErr := cmd.Result()
-		if errors.Is(getErr, redis.Nil) {
+	for orderID, orderCmds := range cmds {
+		resolved := false
+		for _, cmd := range orderCmds {
+			val, getErr := cmd.Result()
+			if errors.Is(getErr, redis.Nil) {
+				continue
+			}
+			if getErr != nil {
+				return nil, getErr
+			}
+			out[orderID] = parseRedisStatus(val)
+			resolved = true
+			break
+		}
+		if !resolved {
 			out[orderID] = reconcile.RedisStatusMissing
-			continue
 		}
-		if getErr != nil {
-			return nil, getErr
-		}
-		out[orderID] = parseRedisStatus(val)
 	}
 	return out, nil
 }
@@ -441,6 +641,29 @@ func (s *seckillRPCClient) CompensateFailedOrder(
 	return resp.Result, nil
 }
 
+func (s *seckillRPCClient) AdvanceReservation(ctx context.Context, orderID string, targetStatus int32, reason string, allowRecover bool) error {
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := s.client.AdvanceReservation(reqCtx, &seckillpb.AdvanceReservationRequest{
+		OrderId:      orderID,
+		TargetStatus: toProtoReservationStatus(targetStatus),
+		Reason:       reason,
+		Operator:     "reconcile",
+		AllowRecover: allowRecover,
+	})
+	if err != nil {
+		return err
+	}
+	if resp == nil || !resp.Success {
+		if resp == nil {
+			return fmt.Errorf("nil response")
+		}
+		return fmt.Errorf("rejected: %s", resp.Message)
+	}
+	return nil
+}
+
 func parseRedisStatus(raw string) string {
 	value := strings.TrimSpace(raw)
 	if value == "" {
@@ -448,6 +671,55 @@ func parseRedisStatus(raw string) string {
 	}
 	parts := strings.SplitN(value, ":", 2)
 	return strings.ToLower(strings.TrimSpace(parts[0]))
+}
+
+func buildRedisOrderKeys(orderID string) []string {
+	spid := parseSpidFromOrderID(orderID)
+	if spid <= 0 {
+		return []string{"seckill:order:" + orderID}
+	}
+	return []string{
+		fmt.Sprintf("{%d}:sk:order:%s", spid, orderID),
+		"seckill:order:" + orderID,
+	}
+}
+
+func parseSpidFromOrderID(orderID string) int64 {
+	s := strings.TrimPrefix(orderID, "S")
+	idx := strings.Index(s, "_")
+	if idx < 0 {
+		return 0
+	}
+	spid, err := strconv.ParseInt(s[:idx], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return spid
+}
+
+func toProtoReservationStatus(status int32) commonpb.ReservationStatus {
+	switch status {
+	case reconcile.ReservationStatusReserved:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	case reconcile.ReservationStatusOrderCreating:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATING
+	case reconcile.ReservationStatusOrderCreated:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATED
+	case reconcile.ReservationStatusPaying:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_PAYING
+	case reconcile.ReservationStatusPaid:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_PAID
+	case reconcile.ReservationStatusConsumed:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED
+	case reconcile.ReservationStatusReleased:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RELEASED
+	case reconcile.ReservationStatusExpired:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_EXPIRED
+	case reconcile.ReservationStatusFailed:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_FAILED
+	default:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	}
 }
 
 func getenvOrDefault(key, fallback string) string {
