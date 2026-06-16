@@ -102,6 +102,70 @@ type OrderCompletedInput struct {
 	PaidAt           int64
 }
 
+type ReservationReleasedInput struct {
+	EventID          string
+	EventType        string
+	OccurredAt       int64
+	AggregateID      string
+	TraceID          string
+	Source           string
+	Version          int32
+	MessageID        string
+	ReservationID    string
+	OrderID          string
+	UserID           int64
+	SeckillProductID int64
+	ProductID        int64
+	Quantity         int64
+	Amount           int64
+	FromStatus       int32
+	Status           int32
+	Reason           string
+}
+
+type ReservationAdvancedInput struct {
+	EventID          string
+	EventType        string
+	OccurredAt       int64
+	AggregateID      string
+	TraceID          string
+	Source           string
+	Version          int32
+	MessageID        string
+	ReservationID    string
+	OrderID          string
+	PaymentID        string
+	UserID           int64
+	SeckillProductID int64
+	ProductID        int64
+	Quantity         int64
+	Amount           int64
+	FromStatus       int32
+	Status           int32
+	Reason           string
+}
+
+type PaymentRequestedInput struct {
+	EventID          string
+	EventType        string
+	OccurredAt       int64
+	AggregateID      string
+	TraceID          string
+	Source           string
+	Version          int32
+	MessageID        string
+	ReservationID    string
+	OrderID          string
+	PaymentID        string
+	UserID           int64
+	SeckillProductID int64
+	ProductID        int64
+	Quantity         int64
+	Amount           int64
+	Status           int32
+	Channel          string
+}
+
 func BuildReservationCreatedPayload(in ReservationCreatedInput) (string, error) {
 	return marshalPayload(map[string]any{
 		"event_id":           in.EventID,
@@ -200,6 +264,79 @@ func BuildOrderCompletedPayload(in OrderCompletedInput) (string, error) {
 		"order_type":         in.OrderType,
 		"pay_status":         in.PayStatus,
 		"paid_at":            in.PaidAt,
+	})
+}
+
+func BuildReservationReleasedPayload(in ReservationReleasedInput) (string, error) {
+	return marshalPayload(map[string]any{
+		"event_id":           in.EventID,
+		"event_type":         chooseEventType(in.EventType, "reservation.released"),
+		"occurred_at":        in.OccurredAt,
+		"aggregate_type":     "reservation",
+		"aggregate_id":       in.AggregateID,
+		"trace_id":           in.TraceID,
+		"source":             in.Source,
+		"version":            chooseVersion(in.Version),
+		"message_id":         in.MessageID,
+		"reservation_id":     in.ReservationID,
+		"order_id":           in.OrderID,
+		"user_id":            in.UserID,
+		"seckill_product_id": in.SeckillProductID,
+		"product_id":         in.ProductID,
+		"quantity":           in.Quantity,
+		"amount":             in.Amount,
+		"from_status":        in.FromStatus,
+		"status":             in.Status,
+		"reason":             in.Reason,
+	})
+}
+
+func BuildReservationAdvancedPayload(in ReservationAdvancedInput) (string, error) {
+	return marshalPayload(map[string]any{
+		"event_id":           in.EventID,
+		"event_type":         chooseEventType(in.EventType, "reservation.advanced"),
+		"occurred_at":        in.OccurredAt,
+		"aggregate_type":     "reservation",
+		"aggregate_id":       in.AggregateID,
+		"trace_id":           in.TraceID,
+		"source":             in.Source,
+		"version":            chooseVersion(in.Version),
+		"message_id":         in.MessageID,
+		"reservation_id":     in.ReservationID,
+		"order_id":           in.OrderID,
+		"payment_id":         in.PaymentID,
+		"user_id":            in.UserID,
+		"seckill_product_id": in.SeckillProductID,
+		"product_id":         in.ProductID,
+		"quantity":           in.Quantity,
+		"amount":             in.Amount,
+		"from_status":        in.FromStatus,
+		"status":             in.Status,
+		"reason":             in.Reason,
+	})
+}
+
+func BuildPaymentRequestedPayload(in PaymentRequestedInput) (string, error) {
+	return marshalPayload(map[string]any{
+		"event_id":           in.EventID,
+		"event_type":         chooseEventType(in.EventType, "payment.requested"),
+		"occurred_at":        in.OccurredAt,
+		"aggregate_type":     "payment",
+		"aggregate_id":       in.AggregateID,
+		"trace_id":           in.TraceID,
+		"source":             in.Source,
+		"version":            chooseVersion(in.Version),
+		"message_id":         in.MessageID,
+		"reservation_id":     in.ReservationID,
+		"order_id":           in.OrderID,
+		"payment_id":         in.PaymentID,
+		"user_id":            in.UserID,
+		"seckill_product_id": in.SeckillProductID,
+		"product_id":         in.ProductID,
+		"quantity":           in.Quantity,
+		"amount":             in.Amount,
+		"status":             in.Status,
+		"channel":            in.Channel,
 	})
 }
 

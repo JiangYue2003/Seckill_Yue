@@ -258,3 +258,130 @@ func TestBuildOrderCompletedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 		t.Fatalf("expected aggregate_type=order, got %v", got)
 	}
 }
+
+func TestBuildReservationReleasedPayloadIncludesUnifiedEnvelope(t *testing.T) {
+	payloadJSON, err := BuildReservationReleasedPayload(ReservationReleasedInput{
+		EventID:          "evt-reservation-release-R2",
+		EventType:        "reservation.released",
+		OccurredAt:       1710000004,
+		AggregateID:      "R2",
+		TraceID:          "trace-R2",
+		Source:           "seckill-service",
+		Version:          1,
+		MessageID:        "O2",
+		ReservationID:    "R2",
+		OrderID:          "O2",
+		UserID:           11,
+		SeckillProductID: 105,
+		ProductID:        1005,
+		Quantity:         1,
+		Amount:           11800,
+		FromStatus:       0,
+		Status:           6,
+		Reason:           "timeout_release",
+	})
+	if err != nil {
+		t.Fatalf("BuildReservationReleasedPayload() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	required := []string{
+		"event_id", "event_type", "occurred_at", "aggregate_type", "aggregate_id", "trace_id", "source", "version",
+		"message_id", "reservation_id", "order_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount",
+		"from_status", "status", "reason",
+	}
+	for _, key := range required {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("expected key %q in payload, got %v", key, payload)
+		}
+	}
+}
+
+func TestBuildReservationAdvancedPayloadIncludesUnifiedEnvelope(t *testing.T) {
+	payloadJSON, err := BuildReservationAdvancedPayload(ReservationAdvancedInput{
+		EventID:          "evt-reservation-advanced-R3",
+		EventType:        "reservation.advanced",
+		OccurredAt:       1710000005,
+		AggregateID:      "R3",
+		TraceID:          "trace-R3",
+		Source:           "seckill-service",
+		Version:          1,
+		MessageID:        "O3",
+		ReservationID:    "R3",
+		OrderID:          "O3",
+		PaymentID:        "P3",
+		UserID:           12,
+		SeckillProductID: 106,
+		ProductID:        1006,
+		Quantity:         1,
+		Amount:           12800,
+		FromStatus:       3,
+		Status:           5,
+		Reason:           "payment.succeeded",
+	})
+	if err != nil {
+		t.Fatalf("BuildReservationAdvancedPayload() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	required := []string{
+		"event_id", "event_type", "occurred_at", "aggregate_type", "aggregate_id", "trace_id", "source", "version",
+		"message_id", "reservation_id", "order_id", "payment_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount",
+		"from_status", "status", "reason",
+	}
+	for _, key := range required {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("expected key %q in payload, got %v", key, payload)
+		}
+	}
+}
+
+func TestBuildPaymentRequestedPayloadIncludesUnifiedEnvelope(t *testing.T) {
+	payloadJSON, err := BuildPaymentRequestedPayload(PaymentRequestedInput{
+		EventID:          "evt-payment-requested-P4",
+		EventType:        "payment.requested",
+		OccurredAt:       1710000006,
+		AggregateID:      "P4",
+		TraceID:          "trace-P4",
+		Source:           "order-service",
+		Version:          1,
+		MessageID:        "O4",
+		ReservationID:    "R4",
+		OrderID:          "O4",
+		PaymentID:        "P4",
+		UserID:           13,
+		SeckillProductID: 107,
+		ProductID:        1007,
+		Quantity:         1,
+		Amount:           13800,
+		Status:           1,
+		Channel:          "mock_alipay",
+	})
+	if err != nil {
+		t.Fatalf("BuildPaymentRequestedPayload() error = %v", err)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	required := []string{
+		"event_id", "event_type", "occurred_at", "aggregate_type", "aggregate_id", "trace_id", "source", "version",
+		"message_id", "reservation_id", "order_id", "payment_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount",
+		"status", "channel",
+	}
+	for _, key := range required {
+		if _, ok := payload[key]; !ok {
+			t.Fatalf("expected key %q in payload, got %v", key, payload)
+		}
+	}
+}

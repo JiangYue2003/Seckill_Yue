@@ -69,3 +69,113 @@ func TestRunnerFlagsManualAnomalyWhenPaymentSucceededPayloadMissesUnifiedFields(
 		t.Fatalf("expected outbox payload missing fields anomaly count=1, got %d", got)
 	}
 }
+
+func TestRunnerFlagsManualAnomalyWhenReservationReleasedPayloadMissesUnifiedFields(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                 "S109_S50005",
+				ReservationID:           "S109_S50005",
+				UserID:                  102,
+				ProductID:               15,
+				Quantity:                1,
+				Amount:                  16900,
+				Status:                  OrderStatusFailed,
+				PayStatus:               OrderPayStatusInit,
+				CreatedAt:               1710000400,
+				SeckillProductID:        109,
+				SeckillQuantity:         1,
+				ReservationFound:        true,
+				ReservationUserID:       102,
+				ReservationProductID:    15,
+				ReservationQuantity:     1,
+				ReservationAmount:       16900,
+				ReservationStatus:       ReservationStatusReleased,
+				ProcessedMessageFound:   true,
+				ProcessedMessageStatus:  ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S109_S50005": {
+				{ID: 51, EventType: "reservation.released", Status: OutboxStatusPublished, PayloadJSON: `{"reservation_id":"S109_S50005","order_id":"S109_S50005","status":6}`},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S109_S50005": "failed"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxPayloadMissingFields]; got != 1 {
+		t.Fatalf("expected outbox payload missing fields anomaly count=1, got %d", got)
+	}
+}
+
+func TestRunnerDoesNotFlagReservationReleasedWhenPayloadIsComplete(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                "S110_S50006",
+				ReservationID:          "S110_S50006",
+				UserID:                 103,
+				ProductID:              16,
+				Quantity:               1,
+				Amount:                 17900,
+				Status:                 OrderStatusFailed,
+				PayStatus:              OrderPayStatusInit,
+				CreatedAt:              1710000500,
+				SeckillProductID:       110,
+				SeckillQuantity:        1,
+				ReservationFound:       true,
+				ReservationUserID:      103,
+				ReservationProductID:   16,
+				ReservationQuantity:    1,
+				ReservationAmount:      17900,
+				ReservationStatus:      ReservationStatusReleased,
+				ProcessedMessageFound:  true,
+				ProcessedMessageStatus: ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S110_S50006": {
+				{ID: 61, EventType: "reservation.released", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-61","event_type":"reservation.released","occurred_at":1710000500,"aggregate_type":"reservation","aggregate_id":"S110_S50006","trace_id":"trace-61","source":"system","version":1,"message_id":"S110_S50006","reservation_id":"S110_S50006","order_id":"S110_S50006","user_id":103,"seckill_product_id":110,"product_id":16,"quantity":1,"amount":17900,"from_status":0,"status":6,"reason":"timeout_release"}`},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S110_S50006": "failed"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxPayloadMissingFields]; got != 0 {
+		t.Fatalf("expected no outbox payload missing fields anomaly, got %d", got)
+	}
+}

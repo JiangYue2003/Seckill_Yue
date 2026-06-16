@@ -359,7 +359,7 @@ func hasPaymentSuccess(row OrderRow) bool {
 
 func requiresStrictPayloadContract(eventType string) bool {
 	switch eventType {
-	case "reservation.created", "order.created", "payment.succeeded", "order.completed":
+	case "reservation.created", "reservation.released", "reservation.advanced", "order.created", "payment.succeeded", "order.completed":
 		return true
 	default:
 		return false
@@ -400,6 +400,35 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"amount",
 			"status",
 			"expire_at",
+		)
+	case "reservation.released":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"from_status",
+			"status",
+			"reason",
+		)
+	case "reservation.advanced":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"payment_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"from_status",
+			"status",
+			"reason",
 		)
 	case "order.created":
 		required = append(required,

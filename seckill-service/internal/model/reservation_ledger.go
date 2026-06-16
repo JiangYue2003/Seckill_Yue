@@ -2,7 +2,6 @@ package model
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -284,12 +283,25 @@ func (m *reservationLedger) ReleaseReservation(ctx context.Context, in *ReleaseR
 			return err
 		}
 
-		payload, err := json.Marshal(map[string]any{
-			"reservation_id": reservation.ReservationId,
-			"order_id":       reservation.OrderId,
-			"status":         in.TargetStatus,
-			"reason":         in.Reason,
-			"occurred_at":    now,
+		payload, err := events.BuildReservationReleasedPayload(events.ReservationReleasedInput{
+			EventID:          fmt.Sprintf("evt-reservation-release-%s-%d", reservation.ReservationId, now),
+			EventType:        "reservation.released",
+			OccurredAt:       now,
+			AggregateID:      reservation.ReservationId,
+			TraceID:          reservation.OrderId,
+			Source:           defaultReservationOperator(in.Operator),
+			Version:          1,
+			MessageID:        reservation.OrderId,
+			ReservationID:    reservation.ReservationId,
+			OrderID:          reservation.OrderId,
+			UserID:           reservation.UserId,
+			SeckillProductID: reservation.SeckillProductId,
+			ProductID:        reservation.ProductId,
+			Quantity:         int64(reservation.Quantity),
+			Amount:           reservation.Amount,
+			FromStatus:       fromStatus,
+			Status:           in.TargetStatus,
+			Reason:           in.Reason,
 		})
 		if err != nil {
 			return err
@@ -370,13 +382,26 @@ func (m *reservationLedger) AdvanceReservation(ctx context.Context, in *AdvanceR
 			return err
 		}
 
-		payload, err := json.Marshal(map[string]any{
-			"reservation_id": reservation.ReservationId,
-			"order_id":       reservation.OrderId,
-			"payment_id":     in.PaymentID,
-			"status":         in.TargetStatus,
-			"reason":         in.Reason,
-			"occurred_at":    now,
+		payload, err := events.BuildReservationAdvancedPayload(events.ReservationAdvancedInput{
+			EventID:          fmt.Sprintf("evt-reservation-advanced-%s-%d", reservation.ReservationId, now),
+			EventType:        "reservation.advanced",
+			OccurredAt:       now,
+			AggregateID:      reservation.ReservationId,
+			TraceID:          reservation.OrderId,
+			Source:           defaultReservationOperator(in.Operator),
+			Version:          1,
+			MessageID:        reservation.OrderId,
+			ReservationID:    reservation.ReservationId,
+			OrderID:          reservation.OrderId,
+			PaymentID:        in.PaymentID,
+			UserID:           reservation.UserId,
+			SeckillProductID: reservation.SeckillProductId,
+			ProductID:        reservation.ProductId,
+			Quantity:         int64(reservation.Quantity),
+			Amount:           reservation.Amount,
+			FromStatus:       fromStatus,
+			Status:           in.TargetStatus,
+			Reason:           in.Reason,
 		})
 		if err != nil {
 			return err
