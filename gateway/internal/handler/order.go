@@ -203,9 +203,84 @@ func (h *OrderHandler) PayOrder(c *gin.Context) {
 	}
 
 	middleware.Success(c, gin.H{
-		"success": true,
-		"message": resp.Message,
+		"success":   true,
+		"message":   resp.Message,
+		"orderId":   req.OrderId,
+		"channel":   req.Channel,
+		"requestId": req.RequestId,
 	})
+}
+
+type CreatePaymentRequest struct {
+	OrderId   string `json:"orderId" binding:"required"`
+	Channel   string `json:"channel"`
+	RequestId string `json:"requestId"`
+}
+
+func (h *OrderHandler) CreatePayment(c *gin.Context) {
+	userId := middleware.GetUserIdFromContext(c)
+	if userId == 0 {
+		middleware.ErrorWithStatus(c, http.StatusUnauthorized, 401, "请先登录")
+		return
+	}
+
+	var req CreatePaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, "参数错误: "+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	resp, err := h.orderSvc.CreatePayment(ctx, &order.CreatePaymentRequest{
+		OrderId:   req.OrderId,
+		Channel:   req.Channel,
+		RequestId: req.RequestId,
+	})
+	if err != nil {
+		handleRPCError(c, err, "创建支付单")
+		return
+	}
+	if !resp.Success {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, resp.Message)
+		return
+	}
+
+	middleware.Success(c, gin.H{
+		"success": resp.Success,
+		"message": resp.Message,
+		"payment": buildPaymentResponse(resp.Payment),
+	})
+}
+
+func (h *OrderHandler) GetPayment(c *gin.Context) {
+	userId := middleware.GetUserIdFromContext(c)
+	if userId == 0 {
+		middleware.ErrorWithStatus(c, http.StatusUnauthorized, 401, "请先登录")
+		return
+	}
+
+	paymentID := c.Query("paymentId")
+	orderID := c.Query("orderId")
+	if paymentID == "" && orderID == "" {
+		middleware.ErrorWithStatus(c, http.StatusBadRequest, 400, "paymentId 或 orderId 不能为空")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	resp, err := h.orderSvc.GetPayment(ctx, &order.GetPaymentRequest{
+		PaymentId: paymentID,
+		OrderId:   orderID,
+	})
+	if err != nil {
+		handleRPCError(c, err, "查询支付单")
+		return
+	}
+
+	middleware.Success(c, buildPaymentResponse(resp))
 }
 
 type MockPaymentCallbackRequest struct {
@@ -248,6 +323,26 @@ func (h *OrderHandler) HandleMockPaymentCallback(c *gin.Context) {
 		"success": true,
 		"message": resp.Message,
 	})
+}
+
+func buildPaymentResponse(p *order.PaymentInfo) gin.H {
+	if p == nil {
+		return gin.H{}
+	}
+	return gin.H{
+		"paymentId":         p.PaymentId,
+		"orderId":           p.OrderId,
+		"userId":            p.UserId,
+		"amount":            p.Amount,
+		"channel":           p.Channel,
+		"status":            p.Status.String(),
+		"thirdPartyTradeNo": p.ThirdPartyTradeNo,
+		"requestId":         p.RequestId,
+		"paidAt":            p.PaidAt,
+		"closedAt":          p.ClosedAt,
+		"createdAt":         p.CreatedAt,
+		"updatedAt":         p.UpdatedAt,
+	}
 }
 
 // CreateNormalOrderRequest 创建普通订单请求
