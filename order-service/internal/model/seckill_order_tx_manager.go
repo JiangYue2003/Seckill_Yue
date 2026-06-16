@@ -9,6 +9,7 @@ import (
 	"seckill-mall/common/events"
 	"seckill-mall/order-service/internal/model/entity"
 
+	mysqlerr "github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -195,5 +196,9 @@ func isDuplicateError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return errors.Is(err, gorm.ErrDuplicatedKey)
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mySQLErr *mysqlerr.MySQLError
+	return errors.As(err, &mySQLErr) && mySQLErr.Number == 1062
 }

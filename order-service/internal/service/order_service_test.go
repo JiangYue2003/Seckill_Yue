@@ -181,8 +181,23 @@ func TestProcessSeckillOrderDuplicateDoesNotMarkSuccessBeforePayment(t *testing.
 		t.Fatalf("ProcessSeckillOrder() error = %v", err)
 	}
 
+	if txManager.called != 1 {
+		t.Fatalf("expected transactional persistence to be called once, got %d", txManager.called)
+	}
+	if txManager.last == nil {
+		t.Fatal("expected persistence input to be captured for duplicate message")
+	}
+	if txManager.last.MessageID != "msg-2" {
+		t.Fatalf("expected duplicate message id msg-2, got %s", txManager.last.MessageID)
+	}
+	if txManager.last.ConsumerName != seckillOrderConsumerName {
+		t.Fatalf("expected consumer name %s, got %s", seckillOrderConsumerName, txManager.last.ConsumerName)
+	}
 	if seckillRPC.updateCalls != 0 {
 		t.Fatalf("expected duplicate message not to mark success before payment, got %d updates", seckillRPC.updateCalls)
+	}
+	if seckillRPC.compensateCalls != 0 {
+		t.Fatalf("expected duplicate message not to trigger compensation, got %d calls", seckillRPC.compensateCalls)
 	}
 }
 
