@@ -870,6 +870,9 @@ func keyQReaperLock(spid int64) string   { return fmt.Sprintf("{%d}:sk:qlock", s
 // KeyUser 导出版本，供 logic 包使用
 func KeyUser(spid, uid int64) string { return keyUser(spid, uid) }
 
+// KeyOrder 导出版本，供上层记录 Redis 热状态 key 快照
+func KeyOrder(spid int64, orderId string) string { return keyOrder(spid, orderId) }
+
 // FormatOrderId 将 spid 编码进 orderId，格式：S{spid}_{rawId}
 // 用于 Redis Cluster 模式下从 orderId 反推 spid 以构造正确的 key。
 func FormatOrderId(spid int64, rawId string) string {

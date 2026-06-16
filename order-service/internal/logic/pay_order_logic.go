@@ -28,7 +28,8 @@ func NewPayOrderLogic(ctx context.Context, svcCtx *svc.ServiceContext) *PayOrder
 	}
 }
 
-// PayOrder 支付订单
+// PayOrder 兼容支付入口
+// 语义：创建支付请求并通过支付子域完成同步成功回调，不再信任外部 payment_id 作为支付事实输入。
 func (l *PayOrderLogic) PayOrder(in *order.PayOrderRequest) (*commonpb.BoolResponse, error) {
 	// 参数校验
 	if in.OrderId == "" {

@@ -2,8 +2,8 @@
 
 一个面向高并发场景的微服务秒杀系统，目标是同时保证：
 - **高并发下不超卖**（Redis Lua 原子裁决）
-- **主链路低延迟**（快速返回 + 异步落单）
-- **异常可恢复**（延迟检查 + 补偿 + 对账修复）
+- **主链路低延迟**（快速返回 + Reservation 预占 + Outbox 异步推进）
+- **异常可恢复**（支付回调、补偿、对账修复）
 
 ---
 
@@ -14,9 +14,9 @@
 - `gateway`：统一 HTTP 入口，JWT 鉴权，路由转发，可配置限流
 - `user-service`：注册 / 登录 / 刷新 token / 用户信息管理
 - `product-service`：商品与秒杀商品管理
-- `seckill-service`：秒杀核心（Redis Lua + 本地预扣减 + 本地配额 + MQ 投递）
-- `order-service`：异步消费秒杀消息，幂等落库，超时补偿触发
-- `tools/reconcile`：离线对账与修复工具（DB/Redis/库存流水一致性）
+- `seckill-service`：秒杀热点准入与预占中心（Redis Lua + Reservation Ledger + Outbox）
+- `order-service`：异步消费 `reservation.created`，事务化落单并承载支付子域
+- `tools/reconcile`：离线多账本对账与修复工具（Reservation/Order/Payment/Outbox/Redis）
 - `test/*`：功能测试、基准压测、网关半链路压测、MQ 可靠性测试
 
 ### 1.2 关键技术栈
@@ -25,7 +25,7 @@
 - 微服务：go-zero（zrpc + etcd 服务发现）
 - 通信：gRPC + Protobuf
 - 缓存与原子操作：Redis + Lua
-- MQ：RabbitMQ
+- MQ：RocketMQ
 - DB：MySQL
 - 可观测：Prometheus + Grafana + Jaeger(OTLP)
 
@@ -40,24 +40,27 @@
 3. `seckill-service` 执行：
 - 秒杀商品 ID 预过滤（Bloom + 回源兜底）
 - 本地库存预扣减（减少 Redis 热点压力）
-- Redis Lua 原子裁决（时间窗 + 一人一单 + 扣减 + pending 状态）
-4. 成功后异步投递 RabbitMQ（主队列消息 + 延迟检查消息）
-5. 接口立即返回“抢购成功，订单处理中”
+- Redis Lua 原子裁决（时间窗 + 一人一单 + 扣减 + 热状态 pending）
+- 同步写入 `seckill_reservations(status=RESERVED)` 与 `event_outbox`
+4. `reservation.created` / `reservation.timeout.check` 由 Outbox Publisher 发布到 RocketMQ
+5. 接口返回“抢购成功，订单处理中”，其真实语义是“预占成功，后续链路继续推进”
 
 ### 2.2 异步落单链路
 
 1. `order-service` 消费主队列消息
-2. 基于 `order_id` 幂等写入（支持批量写入 + 单条回退）
-3. 落库成功后回调 `seckill-service`，将 Redis 订单状态更新为 `success`
+2. 基于 `processed_messages` 幂等校验
+3. 在同一事务内写入 `orders`、`seckill_orders`、`seckill_reservations`、`order_status_logs`、`event_outbox(order.created)`
+4. 支付链路完成后再回写 `seckill-service` 的 Redis 热状态为 `success`
 
 ### 2.3 超时补偿链路
 
-1. 延迟队列 TTL 到期后转入检查队列
-2. `order-service` 检查订单是否落库
+1. `reservation.timeout.check` 事件进入延迟检查队列
+2. `order-service` 检查订单事实是否已落库
 3. 若未落库，调用 `CompensateFailedOrder`：
-- `pending -> failed` 原子状态迁移
+- 热状态 `pending -> failed`
 - 回补 Redis 库存
 - 释放用户占位 key
+- 推进 Reservation 账本到失败态
 
 ### 2.4 多实例配额协商（可选）
 
@@ -87,8 +90,8 @@
 | etcd | `127.0.0.1:2379` |
 | MySQL | `127.0.0.1:3306` |
 | Redis | `localhost:6379` |
-| RabbitMQ AMQP | `localhost:5672` |
-| RabbitMQ 管理台 | `localhost:15672` |
+| RocketMQ NameServer | `localhost:9876` |
+| RocketMQ Broker | `localhost:10911` |
 
 ### 3.3 Prometheus 指标端口
 
@@ -107,7 +110,8 @@
 ### 4.1 启动基础设施
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.infra.yml up -d
+docker compose -f deploy/docker-compose.mq.yml up -d
 ```
 
 ### 4.2 初始化数据库
@@ -191,6 +195,9 @@ go run order-service/order.go -f order-service/etc/order.yaml --port=19084 --met
 - `GET /api/v1/orders`
 - `POST /api/v1/order/:orderId/cancel`
 - `POST /api/v1/order/pay`
+- `POST /api/v1/payment`
+- `GET /api/v1/payment`
+- `POST /api/v1/payment/callback/mock`
 - `POST /api/v1/order/:orderId/refund`
 
 ---
@@ -218,12 +225,12 @@ go run order-service/order.go -f order-service/etc/order.yaml --port=19084 --met
 - `SeckillRedis`：秒杀核心 Redis 连接池
 - `ProductMetaCache`：秒杀商品元数据本地缓存刷新
 - `Bloom`：商品 ID 预过滤器参数（当前实现为 Bloom）
-- `RabbitMQ` + `AsyncProducer`：异步投递参数
+- `RocketMQ` + `AsyncProducer`：兼容投递参数（主事实链路由 Outbox Publisher 负责）
 - `LocalQuota`：多实例本地配额协商开关与参数
 
 ### 7.4 order-service
 
-- `RabbitMQ`：主消费/检查消费
+- `RocketMQ`：主消费/检查消费与事件发布
 - `ProductService` / `SeckillService`：下游 RPC
 - `Fallback`：etcd 不可用时的直连地址
 
@@ -270,9 +277,10 @@ go run . --mode=gateway --gateway-targets=http://127.0.0.1:8888,http://127.0.0.1
 
 目录：`tools/reconcile`
 
-作用：扫描订单窗口，识别并修复典型不一致：
-- DB 成功但 Redis 非 success
-- DB 失败但 Redis 仍 pending/success
+作用：扫描订单窗口，识别并修复多账本不一致：
+- Reservation / Order 一致性
+- Order / Payment / Callback 一致性
+- Outbox / processed_messages / Redis 热状态一致性
 - 库存流水异常（缺回滚、异常回滚组合）
 
 示例：
@@ -289,10 +297,11 @@ go run . \
 
 ## 10. 当前一致性语义与边界
 
-- 秒杀库存权威在 Redis（Lua 原子裁决）
-- 订单持久化是异步最终一致（MQ + 补偿 + 对账）
-- 消费侧采用“处理成功后 ACK”，避免消费成功前误确认
-- 生产侧仍存在极短窗口：Redis 已扣减但消息未入队，依赖 TTL 补偿与对账兜底
+- Redis 负责热点准入、最小热状态与短期裁决，不是最终购买事实来源
+- 最终购买事实以 `seckill_reservations`、`orders`、`payments`、`payment_callbacks`、`event_outbox` 为准
+- MQ 可靠性依赖 Outbox Publisher，而不是“消息失败后靠 TTL 自然回收”
+- 消费侧采用“事务提交成功后 ACK”，避免消费成功前误确认
+- Redis 热状态丢失时，查询会优先回退到账本事实
 
 ---
 

@@ -39,8 +39,13 @@ func TestBuildCompatiblePaymentRequestID(t *testing.T) {
 	}
 
 	explicit := &orderpb.PayOrderRequest{OrderId: "o2", PaymentId: "pay-1"}
-	if got := buildCompatiblePaymentID(explicit); got != "pay-1" {
-		t.Fatalf("buildCompatiblePaymentID() = %s, want pay-1", got)
+	if got := buildCompatiblePaymentID(explicit); got != "compat-o2" {
+		t.Fatalf("buildCompatiblePaymentID() = %s, want compat-o2", got)
+	}
+
+	withRequestID := &orderpb.PayOrderRequest{OrderId: "o3", PaymentId: "pay-legacy", RequestId: "req-3"}
+	if got := buildCompatiblePaymentID(withRequestID); got != "req-3" {
+		t.Fatalf("buildCompatiblePaymentID() = %s, want req-3", got)
 	}
 }
 

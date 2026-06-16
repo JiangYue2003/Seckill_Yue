@@ -8,8 +8,8 @@ import (
 	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
 	"seckill-mall/common/utils"
-	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/metrics"
+	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/mq"
 	"seckill-mall/seckill-service/internal/redis"
 	"seckill-mall/seckill-service/internal/svc"
@@ -63,7 +63,7 @@ func NewSeckillLogic(ctx context.Context, svcCtx *svc.ServiceContext) *SeckillLo
 // 职责边界：
 // 1. Redis 负责热点准入和原子预扣
 // 2. Reservation + Outbox 负责事实落库
-// 3. MQ 在当前阶段仅保留兼容投递路径
+// 3. MQ 仅消费 Outbox 事件，不再承担“Lua 成功即购买成立”的事实语义
 func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResponse, error) {
 	start := time.Now()
 	resultLabel := "system_error"
@@ -195,8 +195,8 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	amount := seckillPrice * quantity
 
 	// 秒杀 Lua 脚本执行（携带时间校验参数）
-	// 注意：TTL 用于用户预占 Key，设置为 5 分钟（UserPreemptTTL）
-	// MQ 处理超时或失败时，TTL 自动释放 Redis 库存，无需手动回滚
+	// 注意：TTL 仅用于热状态与预占 key 的过期控制，不代表最终购买事实。
+	// 最终事实以 Reservation / Order / Payment 账本为准，异常由补偿和对账处理。
 	seckillReq := &redis.SeckillRequest{
 		SeckillProductId: in.SeckillProductId,
 		UserId:           in.UserId,
@@ -353,7 +353,7 @@ func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProduct
 		SeckillPrice:     seckillPrice,
 		Source:           "gateway",
 		Reason:           "reservation.created",
-		RedisOrderKey:    "seckill:order:" + orderID,
+		RedisOrderKey:    redis.KeyOrder(seckillProductID, orderID),
 		ExpireAt:         time.Now().Unix() + UserPreemptTTL,
 	})
 	if err != nil && errors.Is(err, model.ErrAlreadyExists) {

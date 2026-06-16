@@ -95,11 +95,8 @@ func buildPaymentInfo(p *entity.Payment) *orderpb.PaymentInfo {
 }
 
 func buildCompatiblePaymentID(in *orderpb.PayOrderRequest) string {
-	if in.GetPaymentId() != "" {
-		return in.GetPaymentId()
-	}
 	if in.GetRequestId() != "" {
-		return fmt.Sprintf("compat-%s", in.GetRequestId())
+		return in.GetRequestId()
 	}
 	return fmt.Sprintf("compat-%s", in.GetOrderId())
 }

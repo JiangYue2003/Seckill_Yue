@@ -34,9 +34,6 @@ type OrderModel interface {
 	// UpdateStatus 更新订单状态
 	UpdateStatus(ctx context.Context, orderId string, status int32) error
 
-	// Pay 支付订单
-	Pay(ctx context.Context, orderId string, paymentId string) error
-
 	// Cancel 取消订单
 	Cancel(ctx context.Context, orderId string, userId int64) error
 
@@ -152,24 +149,6 @@ func (m *orderModel) UpdateStatus(ctx context.Context, orderId string, status in
 	result := m.db.WithContext(ctx).Model(&entity.Order{}).
 		Where("order_id = ?", orderId).
 		Update("status", status)
-	return result.Error
-}
-
-// Pay 支付订单
-func (m *orderModel) Pay(ctx context.Context, orderId string, paymentId string) error {
-	result := m.db.WithContext(ctx).Model(&entity.Order{}).
-		Where("order_id = ? AND status = ?", orderId, entity.OrderStatusOrderCreated).
-		Updates(map[string]interface{}{
-			"status":     entity.OrderStatusPaid,
-			"pay_status": entity.OrderPayStatusSuccess,
-			"payment_id": paymentId,
-			"paid_at":    time.Now().Unix(),
-		})
-
-	if result.RowsAffected == 0 {
-		return ErrOrderCannotPay
-	}
-
 	return result.Error
 }
 

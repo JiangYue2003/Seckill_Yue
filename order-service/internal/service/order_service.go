@@ -51,8 +51,9 @@ func (s *OrderService) SetSeckillServiceRPC(svc *rpc.SeckillServiceClient) {
 
 // ProcessSeckillOrder 处理秒杀订单
 // 职责边界：
-// 1. 将订单加入批量写入缓冲区（幂等检查在 BatchWriter 内部批量执行）
-// 注意：秒杀场景下，Redis 库存是权威来源，不再扣减 Product 表的物理库存
+// 1. 消费 reservation.created 事件
+// 2. 通过同事务持久化 orders / seckill_orders / seckill_reservations / processed_messages / order_status_logs / event_outbox
+// 注意：秒杀场景下，Redis 只承担热点准入与热状态职责，不再作为最终购买事实来源。
 func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 	ctx := context.Background()
 	logger := logx.WithContext(ctx)
@@ -171,18 +172,6 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 	}
 	logger.Debugf("超时补偿处理完成: orderId=%s, result=%s", msg.OrderId, compensateResp.GetResult())
 	return nil
-}
-
-func (s *OrderService) markSeckillOrderSuccess(ctx context.Context, orderId string) {
-	logger := logx.WithContext(ctx)
-	if s.seckillSvcRPC == nil {
-		return
-	}
-	if rpcErr := s.seckillSvcRPC.UpdateOrderStatus(ctx, orderId, "success", true); rpcErr != nil {
-		logger.Errorf("回写 Redis 订单状态失败（不影响主流程）: orderId=%s, err=%v", orderId, rpcErr)
-		return
-	}
-	logger.Debugf("Redis 订单状态已更新为 success: orderId=%s", orderId)
 }
 
 // RollbackSeckillOrder 回滚秒杀订单（取消时调用）

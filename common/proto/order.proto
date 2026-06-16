@@ -96,7 +96,7 @@ message CancelOrderRequest {
 // 支付订单请求
 message PayOrderRequest {
     string order_id = 1;
-    string payment_id = 2;        // 兼容字段，后续由服务端生成支付单号
+    string payment_id = 2;        // 废弃兼容字段，服务端忽略其业务语义
     string channel = 3;           // 支付渠道，如 mock_alipay
     string request_id = 4;        // 请求幂等号
 }
