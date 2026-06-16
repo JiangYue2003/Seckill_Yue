@@ -98,8 +98,8 @@ func (l *GetSeckillResultLogic) GetSeckillResult(in *seckill.SeckillResultReques
 				Status:            orderInfo.Status,
 				Message:           "订单已成功，详情同步中，请稍后重试",
 				ReservationId:     in.OrderId,
-				ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_PAID,
-				OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID,
+				ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED,
+				OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED,
 				PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS,
 			}, nil
 		}
@@ -119,7 +119,7 @@ func (l *GetSeckillResultLogic) GetSeckillResult(in *seckill.SeckillResultReques
 			Message:           "订单处理成功",
 			ReservationId:     in.OrderId,
 			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED,
-			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID,
+			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED,
 			PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS,
 		}, nil
 

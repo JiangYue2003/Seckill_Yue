@@ -38,8 +38,10 @@ func mapReservationOrderLifecycle(status int32) commonpb.OrderLifecycleStatus {
 		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_ORDER_CREATED
 	case entity.ReservationStatusPaying:
 		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAYING
-	case entity.ReservationStatusPaid, entity.ReservationStatusConsumed:
+	case entity.ReservationStatusPaid:
 		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID
+	case entity.ReservationStatusConsumed:
+		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED
 	case entity.ReservationStatusReleased:
 		return commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_CANCELLED
 	case entity.ReservationStatusExpired:

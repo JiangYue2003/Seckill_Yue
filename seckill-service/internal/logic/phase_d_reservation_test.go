@@ -362,6 +362,153 @@ func TestGetSeckillResultFallsBackToReservationFactWhenRedisMissing(t *testing.T
 	}
 }
 
+func TestMainChainQueriesReturnCompletedAfterPaymentSuccess(t *testing.T) {
+	ledger := &fakeReservationLedger{}
+	producer := &fakeOrderProducer{}
+	svcCtx := newTestServiceContext(t, ledger, producer)
+	initSeckillProduct(t, svcCtx, 106, 1006, 1, 4400)
+
+	seckillResp, err := NewSeckillLogic(context.Background(), svcCtx).Seckill(&seckillpb.SeckillRequest{
+		UserId:           2006,
+		SeckillProductId: 106,
+		Quantity:         1,
+	})
+	if err != nil {
+		t.Fatalf("Seckill() error = %v", err)
+	}
+	if !seckillResp.Success {
+		t.Fatalf("expected seckill success, got %+v", seckillResp)
+	}
+
+	reservation := ledger.byOrderID[seckillResp.OrderId]
+	if reservation == nil {
+		t.Fatalf("expected persisted reservation for order %s", seckillResp.OrderId)
+	}
+	reservation.Status = entity.ReservationStatusConsumed
+
+	updateResp, err := NewUpdateOrderStatusLogic(context.Background(), svcCtx).UpdateOrderStatus(&seckillpb.UpdateOrderStatusRequest{
+		OrderId: seckillResp.OrderId,
+		Status:  redisstore.OrderStatusSuccess,
+	})
+	if err != nil {
+		t.Fatalf("UpdateOrderStatus() error = %v", err)
+	}
+	if !updateResp.Success {
+		t.Fatalf("expected update success, got %+v", updateResp)
+	}
+
+	statusResp, err := NewGetSeckillStatusLogic(context.Background(), svcCtx).GetSeckillStatus(&seckillpb.SeckillStatusRequest{
+		UserId:           2006,
+		SeckillProductId: 106,
+	})
+	if err != nil {
+		t.Fatalf("GetSeckillStatus() error = %v", err)
+	}
+	if statusResp.OrderStatus != commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED {
+		t.Fatalf("expected completed order status from reservation fact, got %v", statusResp.OrderStatus)
+	}
+	if statusResp.ReservationStatus != commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED {
+		t.Fatalf("expected consumed reservation status, got %v", statusResp.ReservationStatus)
+	}
+	if statusResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS {
+		t.Fatalf("expected success payment status, got %v", statusResp.PaymentStatus)
+	}
+
+	resultResp, err := NewGetSeckillResultLogic(context.Background(), svcCtx).GetSeckillResult(&seckillpb.SeckillResultRequest{
+		OrderId: seckillResp.OrderId,
+	})
+	if err != nil {
+		t.Fatalf("GetSeckillResult() error = %v", err)
+	}
+	if !resultResp.Success {
+		t.Fatalf("expected success result, got %+v", resultResp)
+	}
+	if resultResp.OrderStatus != commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED {
+		t.Fatalf("expected completed order status from success hot state, got %v", resultResp.OrderStatus)
+	}
+	if resultResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS {
+		t.Fatalf("expected success payment status, got %v", resultResp.PaymentStatus)
+	}
+}
+
+func TestMainChainRedisSuccessMirrorReturnsCompleted(t *testing.T) {
+	svcCtx := newTestServiceContext(t, nil, nil)
+	initSeckillProduct(t, svcCtx, 107, 1007, 1, 3300)
+
+	orderID := redisstore.FormatOrderId(107, "S50002")
+	_, err := svcCtx.Redis.DoSeckill(context.Background(), &redisstore.SeckillRequest{
+		SeckillProductId: 107,
+		UserId:           2007,
+		Quantity:         1,
+		OrderId:          orderID,
+		TTL:              300,
+		StartTime:        time.Now().Unix() - 10,
+		EndTime:          time.Now().Unix() + 3600,
+		OrderStatusTTL:   OrderStatusTTL,
+	})
+	if err != nil {
+		t.Fatalf("DoSeckill() error = %v", err)
+	}
+
+	if err := svcCtx.Redis.SetOrderInfo(context.Background(), 107, orderID, &redisstore.OrderInfo{
+		Status:      redisstore.OrderStatusPending,
+		OrderId:     orderID,
+		ProductId:   1007,
+		Quantity:    1,
+		Amount:      3300,
+		ProductName: "测试商品",
+	}, OrderStatusTTL); err != nil {
+		t.Fatalf("SetOrderInfo() error = %v", err)
+	}
+
+	updateResp, err := NewUpdateOrderStatusLogic(context.Background(), svcCtx).UpdateOrderStatus(&seckillpb.UpdateOrderStatusRequest{
+		OrderId: orderID,
+		Status:  redisstore.OrderStatusSuccess,
+	})
+	if err != nil {
+		t.Fatalf("UpdateOrderStatus() error = %v", err)
+	}
+	if !updateResp.Success {
+		t.Fatalf("expected update success, got %+v", updateResp)
+	}
+
+	statusResp, err := NewGetSeckillStatusLogic(context.Background(), svcCtx).GetSeckillStatus(&seckillpb.SeckillStatusRequest{
+		UserId:           2007,
+		SeckillProductId: 107,
+	})
+	if err != nil {
+		t.Fatalf("GetSeckillStatus() error = %v", err)
+	}
+	if statusResp.OrderStatus != commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED {
+		t.Fatalf("expected completed order status from redis mirror, got %v", statusResp.OrderStatus)
+	}
+	if statusResp.ReservationStatus != commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED {
+		t.Fatalf("expected consumed reservation status from redis mirror, got %v", statusResp.ReservationStatus)
+	}
+	if statusResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS {
+		t.Fatalf("expected success payment status from redis mirror, got %v", statusResp.PaymentStatus)
+	}
+
+	resultResp, err := NewGetSeckillResultLogic(context.Background(), svcCtx).GetSeckillResult(&seckillpb.SeckillResultRequest{
+		OrderId: orderID,
+	})
+	if err != nil {
+		t.Fatalf("GetSeckillResult() error = %v", err)
+	}
+	if !resultResp.Success {
+		t.Fatalf("expected success result, got %+v", resultResp)
+	}
+	if resultResp.OrderStatus != commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED {
+		t.Fatalf("expected completed order status from redis result query, got %v", resultResp.OrderStatus)
+	}
+	if resultResp.ReservationStatus != commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED {
+		t.Fatalf("expected consumed reservation status from redis result query, got %v", resultResp.ReservationStatus)
+	}
+	if resultResp.PaymentStatus != commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS {
+		t.Fatalf("expected success payment status from redis result query, got %v", resultResp.PaymentStatus)
+	}
+}
+
 func TestCompensateFailedOrderReleasesReservationLedger(t *testing.T) {
 	ledger := &fakeReservationLedger{}
 	svcCtx := newTestServiceContext(t, ledger, nil)

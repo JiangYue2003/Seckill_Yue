@@ -198,7 +198,7 @@ func (l *GetSeckillStatusLogic) GetSeckillStatus(in *seckill.SeckillStatusReques
 			Quantity:          orderInfo.Quantity,
 			ReservationId:     orderId,
 			ReservationStatus: commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED,
-			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_PAID,
+			OrderStatus:       commonpb.OrderLifecycleStatus_ORDER_LIFECYCLE_STATUS_COMPLETED,
 			PaymentStatus:     commonpb.PaymentStatus_PAYMENT_STATUS_SUCCESS,
 		}, nil
 	case OrderStatusFailed:
