@@ -217,6 +217,7 @@ func (r *Runner) checkCallbackConsistency(sum *Summary, row OrderRow) {
 
 func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row OrderRow, outboxes []OutboxEventRow) error {
 	seenOrderCreated := false
+	seenPaymentRequested := false
 	seenPaymentSucceeded := false
 	seenOrderCompleted := false
 	retryableIDs := make([]int64, 0)
@@ -225,6 +226,8 @@ func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row O
 		switch outbox.EventType {
 		case "order.created":
 			seenOrderCreated = true
+		case "payment.requested":
+			seenPaymentRequested = true
 		case "payment.succeeded":
 			seenPaymentSucceeded = true
 		case "order.completed":
@@ -247,6 +250,9 @@ func (r *Runner) checkOutboxConsistency(ctx context.Context, sum *Summary, row O
 
 	if row.Status >= OrderStatusOrderCreated && !seenOrderCreated {
 		r.markManualAnomaly(sum, AnomalyOutboxMissingOrderCreated, row.OrderID)
+	}
+	if expectsPayment(row) && !seenPaymentRequested {
+		r.markManualAnomaly(sum, AnomalyOutboxMissingPaymentRequested, row.OrderID)
 	}
 	if hasPaymentSuccess(row) && !seenPaymentSucceeded {
 		r.markManualAnomaly(sum, AnomalyOutboxMissingPaymentSucceeded, row.OrderID)
@@ -359,7 +365,7 @@ func hasPaymentSuccess(row OrderRow) bool {
 
 func requiresStrictPayloadContract(eventType string) bool {
 	switch eventType {
-	case "reservation.created", "reservation.released", "reservation.advanced", "order.created", "payment.succeeded", "order.completed":
+	case "reservation.created", "reservation.released", "reservation.advanced", "order.created", "payment.requested", "payment.succeeded", "order.completed":
 		return true
 	default:
 		return false
@@ -443,6 +449,20 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"status",
 			"order_type",
 			"pay_status",
+		)
+	case "payment.requested":
+		required = append(required,
+			"message_id",
+			"reservation_id",
+			"order_id",
+			"payment_id",
+			"user_id",
+			"seckill_product_id",
+			"product_id",
+			"quantity",
+			"amount",
+			"status",
+			"channel",
 		)
 	case "payment.succeeded":
 		required = append(required,

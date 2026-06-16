@@ -117,6 +117,14 @@ func (m *paymentLedger) MarkPaymentRequested(ctx context.Context, in *payment.Ma
 			}
 			return err
 		}
+		var orderSnapshot entity.Order
+		if err := tx.Where("order_id = ?", paymentRecord.OrderId).First(&orderSnapshot).Error; err != nil {
+			return err
+		}
+		var reservationSnapshot entity.SeckillReservation
+		if err := tx.Where("order_id = ?", paymentRecord.OrderId).First(&reservationSnapshot).Error; err != nil {
+			return err
+		}
 		if paymentRecord.Status == entity.PaymentStatusRequested || paymentRecord.Status == entity.PaymentStatusSuccess {
 			result = paymentRecord
 			return nil
@@ -159,6 +167,41 @@ func (m *paymentLedger) MarkPaymentRequested(ctx context.Context, in *payment.Ma
 			Reason:     "payment requested",
 			Operator:   "payment",
 			CreatedAt:  now,
+		}).Error; err != nil {
+			return err
+		}
+		requestedPayload, err := events.BuildPaymentRequestedPayload(events.PaymentRequestedInput{
+			EventID:          fmt.Sprintf("evt-payment-requested-%s", paymentRecord.PaymentId),
+			EventType:        "payment.requested",
+			OccurredAt:       now,
+			AggregateID:      paymentRecord.PaymentId,
+			TraceID:          paymentRecord.OrderId,
+			Source:           "order-service",
+			Version:          1,
+			MessageID:        paymentRecord.OrderId,
+			ReservationID:    orderSnapshot.ReservationId,
+			OrderID:          paymentRecord.OrderId,
+			PaymentID:        paymentRecord.PaymentId,
+			UserID:           paymentRecord.UserId,
+			SeckillProductID: reservationSnapshot.SeckillProductId,
+			ProductID:        orderSnapshot.ProductId,
+			Quantity:         int64(orderSnapshot.Quantity),
+			Amount:           paymentRecord.Amount,
+			Status:           entity.PaymentStatusRequested,
+			Channel:          choosePaymentChannel(in.Channel, paymentRecord.Channel),
+		})
+		if err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&entity.EventOutbox{
+			EventId:       fmt.Sprintf("evt-payment-requested-%s", paymentRecord.PaymentId),
+			AggregateType: "payment",
+			AggregateId:   paymentRecord.PaymentId,
+			EventType:     "payment.requested",
+			PayloadJSON:   requestedPayload,
+			Status:        entity.OutboxStatusNew,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		}).Error; err != nil {
 			return err
 		}

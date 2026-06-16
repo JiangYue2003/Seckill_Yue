@@ -93,6 +93,7 @@ const (
 	AnomalyCallbackVerifyFailedOnPaymentSuccess   = "callback_verify_failed_on_payment_success"
 	AnomalyCallbackProcessFailedOnPaymentSuccess  = "callback_process_failed_on_payment_success"
 	AnomalyOutboxMissingOrderCreated              = "outbox_missing_order_created"
+	AnomalyOutboxMissingPaymentRequested          = "outbox_missing_payment_requested"
 	AnomalyOutboxMissingPaymentSucceeded          = "outbox_missing_payment_succeeded"
 	AnomalyOutboxMissingOrderCompleted            = "outbox_missing_order_completed"
 	AnomalyOutboxPayloadMissingFields             = "outbox_payload_missing_fields"

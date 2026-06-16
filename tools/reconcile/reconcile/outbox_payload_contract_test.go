@@ -179,3 +179,203 @@ func TestRunnerDoesNotFlagReservationReleasedWhenPayloadIsComplete(t *testing.T)
 		t.Fatalf("expected no outbox payload missing fields anomaly, got %d", got)
 	}
 }
+
+func TestRunnerFlagsManualAnomalyWhenPaymentRequestedEventIsMissing(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S111_S50007",
+				ReservationID:                 "S111_S50007",
+				PaymentID:                     "P50007",
+				UserID:                        104,
+				ProductID:                     17,
+				Quantity:                      1,
+				Amount:                        18900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710000600,
+				SeckillProductID:              111,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             104,
+				ReservationProductID:          17,
+				ReservationQuantity:           1,
+				ReservationAmount:             18900,
+				ReservationStatus:             ReservationStatusConsumed,
+				PaymentFound:                  true,
+				PaymentUserID:                 104,
+				PaymentAmount:                 18900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S111_S50007": {
+				{ID: 71, EventType: "order.created", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-71","event_type":"order.created","occurred_at":1710000600,"aggregate_type":"order","aggregate_id":"S111_S50007","trace_id":"trace-71","source":"order-service","version":1,"message_id":"S111_S50007","reservation_id":"S111_S50007","order_id":"S111_S50007","user_id":104,"seckill_product_id":111,"product_id":17,"quantity":1,"amount":18900,"status":2,"order_type":1,"pay_status":0}`},
+				{ID: 72, EventType: "payment.succeeded", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-72","event_type":"payment.succeeded","occurred_at":1710000601,"aggregate_type":"payment","aggregate_id":"P50007","trace_id":"trace-72","source":"order-service","version":1,"message_id":"S111_S50007","reservation_id":"S111_S50007","order_id":"S111_S50007","payment_id":"P50007","user_id":104,"seckill_product_id":111,"product_id":17,"quantity":1,"amount":18900,"status":2,"channel":"mock_alipay","third_party_trade_no":"trade-72","paid_at":1710000601,"callback_id":"cb-72"}`},
+				{ID: 73, EventType: "order.completed", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-73","event_type":"order.completed","occurred_at":1710000601,"aggregate_type":"order","aggregate_id":"S111_S50007","trace_id":"trace-73","source":"order-service","version":1,"message_id":"S111_S50007","reservation_id":"S111_S50007","order_id":"S111_S50007","payment_id":"P50007","user_id":104,"seckill_product_id":111,"product_id":17,"quantity":1,"amount":18900,"status":5,"order_type":1,"pay_status":2,"paid_at":1710000601}`},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S111_S50007": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxMissingPaymentRequested]; got != 1 {
+		t.Fatalf("expected missing payment.requested anomaly count=1, got %d", got)
+	}
+}
+
+func TestRunnerFlagsManualAnomalyWhenPaymentRequestedPayloadMissesUnifiedFields(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S112_S50008",
+				ReservationID:                 "S112_S50008",
+				PaymentID:                     "P50008",
+				UserID:                        105,
+				ProductID:                     18,
+				Quantity:                      1,
+				Amount:                        19900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710000700,
+				SeckillProductID:              112,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             105,
+				ReservationProductID:          18,
+				ReservationQuantity:           1,
+				ReservationAmount:             19900,
+				ReservationStatus:             ReservationStatusConsumed,
+				PaymentFound:                  true,
+				PaymentUserID:                 105,
+				PaymentAmount:                 19900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S112_S50008": {
+				{ID: 81, EventType: "order.created", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-81","event_type":"order.created","occurred_at":1710000700,"aggregate_type":"order","aggregate_id":"S112_S50008","trace_id":"trace-81","source":"order-service","version":1,"message_id":"S112_S50008","reservation_id":"S112_S50008","order_id":"S112_S50008","user_id":105,"seckill_product_id":112,"product_id":18,"quantity":1,"amount":19900,"status":2,"order_type":1,"pay_status":0}`},
+				{ID: 82, EventType: "payment.requested", Status: OutboxStatusPublished, PayloadJSON: `{"payment_id":"P50008","order_id":"S112_S50008"}`},
+				{ID: 83, EventType: "payment.succeeded", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-83","event_type":"payment.succeeded","occurred_at":1710000701,"aggregate_type":"payment","aggregate_id":"P50008","trace_id":"trace-83","source":"order-service","version":1,"message_id":"S112_S50008","reservation_id":"S112_S50008","order_id":"S112_S50008","payment_id":"P50008","user_id":105,"seckill_product_id":112,"product_id":18,"quantity":1,"amount":19900,"status":2,"channel":"mock_alipay","third_party_trade_no":"trade-83","paid_at":1710000701,"callback_id":"cb-83"}`},
+				{ID: 84, EventType: "order.completed", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-84","event_type":"order.completed","occurred_at":1710000701,"aggregate_type":"order","aggregate_id":"S112_S50008","trace_id":"trace-84","source":"order-service","version":1,"message_id":"S112_S50008","reservation_id":"S112_S50008","order_id":"S112_S50008","payment_id":"P50008","user_id":105,"seckill_product_id":112,"product_id":18,"quantity":1,"amount":19900,"status":5,"order_type":1,"pay_status":2,"paid_at":1710000701}`},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S112_S50008": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxPayloadMissingFields]; got != 1 {
+		t.Fatalf("expected outbox payload missing fields anomaly count=1, got %d", got)
+	}
+}
+
+func TestRunnerDoesNotFlagPaymentRequestedWhenPayloadIsComplete(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                       "S113_S50009",
+				ReservationID:                 "S113_S50009",
+				PaymentID:                     "P50009",
+				UserID:                        106,
+				ProductID:                     19,
+				Quantity:                      1,
+				Amount:                        20900,
+				Status:                        OrderStatusCompleted,
+				PayStatus:                     OrderPayStatusSuccess,
+				CreatedAt:                     1710000800,
+				SeckillProductID:              113,
+				SeckillQuantity:               1,
+				ReservationFound:              true,
+				ReservationUserID:             106,
+				ReservationProductID:          19,
+				ReservationQuantity:           1,
+				ReservationAmount:             20900,
+				ReservationStatus:             ReservationStatusConsumed,
+				PaymentFound:                  true,
+				PaymentUserID:                 106,
+				PaymentAmount:                 20900,
+				PaymentStatus:                 PaymentStatusSuccess,
+				CallbackCount:                 1,
+				CallbackVerifyPassCount:       1,
+				CallbackProcessSucceededCount: 1,
+				ProcessedMessageFound:         true,
+				ProcessedMessageStatus:        ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S113_S50009": {
+				{ID: 91, EventType: "order.created", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-91","event_type":"order.created","occurred_at":1710000800,"aggregate_type":"order","aggregate_id":"S113_S50009","trace_id":"trace-91","source":"order-service","version":1,"message_id":"S113_S50009","reservation_id":"S113_S50009","order_id":"S113_S50009","user_id":106,"seckill_product_id":113,"product_id":19,"quantity":1,"amount":20900,"status":2,"order_type":1,"pay_status":0}`},
+				{ID: 92, EventType: "payment.requested", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-92","event_type":"payment.requested","occurred_at":1710000800,"aggregate_type":"payment","aggregate_id":"P50009","trace_id":"trace-92","source":"order-service","version":1,"message_id":"S113_S50009","reservation_id":"S113_S50009","order_id":"S113_S50009","payment_id":"P50009","user_id":106,"seckill_product_id":113,"product_id":19,"quantity":1,"amount":20900,"status":1,"channel":"mock_alipay"}`},
+				{ID: 93, EventType: "payment.succeeded", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-93","event_type":"payment.succeeded","occurred_at":1710000801,"aggregate_type":"payment","aggregate_id":"P50009","trace_id":"trace-93","source":"order-service","version":1,"message_id":"S113_S50009","reservation_id":"S113_S50009","order_id":"S113_S50009","payment_id":"P50009","user_id":106,"seckill_product_id":113,"product_id":19,"quantity":1,"amount":20900,"status":2,"channel":"mock_alipay","third_party_trade_no":"trade-93","paid_at":1710000801,"callback_id":"cb-93"}`},
+				{ID: 94, EventType: "order.completed", Status: OutboxStatusPublished, PayloadJSON: `{"event_id":"evt-94","event_type":"order.completed","occurred_at":1710000801,"aggregate_type":"order","aggregate_id":"S113_S50009","trace_id":"trace-94","source":"order-service","version":1,"message_id":"S113_S50009","reservation_id":"S113_S50009","order_id":"S113_S50009","payment_id":"P50009","user_id":106,"seckill_product_id":113,"product_id":19,"quantity":1,"amount":20900,"status":5,"order_type":1,"pay_status":2,"paid_at":1710000801}`},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S113_S50009": "success"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxMissingPaymentRequested]; got != 0 {
+		t.Fatalf("expected no missing payment.requested anomaly, got %d", got)
+	}
+	if got := sum.ManualAnomalyCount[AnomalyOutboxPayloadMissingFields]; got != 0 {
+		t.Fatalf("expected no payload missing fields anomaly, got %d", got)
+	}
+}

@@ -63,6 +63,16 @@
 - `source`
 - `version`
 
+当前已纳入统一契约并进入 outbox 的关键事件包括：
+
+- `reservation.created`
+- `reservation.released`
+- `reservation.advanced`
+- `order.created`
+- `payment.requested`
+- `payment.succeeded`
+- `order.completed`
+
 ### 2.3 超时补偿链路
 
 1. `reservation.timeout.check` 事件进入延迟检查队列
