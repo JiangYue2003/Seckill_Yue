@@ -34,13 +34,12 @@ type Config struct {
 		ScanCount      int64
 	}
 
-	// RocketMQ 配置
-	RocketMQ struct {
-		NameServer    string // NameServer 地址，如 "localhost:9876"
-		ProducerGroup string // 生产者组名
-		OrderTopic    string // 主链路 Topic
-		CheckTopic    string // 超时检查 Topic（延迟消息）
-		EventTopic    string // 通用领域事件 Topic
+	// RabbitMQ 配置
+	RabbitMQ struct {
+		URL             string `json:",optional"` // 连接串，如 "amqp://guest:guest@localhost:5672/"
+		Exchange        string `json:",optional"` // direct exchange
+		OrderRoutingKey string `json:",optional"` // 主链路路由键
+		DelayRoutingKey string `json:",optional"` // 延迟检查路由键
 	}
 
 	// 异步 MQ 生产者配置

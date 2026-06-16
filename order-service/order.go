@@ -42,19 +42,19 @@ func main() {
 	// 启动主处理队列消费者
 	if ctx.Consumer != nil {
 		if err := ctx.Consumer.Start(); err != nil {
-			logx.Errorf("RocketMQ order consumer failed to start: %v", err)
+			logx.Errorf("RabbitMQ order consumer failed to start: %v", err)
 		}
 	}
 	// 启动超时检查队列消费者
 	if ctx.CheckConsumer != nil {
 		if err := ctx.CheckConsumer.Start(); err != nil {
-			logx.Errorf("RocketMQ check consumer failed to start: %v", err)
+			logx.Errorf("RabbitMQ check consumer failed to start: %v", err)
 		}
 	}
 	// 启动死信队列监控消费者
 	if ctx.DLQConsumer != nil {
 		if err := ctx.DLQConsumer.Start(); err != nil {
-			logx.Errorf("RocketMQ DLQ consumer failed to start: %v", err)
+			logx.Errorf("RabbitMQ DLQ consumer failed to start: %v", err)
 		}
 	}
 

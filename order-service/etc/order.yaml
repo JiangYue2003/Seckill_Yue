@@ -34,15 +34,17 @@ MyCache:
   - Host: localhost:6379
     Type: node
 
-RocketMQ:
-  NameServer: 127.0.0.1:9876
-  OrderConsumerGroup: seckill_order_consumer
-  CheckConsumerGroup: seckill_check_consumer
-  DLQConsumerGroup: seckill_dlq_consumer
-  ProducerGroup: order_event_producer
-  OrderTopic: seckill_order
-  CheckTopic: seckill_order_check
-  EventTopic: order_event
+RabbitMQ:
+  URL: amqp://guest:guest@localhost:5672/
+  Exchange: seckill_exchange
+  OrderRoutingKey: seckill.order
+  CheckRoutingKey: seckill.order.check
+  OrderQueue: seckill_order_queue
+  CheckQueue: seckill_order_check_queue
+  DeadQueue: seckill_dead_queue
+  ConsumerTag: seckill_order_consumer
+  CheckConsumerTag: seckill_check_consumer
+  DLQConsumerTag: seckill_dlq_consumer
 
 # Product Service gRPC（通过 etcd发现）
 ProductService:

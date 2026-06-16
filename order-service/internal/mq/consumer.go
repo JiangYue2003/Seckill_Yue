@@ -22,22 +22,25 @@ const (
 
 // 路由键
 const (
-	RoutingKeyDead  = "seckill.dead"        // 死信路由键
-	RoutingKeyDelay = "seckill.delay"       // 延迟消息路由键
-	RoutingKeyCheck = "seckill.order.check" // 超时检查路由键
+	SeckillOrderRoutingKey = "seckill.order"       // 主订单路由键
+	RoutingKeyDead         = "seckill.dead"        // 死信路由键
+	RoutingKeyDelay        = "seckill.delay"       // 延迟消息路由键
+	RoutingKeyCheck        = "seckill.order.check" // 超时检查路由键
 )
 
 const (
-	MaxRetryCount      = 3                // 最大重试次数
-	OrderCheckDelayMs  = 300000           // 延迟队列TTL: 5分钟（毫秒）
-	consumerReconnBase = time.Second      // 消费者重连基础等待
-	consumerReconnMax  = 30 * time.Second // 消费者重连最大等待
-	workerPoolSize     = 50               // 并发消费 worker 数量
+	defaultRabbitMQURL      = "amqp://guest:guest@localhost:5672/"
+	defaultRabbitMQExchange = "seckill_exchange"
+	MaxRetryCount           = 3                // 最大重试次数
+	OrderCheckDelayMs       = 300000           // 延迟队列TTL: 5分钟（毫秒）
+	consumerReconnBase      = time.Second      // 消费者重连基础等待
+	consumerReconnMax       = 30 * time.Second // 消费者重连最大等待
+	workerPoolSize          = 50               // 并发消费 worker 数量
 )
 
 // SeckillOrderMessage 秒杀成功消息
 type SeckillOrderMessage struct {
-	MessageId         string `json:"message_id"`
+	MessageId        string `json:"message_id"`
 	OrderId          string `json:"order_id"`
 	UserId           int64  `json:"user_id"`
 	SeckillProductId int64  `json:"seckill_product_id"`
@@ -53,34 +56,52 @@ type ProcessFunc func(msg *SeckillOrderMessage) error
 
 // Consumer RabbitMQ 消费者
 type Consumer struct {
-	conn        *amqp091.Connection
-	channel     *amqp091.Channel
-	exchange    string
-	routingKey  string
-	queueName   string
-	consumerTag string
-	url         string // 保存连接串，重连复用
-	processFunc ProcessFunc
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	done        chan struct{}
+	conn           *amqp091.Connection
+	channel        *amqp091.Channel
+	exchange       string
+	routingKey     string
+	queueName      string
+	consumerTag    string
+	url            string // 保存连接串，重连复用
+	processFunc    ProcessFunc
+	setupTopology  func(ch *amqp091.Channel, exchange, queueName, routingKey string) error
+	handleDelivery func(msg amqp091.Delivery)
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	done           chan struct{}
 }
 
-// NewConsumer 创建 RabbitMQ 消费者
-func NewConsumer(url, exchange, routingKey, queueName, consumerTag string, processFunc ProcessFunc) (*Consumer, error) {
+func newConsumer(url, exchange, routingKey, queueName, consumerTag string, processFunc ProcessFunc, topology func(ch *amqp091.Channel, exchange, queueName, routingKey string) error) (*Consumer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Consumer{
-		url:         url,
-		exchange:    exchange,
-		routingKey:  routingKey,
-		queueName:   queueName,
-		consumerTag: consumerTag,
-		processFunc: processFunc,
-		ctx:         ctx,
-		cancel:      cancel,
-		done:        make(chan struct{}),
+	if url == "" {
+		url = defaultRabbitMQURL
 	}
+	if exchange == "" {
+		exchange = defaultRabbitMQExchange
+	}
+	if queueName == "" {
+		queueName = SeckillOrderQueueName
+	}
+	if routingKey == "" {
+		routingKey = SeckillOrderRoutingKey
+	}
+	if consumerTag == "" {
+		consumerTag = "seckill_order_consumer"
+	}
+	c := &Consumer{
+		url:           url,
+		exchange:      exchange,
+		routingKey:    routingKey,
+		queueName:     queueName,
+		consumerTag:   consumerTag,
+		processFunc:   processFunc,
+		setupTopology: topology,
+		ctx:           ctx,
+		cancel:        cancel,
+		done:          make(chan struct{}),
+	}
+	c.handleDelivery = c.handleMessage
 
 	if err := c.setupConnection(); err != nil {
 		cancel()
@@ -90,6 +111,11 @@ func NewConsumer(url, exchange, routingKey, queueName, consumerTag string, proce
 	logx.Infof("RabbitMQ consumer created: exchange=%s, routingKey=%s, queue=%s",
 		exchange, routingKey, queueName)
 	return c, nil
+}
+
+// NewConsumer 创建 RabbitMQ 主链路消费者。
+func NewConsumer(url, exchange, routingKey, queueName, consumerTag string, processFunc ProcessFunc) (*Consumer, error) {
+	return newConsumer(url, exchange, routingKey, queueName, consumerTag, processFunc, newOrderTopology(SeckillCheckQueueName, RoutingKeyCheck))
 }
 
 // setupConnection 建立连接、channel，并声明完整拓扑
@@ -105,7 +131,7 @@ func (c *Consumer) setupConnection() error {
 		return fmt.Errorf("failed to open channel: %w", err)
 	}
 
-	if err = c.setupTopology(ch, c.exchange); err != nil {
+	if err = c.setupTopology(ch, c.exchange, c.queueName, c.routingKey); err != nil {
 		ch.Close()
 		conn.Close()
 		return err
@@ -122,8 +148,7 @@ func (c *Consumer) setupConnection() error {
 	return nil
 }
 
-// setupTopology 声明所有队列、交换机和绑定关系（供初始化和重连复用）
-func (c *Consumer) setupTopology(ch *amqp091.Channel, exchange string) error {
+func setupCommonTopology(ch *amqp091.Channel, exchange string) error {
 	// 主交换机
 	if err := ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("failed to declare exchange: %w", err)
@@ -139,22 +164,64 @@ func (c *Consumer) setupTopology(ch *amqp091.Channel, exchange string) error {
 	if err := ch.QueueBind(SeckillDeadQueueName, RoutingKeyDead, SeckillDLXName, false, nil); err != nil {
 		return fmt.Errorf("failed to bind dead queue: %w", err)
 	}
-	// 主处理队列（含 DLX）
-	mainArgs := amqp091.Table{
-		"x-dead-letter-exchange":    SeckillDLXName,
-		"x-dead-letter-routing-key": RoutingKeyDead,
+	return nil
+}
+
+func newOrderTopology(checkQueue, checkRoutingKey string) func(ch *amqp091.Channel, exchange, queueName, routingKey string) error {
+	if checkQueue == "" {
+		checkQueue = SeckillCheckQueueName
 	}
-	if _, err := ch.QueueDeclare(c.queueName, true, false, false, false, mainArgs); err != nil {
-		return fmt.Errorf("failed to declare main queue: %w", err)
+	if checkRoutingKey == "" {
+		checkRoutingKey = RoutingKeyCheck
 	}
-	if err := ch.QueueBind(c.queueName, c.routingKey, exchange, false, nil); err != nil {
-		return fmt.Errorf("failed to bind main queue: %w", err)
+	return func(ch *amqp091.Channel, exchange, queueName, routingKey string) error {
+		if err := setupCommonTopology(ch, exchange); err != nil {
+			return err
+		}
+		mainArgs := amqp091.Table{
+			"x-dead-letter-exchange":    SeckillDLXName,
+			"x-dead-letter-routing-key": RoutingKeyDead,
+		}
+		if _, err := ch.QueueDeclare(queueName, true, false, false, false, mainArgs); err != nil {
+			return fmt.Errorf("failed to declare main queue: %w", err)
+		}
+		if err := ch.QueueBind(queueName, routingKey, exchange, false, nil); err != nil {
+			return fmt.Errorf("failed to bind main queue: %w", err)
+		}
+		delayArgs := amqp091.Table{
+			"x-message-ttl":             int32(OrderCheckDelayMs),
+			"x-dead-letter-exchange":    exchange,
+			"x-dead-letter-routing-key": checkRoutingKey,
+		}
+		if _, err := ch.QueueDeclare(SeckillDelayQueueName, true, false, false, false, delayArgs); err != nil {
+			return fmt.Errorf("failed to declare delay queue: %w", err)
+		}
+		if err := ch.QueueBind(SeckillDelayQueueName, RoutingKeyDelay, exchange, false, nil); err != nil {
+			return fmt.Errorf("failed to bind delay queue: %w", err)
+		}
+		checkArgs := amqp091.Table{
+			"x-dead-letter-exchange":    SeckillDLXName,
+			"x-dead-letter-routing-key": RoutingKeyDead,
+		}
+		if _, err := ch.QueueDeclare(checkQueue, true, false, false, false, checkArgs); err != nil {
+			return fmt.Errorf("failed to declare check queue: %w", err)
+		}
+		if err := ch.QueueBind(checkQueue, checkRoutingKey, exchange, false, nil); err != nil {
+			return fmt.Errorf("failed to bind check queue: %w", err)
+		}
+		return nil
 	}
-	// 延迟队列（无消费者）
+}
+
+// setupCheckTopology 声明延迟检查拓扑。
+func setupCheckTopology(ch *amqp091.Channel, exchange, queueName, routingKey string) error {
+	if err := setupCommonTopology(ch, exchange); err != nil {
+		return err
+	}
 	delayArgs := amqp091.Table{
 		"x-message-ttl":             int32(OrderCheckDelayMs),
 		"x-dead-letter-exchange":    exchange,
-		"x-dead-letter-routing-key": RoutingKeyCheck,
+		"x-dead-letter-routing-key": routingKey,
 	}
 	if _, err := ch.QueueDeclare(SeckillDelayQueueName, true, false, false, false, delayArgs); err != nil {
 		return fmt.Errorf("failed to declare delay queue: %w", err)
@@ -162,18 +229,85 @@ func (c *Consumer) setupTopology(ch *amqp091.Channel, exchange string) error {
 	if err := ch.QueueBind(SeckillDelayQueueName, RoutingKeyDelay, exchange, false, nil); err != nil {
 		return fmt.Errorf("failed to bind delay queue: %w", err)
 	}
-	// 超时检查队列（含 DLX）
 	checkArgs := amqp091.Table{
 		"x-dead-letter-exchange":    SeckillDLXName,
 		"x-dead-letter-routing-key": RoutingKeyDead,
 	}
-	if _, err := ch.QueueDeclare(SeckillCheckQueueName, true, false, false, false, checkArgs); err != nil {
+	if _, err := ch.QueueDeclare(queueName, true, false, false, false, checkArgs); err != nil {
 		return fmt.Errorf("failed to declare check queue: %w", err)
 	}
-	if err := ch.QueueBind(SeckillCheckQueueName, RoutingKeyCheck, exchange, false, nil); err != nil {
+	if err := ch.QueueBind(queueName, routingKey, exchange, false, nil); err != nil {
 		return fmt.Errorf("failed to bind check queue: %w", err)
 	}
 	return nil
+}
+
+func setupDLQTopology(ch *amqp091.Channel, _, queueName, routingKey string) error {
+	if _, err := ch.QueueDeclare(queueName, true, false, false, false, nil); err != nil {
+		return fmt.Errorf("failed to declare dead queue: %w", err)
+	}
+	if err := ch.ExchangeDeclare(SeckillDLXName, "direct", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("failed to declare DLX exchange: %w", err)
+	}
+	if err := ch.QueueBind(queueName, routingKey, SeckillDLXName, false, nil); err != nil {
+		return fmt.Errorf("failed to bind dead queue: %w", err)
+	}
+	return nil
+}
+
+func NewOrderConsumer(url, exchange, orderRoutingKey, checkRoutingKey, orderQueue, checkQueue, consumerTag string, processFunc ProcessFunc) (*Consumer, error) {
+	return newConsumer(url, exchange, orderRoutingKey, orderQueue, consumerTag, processFunc, newOrderTopology(checkQueue, checkRoutingKey))
+}
+
+func NewCheckConsumer(url, exchange, routingKey, queueName, consumerTag string, processFunc ProcessFunc) (*Consumer, error) {
+	if routingKey == "" {
+		routingKey = RoutingKeyCheck
+	}
+	if queueName == "" {
+		queueName = SeckillCheckQueueName
+	}
+	if consumerTag == "" {
+		consumerTag = "seckill_check_consumer"
+	}
+	return newConsumer(url, exchange, routingKey, queueName, consumerTag, processFunc, setupCheckTopology)
+}
+
+func NewDLQConsumer(url, exchange, queueName, consumerTag string) (*Consumer, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if url == "" {
+		url = defaultRabbitMQURL
+	}
+	if exchange == "" {
+		exchange = defaultRabbitMQExchange
+	}
+	if queueName == "" {
+		queueName = SeckillDeadQueueName
+	}
+	if consumerTag == "" {
+		consumerTag = "seckill_dlq_consumer"
+	}
+	c := &Consumer{
+		url:         url,
+		exchange:    exchange,
+		routingKey:  RoutingKeyDead,
+		queueName:   queueName,
+		consumerTag: consumerTag,
+		setupTopology: func(ch *amqp091.Channel, exchange, queueName, routingKey string) error {
+			return setupDLQTopology(ch, exchange, queueName, routingKey)
+		},
+		ctx:    ctx,
+		cancel: cancel,
+		done:   make(chan struct{}),
+	}
+	c.handleDelivery = c.handleDLQMessage
+
+	if err := c.setupConnection(); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	logx.Infof("RabbitMQ DLQ consumer created: queue=%s, consumerTag=%s", queueName, consumerTag)
+	return c, nil
 }
 
 // reconnect 断线后重建连接，指数退避直到成功（在 consume 内循环调用）
@@ -220,7 +354,7 @@ func (c *Consumer) consume() {
 		default:
 		}
 
-		msgs, err := c.channel.Consume(c.queueName, "", false, false, false, false, nil)
+		msgs, err := c.channel.Consume(c.queueName, c.consumerTag, false, false, false, false, nil)
 		if err != nil {
 			logx.Errorf("Consumer 注册失败（channel 可能已断开）: %v", err)
 			c.reconnect(&backoff)
@@ -248,7 +382,7 @@ func (c *Consumer) consume() {
 				semaphore <- struct{}{}
 				go func(m amqp091.Delivery) {
 					defer func() { <-semaphore }()
-					c.handleMessage(m)
+					c.handleDelivery(m)
 				}(msg)
 			}
 		}
@@ -284,6 +418,14 @@ func (c *Consumer) handleMessage(msg amqp091.Delivery) {
 		logx.Errorf("Failed to ack: %v", err)
 	}
 	logx.Infof("Processed: orderId=%s", seckillMsg.OrderId)
+}
+
+func (c *Consumer) handleDLQMessage(msg amqp091.Delivery) {
+	logx.Errorf("[DLQ ALERT] Dead letter message received: queue=%s, routingKey=%s, body=%s",
+		c.queueName, msg.RoutingKey, string(msg.Body))
+	if err := msg.Ack(false); err != nil {
+		logx.Errorf("Failed to ack DLQ message: %v", err)
+	}
 }
 
 // getRetryCountFromXDeath 从 RabbitMQ x-death 头解析当前队列累计死信次数。

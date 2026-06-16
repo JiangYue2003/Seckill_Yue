@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"seckill-mall/seckill-service/internal/config"
-	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/metrics"
+	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/mq"
 	"seckill-mall/seckill-service/internal/outbox"
 	"seckill-mall/seckill-service/internal/redis"
@@ -18,17 +18,17 @@ import (
 )
 
 type ServiceContext struct {
-	Config           config.Config
-	Redis            *redis.SeckillRedis
-	AsyncProducer    *mq.AsyncProducer
-	OrderProducer    OrderProducer
-	SyncMQProducer   *mq.RocketMQProducer
-	OutboxPublisher  *outbox.Publisher
+	Config            config.Config
+	Redis             *redis.SeckillRedis
+	AsyncProducer     *mq.AsyncProducer
+	OrderProducer     OrderProducer
+	SyncMQProducer    *mq.Producer
+	OutboxPublisher   *outbox.Publisher
 	ReservationLedger model.ReservationLedger
-	ProductMetaCache *ProductMetaCache
-	ProductFilter    *ProductIDFilter
-	QuotaRefillGate  *QuotaRefillGate
-	InstanceID       string
+	ProductMetaCache  *ProductMetaCache
+	ProductFilter     *ProductIDFilter
+	QuotaRefillGate   *QuotaRefillGate
+	InstanceID        string
 
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
@@ -62,16 +62,15 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		panic(err)
 	}
 
-	// 初始化 RocketMQ 同步生产者（底层引擎）
-	producer, err := mq.NewRocketMQProducer(mq.RocketMQConfig{
-		NameServer:    c.RocketMQ.NameServer,
-		ProducerGroup: c.RocketMQ.ProducerGroup,
-		OrderTopic:    c.RocketMQ.OrderTopic,
-		CheckTopic:    c.RocketMQ.CheckTopic,
-		EventTopic:    c.RocketMQ.EventTopic,
-	})
+	// 初始化 RabbitMQ 同步生产者（底层引擎）
+	producer, err := mq.NewProducer(
+		c.RabbitMQ.URL,
+		c.RabbitMQ.Exchange,
+		c.RabbitMQ.OrderRoutingKey,
+		c.RabbitMQ.DelayRoutingKey,
+	)
 	if err != nil {
-		logx.Errorf("failed to initialize RocketMQ producer: %v", err)
+		logx.Errorf("failed to initialize RabbitMQ producer: %v", err)
 		panic(err)
 	}
 
@@ -105,16 +104,16 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		FallbackVerifyEnabled:   c.Bloom.FallbackVerifyEnabled,
 	})
 	ctx := &ServiceContext{
-		Config:           c,
-		Redis:            redisClient,
-		AsyncProducer:    asyncProducer,
-		OrderProducer:    asyncProducer,
-		SyncMQProducer:   producer,
+		Config:            c,
+		Redis:             redisClient,
+		AsyncProducer:     asyncProducer,
+		OrderProducer:     asyncProducer,
+		SyncMQProducer:    producer,
 		ReservationLedger: reservationLedger,
-		ProductMetaCache: productMetaCache,
-		ProductFilter:    productFilter,
-		QuotaRefillGate:  NewQuotaRefillGate(),
-		InstanceID:       instanceID,
+		ProductMetaCache:  productMetaCache,
+		ProductFilter:     productFilter,
+		QuotaRefillGate:   NewQuotaRefillGate(),
+		InstanceID:        instanceID,
 	}
 	ctx.OutboxPublisher = outbox.NewPublisher(model.NewOutboxStore(db), producer)
 
@@ -249,6 +248,7 @@ func (s *ServiceContext) Stop() {
 		if s.AsyncProducer != nil {
 			_ = s.AsyncProducer.Close()
 		}
+		s.SyncMQProducer = nil
 
 		// 3. 关闭 Redis 连接
 		if s.Redis != nil {

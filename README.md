@@ -25,7 +25,7 @@
 - 微服务：go-zero（zrpc + etcd 服务发现）
 - 通信：gRPC + Protobuf
 - 缓存与原子操作：Redis + Lua
-- MQ：RocketMQ
+- MQ：RabbitMQ
 - DB：MySQL
 - 可观测：Prometheus + Grafana + Jaeger(OTLP)
 
@@ -42,7 +42,7 @@
 - 本地库存预扣减（减少 Redis 热点压力）
 - Redis Lua 原子裁决（时间窗 + 一人一单 + 扣减 + 热状态 pending）
 - 同步写入 `seckill_reservations(status=RESERVED)` 与 `event_outbox`
-4. `reservation.created` / `reservation.timeout.check` 由 Outbox Publisher 发布到 RocketMQ
+4. `reservation.created` / `reservation.timeout.check` 由 Outbox Publisher 发布到 RabbitMQ
 5. 接口返回“抢购成功，订单处理中”，其真实语义是“预占成功，后续链路继续推进”
 
 ### 2.2 异步落单链路
@@ -111,8 +111,7 @@
 | etcd | `127.0.0.1:2379` |
 | MySQL | `127.0.0.1:3306` |
 | Redis | `localhost:6379` |
-| RocketMQ NameServer | `localhost:9876` |
-| RocketMQ Broker | `localhost:10911` |
+| RabbitMQ | `localhost:5672` |
 
 ### 3.3 Prometheus 指标端口
 
@@ -246,12 +245,12 @@ go run order-service/order.go -f order-service/etc/order.yaml --port=19084 --met
 - `SeckillRedis`：秒杀核心 Redis 连接池
 - `ProductMetaCache`：秒杀商品元数据本地缓存刷新
 - `Bloom`：商品 ID 预过滤器参数（当前实现为 Bloom）
-- `RocketMQ` + `AsyncProducer`：兼容投递参数（主事实链路由 Outbox Publisher 负责）
+- `RabbitMQ` + `AsyncProducer`：兼容投递参数（主事实链路由 Outbox Publisher 负责）
 - `LocalQuota`：多实例本地配额协商开关与参数
 
 ### 7.4 order-service
 
-- `RocketMQ`：主消费/检查消费与事件发布
+- `RabbitMQ`：主消费/检查消费与事件发布
 - `ProductService` / `SeckillService`：下游 RPC
 - `Fallback`：etcd 不可用时的直连地址
 

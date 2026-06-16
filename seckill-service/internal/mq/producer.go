@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"seckill-mall/seckill-service/internal/model/entity"
+
 	"github.com/rabbitmq/amqp091-go"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -25,8 +27,10 @@ const (
 )
 
 const (
-	reconnectBaseWait = time.Second      // 重连基础等待时间
-	reconnectMaxWait  = 30 * time.Second // 重连最大等待时间
+	defaultRabbitMQURL      = "amqp://guest:guest@localhost:5672/"
+	defaultRabbitMQExchange = "seckill_exchange"
+	reconnectBaseWait       = time.Second      // 重连基础等待时间
+	reconnectMaxWait        = 30 * time.Second // 重连最大等待时间
 )
 
 // SeckillOrderMessage 秒杀订单消息
@@ -45,26 +49,41 @@ type SeckillOrderMessage struct {
 
 // Producer RabbitMQ 生产者
 type Producer struct {
-	conn       *amqp091.Connection
-	channel    *amqp091.Channel
-	exchange   string
-	routingKey string
-	mu         sync.Mutex
-	url        string // 保存连接串，重连复用
+	conn            *amqp091.Connection
+	channel         *amqp091.Channel
+	exchange        string
+	orderRoutingKey string
+	delayRoutingKey string
+	mu              sync.Mutex
+	url             string // 保存连接串，重连复用
 }
 
 // NewProducer 创建 RabbitMQ 生产者
-func NewProducer(url, exchange, routingKey string) (*Producer, error) {
+func NewProducer(url, exchange, orderRoutingKey, delayRoutingKey string) (*Producer, error) {
+	if url == "" {
+		url = defaultRabbitMQURL
+	}
+	if exchange == "" {
+		exchange = defaultRabbitMQExchange
+	}
+	if orderRoutingKey == "" {
+		orderRoutingKey = SeckillOrderRoutingKey
+	}
+	if delayRoutingKey == "" {
+		delayRoutingKey = SeckillDelayRoutingKey
+	}
 	p := &Producer{
-		url:        url,
-		exchange:   exchange,
-		routingKey: routingKey,
+		url:             url,
+		exchange:        exchange,
+		orderRoutingKey: orderRoutingKey,
+		delayRoutingKey: delayRoutingKey,
 	}
 	if err := p.connect(); err != nil {
 		return nil, err
 	}
 	p.monitorConnection()
-	logx.Infof("RabbitMQ producer created: exchange=%s, routingKey=%s", exchange, routingKey)
+	logx.Infof("RabbitMQ producer created: exchange=%s, orderRoutingKey=%s, delayRoutingKey=%s",
+		exchange, orderRoutingKey, delayRoutingKey)
 	return p, nil
 }
 
@@ -157,7 +176,7 @@ func (p *Producer) SendSeckillOrder(ctx context.Context, msg *SeckillOrderMessag
 	if err != nil {
 		return fmt.Errorf("序列化秒杀消息失败: %w", err)
 	}
-	if err = p.publish(ctx, p.routingKey, body); err != nil {
+	if err = p.publish(ctx, p.orderRoutingKey, body); err != nil {
 		logx.Errorf("发送秒杀消息失败: orderId=%s, err=%v", msg.OrderId, err)
 		return fmt.Errorf("发送消息失败: %w", err)
 	}
@@ -174,12 +193,69 @@ func (p *Producer) SendDelayOrder(ctx context.Context, msg *SeckillOrderMessage)
 	if err != nil {
 		return fmt.Errorf("序列化延迟消息失败: %w", err)
 	}
-	if err = p.publish(ctx, SeckillDelayRoutingKey, body); err != nil {
+	if err = p.publish(ctx, p.delayRoutingKey, body); err != nil {
 		logx.Errorf("发送延迟消息失败: orderId=%s, err=%v", msg.OrderId, err)
 		return fmt.Errorf("发送延迟消息失败: %w", err)
 	}
 	logx.Infof("延迟兜底消息发送成功: orderId=%s", msg.OrderId)
 	return nil
+}
+
+func (p *Producer) PublishEvent(ctx context.Context, event entity.EventOutbox) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	routingKey, body, err := buildEventPublishMessage(p.orderRoutingKey, p.delayRoutingKey, event)
+	if err != nil {
+		return err
+	}
+	if err := p.publish(ctx, routingKey, body); err != nil {
+		return fmt.Errorf("publish outbox event failed: %w", err)
+	}
+	logx.Infof("RabbitMQ publish event success: eventId=%s, eventType=%s, routingKey=%s",
+		event.EventId, event.EventType, routingKey)
+	return nil
+}
+
+func buildEventPublishMessage(orderRoutingKey, delayRoutingKey string, event entity.EventOutbox) (string, []byte, error) {
+	switch event.EventType {
+	case "reservation.created":
+		msg, err := decodeSeckillOrderMessage(event.PayloadJSON)
+		if err != nil {
+			return "", nil, err
+		}
+		body, err := json.Marshal(msg)
+		if err != nil {
+			return "", nil, fmt.Errorf("marshal reservation.created payload failed: %w", err)
+		}
+		return orderRoutingKey, body, nil
+	case "reservation.timeout.check":
+		msg, err := decodeSeckillOrderMessage(event.PayloadJSON)
+		if err != nil {
+			return "", nil, err
+		}
+		body, err := json.Marshal(msg)
+		if err != nil {
+			return "", nil, fmt.Errorf("marshal reservation.timeout.check payload failed: %w", err)
+		}
+		return delayRoutingKey, body, nil
+	default:
+		return "event." + event.EventType, []byte(event.PayloadJSON), nil
+	}
+}
+
+func decodeSeckillOrderMessage(payload string) (*SeckillOrderMessage, error) {
+	var msg SeckillOrderMessage
+	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+		return nil, fmt.Errorf("decode seckill outbox payload failed: %w", err)
+	}
+	if msg.OrderId == "" {
+		return nil, fmt.Errorf("decode seckill outbox payload failed: missing order_id")
+	}
+	if msg.MessageId == "" {
+		msg.MessageId = msg.OrderId
+	}
+	return &msg, nil
 }
 
 // Close 关闭生产者（正常关闭，不触发重连）

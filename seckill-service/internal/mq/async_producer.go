@@ -13,7 +13,7 @@ import (
 // 核心设计：将 MQ 投递从用户请求的关键路径（critical path）中移除，
 // 通过带缓冲的 Channel 吸收突发流量，后台 Worker Pool 负责异步投递和重试。
 type AsyncProducer struct {
-	producer    SyncProducerInterface     // 底层同步生产者（支持 RabbitMQ/RocketMQ）
+	producer    SyncProducerInterface     // 底层同步生产者（RabbitMQ）
 	bufferSize  int                       // Channel 缓冲大小
 	workerCount int                       // 后台 Worker 数量
 	retryCount  int                       // 最大重试次数
@@ -31,7 +31,7 @@ type SyncProducerInterface interface {
 }
 
 // NewAsyncProducer 创建异步生产者
-// producer: 底层同步生产者（RabbitMQ 或 RocketMQ，实现 SyncProducerInterface）
+// producer: 底层同步生产者（RabbitMQ，实现 SyncProducerInterface）
 // bufferSize: Channel 缓冲队列大小，建议设为预估 TPS 的 5-10 倍
 // workerCount: 后台 Worker 协程数量，建议设为 CPU 核数的 2-4 倍
 // retryCount: 最大重试次数，三次失败后消息丢弃，依赖 TTL 兜底

@@ -90,7 +90,7 @@ func TestPublisherPublishOnceMarksFailedAndRetry(t *testing.T) {
 	}
 	producer := &fakePublisherProducer{
 		failIDs: map[int64]error{
-			22: errors.New("rocketmq unavailable"),
+			22: errors.New("rabbitmq unavailable"),
 		},
 	}
 	publisher := NewPublisher(store, producer)

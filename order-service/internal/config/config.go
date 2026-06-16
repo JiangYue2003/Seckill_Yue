@@ -16,16 +16,18 @@ type Config struct {
 	// Redis 缓存配置
 	MyCache cache.CacheConf
 
-	// RocketMQ 配置
-	RocketMQ struct {
-		NameServer         string `json:",optional"` // NameServer 地址
-		OrderConsumerGroup string `json:",optional"` // 主链路消费者组
-		CheckConsumerGroup string `json:",optional"` // 超时检查消费者组
-		DLQConsumerGroup   string `json:",optional"` // 死信队列监控消费者组
-		ProducerGroup      string `json:",optional"` // 事件生产者组
-		OrderTopic         string `json:",optional"` // 主链路 Topic
-		CheckTopic         string `json:",optional"` // 超时检查 Topic
-		EventTopic         string `json:",optional"` // 订单域事件 Topic
+	// RabbitMQ 配置
+	RabbitMQ struct {
+		URL              string `json:",optional"` // 连接串
+		Exchange         string `json:",optional"` // direct exchange
+		OrderRoutingKey  string `json:",optional"` // reservation.created 路由键
+		CheckRoutingKey  string `json:",optional"` // reservation.timeout.check 路由键
+		OrderQueue       string `json:",optional"` // 主消费队列
+		CheckQueue       string `json:",optional"` // 超时检查队列
+		DeadQueue        string `json:",optional"` // 死信监控队列
+		ConsumerTag      string `json:",optional"` // 主消费 consumer tag
+		CheckConsumerTag string `json:",optional"` // 检查消费 consumer tag
+		DLQConsumerTag   string `json:",optional"` // 死信消费 consumer tag
 	}
 
 	// Product Service gRPC 配置（通过 etcd 发现）

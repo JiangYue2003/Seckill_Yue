@@ -18,10 +18,10 @@ type ServiceContext struct {
 	Config            config.Config
 	OrderModel        model.OrderModel
 	SeckillOrderModel model.SeckillOrderModel
-	Consumer          *mq.RocketMQOrderConsumer // 主处理队列消费者
-	CheckConsumer     *mq.RocketMQCheckConsumer // 超时检查队列消费者
-	DLQConsumer       *mq.RocketMQDLQConsumer   // 死信队列监控消费者
-	SyncMQProducer    *mq.RocketMQProducer
+	Consumer          *mq.Consumer // 主处理队列消费者
+	CheckConsumer     *mq.Consumer // 超时检查队列消费者
+	DLQConsumer       *mq.Consumer // 死信队列监控消费者
+	SyncMQProducer    *mq.Producer
 	OutboxPublisher   *outbox.Publisher
 	OrderService      *service.OrderService
 	PaymentService    *payment.Service
@@ -72,22 +72,22 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	paymentService := payment.NewService(paymentLedger, payment.NewMockAdapter(), seckillSvc)
 	outboxStore := model.NewOutboxStore(db)
 
-	rmqCfg := mq.RocketMQConsumerConfig{
-		NameServer:         c.RocketMQ.NameServer,
-		OrderConsumerGroup: c.RocketMQ.OrderConsumerGroup,
-		CheckConsumerGroup: c.RocketMQ.CheckConsumerGroup,
-		DLQConsumerGroup:   c.RocketMQ.DLQConsumerGroup,
-		OrderTopic:         c.RocketMQ.OrderTopic,
-		CheckTopic:         c.RocketMQ.CheckTopic,
-	}
-
 	// 初始化主链路消费者
 	processFunc := func(msg *mq.SeckillOrderMessage) error {
 		return orderService.ProcessSeckillOrder(msg)
 	}
-	consumer, err := mq.NewRocketMQOrderConsumer(rmqCfg, processFunc)
+	consumer, err := mq.NewOrderConsumer(
+		c.RabbitMQ.URL,
+		c.RabbitMQ.Exchange,
+		c.RabbitMQ.OrderRoutingKey,
+		c.RabbitMQ.CheckRoutingKey,
+		c.RabbitMQ.OrderQueue,
+		c.RabbitMQ.CheckQueue,
+		c.RabbitMQ.ConsumerTag,
+		processFunc,
+	)
 	if err != nil {
-		logx.Errorf("failed to initialize RocketMQ order consumer: %v", err)
+		logx.Errorf("failed to initialize RabbitMQ order consumer: %v", err)
 		consumer = nil
 	}
 
@@ -95,27 +95,37 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	checkProcessFunc := func(msg *mq.SeckillOrderMessage) error {
 		return orderService.ProcessOrderTimeout(msg)
 	}
-	checkConsumer, err := mq.NewRocketMQCheckConsumer(rmqCfg, checkProcessFunc)
+	checkConsumer, err := mq.NewCheckConsumer(
+		c.RabbitMQ.URL,
+		c.RabbitMQ.Exchange,
+		c.RabbitMQ.CheckRoutingKey,
+		c.RabbitMQ.CheckQueue,
+		c.RabbitMQ.CheckConsumerTag,
+		checkProcessFunc,
+	)
 	if err != nil {
-		logx.Errorf("failed to initialize RocketMQ check consumer: %v", err)
+		logx.Errorf("failed to initialize RabbitMQ check consumer: %v", err)
 		checkConsumer = nil
 	}
 
 	// 初始化死信队列监控消费者
-	dlqConsumer, err := mq.NewRocketMQDLQConsumer(rmqCfg)
+	dlqConsumer, err := mq.NewDLQConsumer(
+		c.RabbitMQ.URL,
+		c.RabbitMQ.Exchange,
+		c.RabbitMQ.DeadQueue,
+		c.RabbitMQ.DLQConsumerTag,
+	)
 	if err != nil {
-		logx.Errorf("failed to initialize RocketMQ DLQ consumer: %v", err)
+		logx.Errorf("failed to initialize RabbitMQ DLQ consumer: %v", err)
 		dlqConsumer = nil
 	}
 
-	producerCfg := mq.RocketMQConfig{
-		NameServer:    c.RocketMQ.NameServer,
-		ProducerGroup: c.RocketMQ.ProducerGroup,
-		EventTopic:    c.RocketMQ.EventTopic,
-	}
-	syncProducer, err := mq.NewRocketMQProducer(producerCfg)
+	syncProducer, err := mq.NewProducer(mq.RabbitMQProducerConfig{
+		URL:      c.RabbitMQ.URL,
+		Exchange: c.RabbitMQ.Exchange,
+	})
 	if err != nil {
-		logx.Errorf("failed to initialize RocketMQ event producer: %v", err)
+		logx.Errorf("failed to initialize RabbitMQ event producer: %v", err)
 		panic(err)
 	}
 
@@ -168,7 +178,7 @@ func (s *ServiceContext) Stop() {
 		}
 		if s.SyncMQProducer != nil {
 			if err := s.SyncMQProducer.Close(); err != nil {
-				logx.Errorf("failed to close RocketMQ producer: %v", err)
+				logx.Errorf("failed to close RabbitMQ producer: %v", err)
 			}
 		}
 	})

@@ -5,8 +5,7 @@
 #   - Etcd       (port 2379)
 #   - MySQL 8.0+ (port 3306, password root123456)
 #   - Redis      (port 6379)
-#   - RocketMQ NameServer (port 9876)
-#   - RocketMQ Broker     (port 10911)
+#   - RabbitMQ   (port 5672)
 # ============================================
 
 $ErrorActionPreference = "Stop"
@@ -163,8 +162,7 @@ $infraPorts = @(
     @{ Port = 2379; Name = "Etcd" },
     @{ Port = 3306; Name = "MySQL" },
     @{ Port = 6379; Name = "Redis" },
-    @{ Port = 9876; Name = "RocketMQ NameServer" },
-    @{ Port = 10911; Name = "RocketMQ Broker" }
+    @{ Port = 5672; Name = "RabbitMQ" }
 )
 
 $infraOk = $true
@@ -178,8 +176,7 @@ if (-not $infraOk) {
     Write-ColorOutput "   - Etcd      localhost:2379" "DarkYellow"
     Write-ColorOutput "   - MySQL     localhost:3306" "DarkYellow"
     Write-ColorOutput "   - Redis     localhost:6379" "DarkYellow"
-    Write-ColorOutput "   - RocketMQ NameServer  localhost:9876" "DarkYellow"
-    Write-ColorOutput "   - RocketMQ Broker      localhost:10911`n" "DarkYellow"
+    Write-ColorOutput "   - RabbitMQ   localhost:5672`n" "DarkYellow"
     $cont = Read-Host "Continue launching RPC services? (y/N)"
     if ($cont -ne "y" -and $cont -ne "Y") {
         Write-ColorOutput "Cancelled." "Gray"
@@ -224,8 +221,7 @@ Write-ColorOutput "  Seckill   RPC   -> etcd: seckill.rpc" "Cyan"
 Write-ColorOutput "  Order     RPC   -> etcd: order.rpc" "Cyan"
 Write-ColorOutput "  Etcd            -> localhost:2379" "Cyan"
 Write-ColorOutput "  Redis           -> localhost:6379" "Cyan"
-Write-ColorOutput "  RocketMQ NS    -> localhost:9876" "Cyan"
-Write-ColorOutput "  RocketMQ Broker-> localhost:10911" "Cyan"
+Write-ColorOutput "  RabbitMQ       -> localhost:5672" "Cyan"
 Write-ColorOutput "  MySQL          -> localhost:3306`n" "Cyan"
 
 Write-ColorOutput "Running processes ($($runningProcesses.Count)):" "White"

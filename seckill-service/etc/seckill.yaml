@@ -64,12 +64,11 @@ Bloom:
   NegativeCacheTTLSeconds: 5
   FallbackVerifyEnabled: true
 
-RocketMQ:
-  NameServer: 127.0.0.1:9876
-  ProducerGroup: seckill_producer
-  OrderTopic: seckill_order
-  CheckTopic: seckill_order_check
-  EventTopic: seckill_event
+RabbitMQ:
+  URL: amqp://guest:guest@localhost:5672/
+  Exchange: seckill_exchange
+  OrderRoutingKey: seckill.order
+  DelayRoutingKey: seckill.delay
 
 AsyncProducer:
   BufferSize: 10000
