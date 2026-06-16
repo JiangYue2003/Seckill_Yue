@@ -49,3 +49,13 @@ type RequestPaymentResult struct {
 	CallbackID        string
 	RawPayload        string
 }
+
+type AdvanceReservationInput struct {
+	ReservationID string
+	OrderID       string
+	TargetStatus  int32
+	Reason        string
+	Operator      string
+	PaymentID     string
+	AllowRecover  bool
+}

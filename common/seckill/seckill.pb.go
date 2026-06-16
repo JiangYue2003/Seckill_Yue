@@ -803,6 +803,158 @@ func (x *ReleaseReservationResponse) GetReservation() *ReservationInfo {
 	return nil
 }
 
+type AdvanceReservationRequest struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	ReservationId string                   `protobuf:"bytes,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	OrderId       string                   `protobuf:"bytes,2,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	TargetStatus  common.ReservationStatus `protobuf:"varint,3,opt,name=target_status,json=targetStatus,proto3,enum=common.ReservationStatus" json:"target_status,omitempty"`
+	Reason        string                   `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	Operator      string                   `protobuf:"bytes,5,opt,name=operator,proto3" json:"operator,omitempty"`
+	PaymentId     string                   `protobuf:"bytes,6,opt,name=payment_id,json=paymentId,proto3" json:"payment_id,omitempty"`
+	AllowRecover  bool                     `protobuf:"varint,7,opt,name=allow_recover,json=allowRecover,proto3" json:"allow_recover,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdvanceReservationRequest) Reset() {
+	*x = AdvanceReservationRequest{}
+	mi := &file_proto_seckill_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdvanceReservationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdvanceReservationRequest) ProtoMessage() {}
+
+func (x *AdvanceReservationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_seckill_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdvanceReservationRequest.ProtoReflect.Descriptor instead.
+func (*AdvanceReservationRequest) Descriptor() ([]byte, []int) {
+	return file_proto_seckill_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *AdvanceReservationRequest) GetReservationId() string {
+	if x != nil {
+		return x.ReservationId
+	}
+	return ""
+}
+
+func (x *AdvanceReservationRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *AdvanceReservationRequest) GetTargetStatus() common.ReservationStatus {
+	if x != nil {
+		return x.TargetStatus
+	}
+	return common.ReservationStatus(0)
+}
+
+func (x *AdvanceReservationRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *AdvanceReservationRequest) GetOperator() string {
+	if x != nil {
+		return x.Operator
+	}
+	return ""
+}
+
+func (x *AdvanceReservationRequest) GetPaymentId() string {
+	if x != nil {
+		return x.PaymentId
+	}
+	return ""
+}
+
+func (x *AdvanceReservationRequest) GetAllowRecover() bool {
+	if x != nil {
+		return x.AllowRecover
+	}
+	return false
+}
+
+type AdvanceReservationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	Reservation   *ReservationInfo       `protobuf:"bytes,3,opt,name=reservation,proto3" json:"reservation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AdvanceReservationResponse) Reset() {
+	*x = AdvanceReservationResponse{}
+	mi := &file_proto_seckill_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AdvanceReservationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AdvanceReservationResponse) ProtoMessage() {}
+
+func (x *AdvanceReservationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_seckill_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AdvanceReservationResponse.ProtoReflect.Descriptor instead.
+func (*AdvanceReservationResponse) Descriptor() ([]byte, []int) {
+	return file_proto_seckill_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *AdvanceReservationResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *AdvanceReservationResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *AdvanceReservationResponse) GetReservation() *ReservationInfo {
+	if x != nil {
+		return x.Reservation
+	}
+	return nil
+}
+
 // 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
 type UpdateOrderStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -815,7 +967,7 @@ type UpdateOrderStatusRequest struct {
 
 func (x *UpdateOrderStatusRequest) Reset() {
 	*x = UpdateOrderStatusRequest{}
-	mi := &file_proto_seckill_proto_msgTypes[10]
+	mi := &file_proto_seckill_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -827,7 +979,7 @@ func (x *UpdateOrderStatusRequest) String() string {
 func (*UpdateOrderStatusRequest) ProtoMessage() {}
 
 func (x *UpdateOrderStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_seckill_proto_msgTypes[10]
+	mi := &file_proto_seckill_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -840,7 +992,7 @@ func (x *UpdateOrderStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrderStatusRequest.ProtoReflect.Descriptor instead.
 func (*UpdateOrderStatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_seckill_proto_rawDescGZIP(), []int{10}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *UpdateOrderStatusRequest) GetOrderId() string {
@@ -874,7 +1026,7 @@ type UpdateOrderStatusResponse struct {
 
 func (x *UpdateOrderStatusResponse) Reset() {
 	*x = UpdateOrderStatusResponse{}
-	mi := &file_proto_seckill_proto_msgTypes[11]
+	mi := &file_proto_seckill_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -886,7 +1038,7 @@ func (x *UpdateOrderStatusResponse) String() string {
 func (*UpdateOrderStatusResponse) ProtoMessage() {}
 
 func (x *UpdateOrderStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_seckill_proto_msgTypes[11]
+	mi := &file_proto_seckill_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -899,7 +1051,7 @@ func (x *UpdateOrderStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrderStatusResponse.ProtoReflect.Descriptor instead.
 func (*UpdateOrderStatusResponse) Descriptor() ([]byte, []int) {
-	return file_proto_seckill_proto_rawDescGZIP(), []int{11}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *UpdateOrderStatusResponse) GetSuccess() bool {
@@ -931,7 +1083,7 @@ type CompensateFailedOrderRequest struct {
 
 func (x *CompensateFailedOrderRequest) Reset() {
 	*x = CompensateFailedOrderRequest{}
-	mi := &file_proto_seckill_proto_msgTypes[12]
+	mi := &file_proto_seckill_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -943,7 +1095,7 @@ func (x *CompensateFailedOrderRequest) String() string {
 func (*CompensateFailedOrderRequest) ProtoMessage() {}
 
 func (x *CompensateFailedOrderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_seckill_proto_msgTypes[12]
+	mi := &file_proto_seckill_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -956,7 +1108,7 @@ func (x *CompensateFailedOrderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompensateFailedOrderRequest.ProtoReflect.Descriptor instead.
 func (*CompensateFailedOrderRequest) Descriptor() ([]byte, []int) {
-	return file_proto_seckill_proto_rawDescGZIP(), []int{12}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *CompensateFailedOrderRequest) GetOrderId() string {
@@ -1005,7 +1157,7 @@ type CompensateFailedOrderResponse struct {
 
 func (x *CompensateFailedOrderResponse) Reset() {
 	*x = CompensateFailedOrderResponse{}
-	mi := &file_proto_seckill_proto_msgTypes[13]
+	mi := &file_proto_seckill_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1017,7 +1169,7 @@ func (x *CompensateFailedOrderResponse) String() string {
 func (*CompensateFailedOrderResponse) ProtoMessage() {}
 
 func (x *CompensateFailedOrderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_seckill_proto_msgTypes[13]
+	mi := &file_proto_seckill_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1030,7 +1182,7 @@ func (x *CompensateFailedOrderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompensateFailedOrderResponse.ProtoReflect.Descriptor instead.
 func (*CompensateFailedOrderResponse) Descriptor() ([]byte, []int) {
-	return file_proto_seckill_proto_rawDescGZIP(), []int{13}
+	return file_proto_seckill_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CompensateFailedOrderResponse) GetSuccess() bool {
@@ -1127,6 +1279,19 @@ const file_proto_seckill_proto_rawDesc = "" +
 	"\x1aReleaseReservationResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12:\n" +
+	"\vreservation\x18\x03 \x01(\v2\x18.seckill.ReservationInfoR\vreservation\"\x95\x02\n" +
+	"\x19AdvanceReservationRequest\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x19\n" +
+	"\border_id\x18\x02 \x01(\tR\aorderId\x12>\n" +
+	"\rtarget_status\x18\x03 \x01(\x0e2\x19.common.ReservationStatusR\ftargetStatus\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12\x1a\n" +
+	"\boperator\x18\x05 \x01(\tR\boperator\x12\x1d\n" +
+	"\n" +
+	"payment_id\x18\x06 \x01(\tR\tpaymentId\x12#\n" +
+	"\rallow_recover\x18\a \x01(\bR\fallowRecover\"\x8c\x01\n" +
+	"\x1aAdvanceReservationResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12:\n" +
 	"\vreservation\x18\x03 \x01(\v2\x18.seckill.ReservationInfoR\vreservation\"r\n" +
 	"\x18UpdateOrderStatusRequest\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x16\n" +
@@ -1144,7 +1309,7 @@ const file_proto_seckill_proto_rawDesc = "" +
 	"\x1dCompensateFailedOrderResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +
-	"\x06result\x18\x03 \x01(\tR\x06result2\xe3\x04\n" +
+	"\x06result\x18\x03 \x01(\tR\x06result2\xc2\x05\n" +
 	"\x0eSeckillService\x12<\n" +
 	"\aSeckill\x12\x17.seckill.SeckillRequest\x1a\x18.seckill.SeckillResponse\x12Q\n" +
 	"\x10GetSeckillStatus\x12\x1d.seckill.SeckillStatusRequest\x1a\x1e.seckill.SeckillStatusResponse\x12Q\n" +
@@ -1152,7 +1317,8 @@ const file_proto_seckill_proto_rawDesc = "" +
 	"\x11UpdateOrderStatus\x12!.seckill.UpdateOrderStatusRequest\x1a\".seckill.UpdateOrderStatusResponse\x12f\n" +
 	"\x15CompensateFailedOrder\x12%.seckill.CompensateFailedOrderRequest\x1a&.seckill.CompensateFailedOrderResponse\x12J\n" +
 	"\x0eGetReservation\x12\x1e.seckill.GetReservationRequest\x1a\x18.seckill.ReservationInfo\x12]\n" +
-	"\x12ReleaseReservation\x12\".seckill.ReleaseReservationRequest\x1a#.seckill.ReleaseReservationResponseB\x1dZ\x1bseckill-mall/common/seckillb\x06proto3"
+	"\x12ReleaseReservation\x12\".seckill.ReleaseReservationRequest\x1a#.seckill.ReleaseReservationResponse\x12]\n" +
+	"\x12AdvanceReservation\x12\".seckill.AdvanceReservationRequest\x1a#.seckill.AdvanceReservationResponseB\x1dZ\x1bseckill-mall/common/seckillb\x06proto3"
 
 var (
 	file_proto_seckill_proto_rawDescOnce sync.Once
@@ -1166,7 +1332,7 @@ func file_proto_seckill_proto_rawDescGZIP() []byte {
 	return file_proto_seckill_proto_rawDescData
 }
 
-var file_proto_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_proto_seckill_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_proto_seckill_proto_goTypes = []any{
 	(*SeckillRequest)(nil),                // 0: seckill.SeckillRequest
 	(*SeckillResponse)(nil),               // 1: seckill.SeckillResponse
@@ -1178,43 +1344,49 @@ var file_proto_seckill_proto_goTypes = []any{
 	(*GetReservationRequest)(nil),         // 7: seckill.GetReservationRequest
 	(*ReleaseReservationRequest)(nil),     // 8: seckill.ReleaseReservationRequest
 	(*ReleaseReservationResponse)(nil),    // 9: seckill.ReleaseReservationResponse
-	(*UpdateOrderStatusRequest)(nil),      // 10: seckill.UpdateOrderStatusRequest
-	(*UpdateOrderStatusResponse)(nil),     // 11: seckill.UpdateOrderStatusResponse
-	(*CompensateFailedOrderRequest)(nil),  // 12: seckill.CompensateFailedOrderRequest
-	(*CompensateFailedOrderResponse)(nil), // 13: seckill.CompensateFailedOrderResponse
-	(common.ReservationStatus)(0),         // 14: common.ReservationStatus
-	(common.OrderLifecycleStatus)(0),      // 15: common.OrderLifecycleStatus
-	(common.PaymentStatus)(0),             // 16: common.PaymentStatus
+	(*AdvanceReservationRequest)(nil),     // 10: seckill.AdvanceReservationRequest
+	(*AdvanceReservationResponse)(nil),    // 11: seckill.AdvanceReservationResponse
+	(*UpdateOrderStatusRequest)(nil),      // 12: seckill.UpdateOrderStatusRequest
+	(*UpdateOrderStatusResponse)(nil),     // 13: seckill.UpdateOrderStatusResponse
+	(*CompensateFailedOrderRequest)(nil),  // 14: seckill.CompensateFailedOrderRequest
+	(*CompensateFailedOrderResponse)(nil), // 15: seckill.CompensateFailedOrderResponse
+	(common.ReservationStatus)(0),         // 16: common.ReservationStatus
+	(common.OrderLifecycleStatus)(0),      // 17: common.OrderLifecycleStatus
+	(common.PaymentStatus)(0),             // 18: common.PaymentStatus
 }
 var file_proto_seckill_proto_depIdxs = []int32{
-	14, // 0: seckill.SeckillResponse.reservation_status:type_name -> common.ReservationStatus
-	14, // 1: seckill.SeckillStatusResponse.reservation_status:type_name -> common.ReservationStatus
-	15, // 2: seckill.SeckillStatusResponse.order_status:type_name -> common.OrderLifecycleStatus
-	16, // 3: seckill.SeckillStatusResponse.payment_status:type_name -> common.PaymentStatus
-	14, // 4: seckill.SeckillResultResponse.reservation_status:type_name -> common.ReservationStatus
-	15, // 5: seckill.SeckillResultResponse.order_status:type_name -> common.OrderLifecycleStatus
-	16, // 6: seckill.SeckillResultResponse.payment_status:type_name -> common.PaymentStatus
-	14, // 7: seckill.ReservationInfo.status:type_name -> common.ReservationStatus
+	16, // 0: seckill.SeckillResponse.reservation_status:type_name -> common.ReservationStatus
+	16, // 1: seckill.SeckillStatusResponse.reservation_status:type_name -> common.ReservationStatus
+	17, // 2: seckill.SeckillStatusResponse.order_status:type_name -> common.OrderLifecycleStatus
+	18, // 3: seckill.SeckillStatusResponse.payment_status:type_name -> common.PaymentStatus
+	16, // 4: seckill.SeckillResultResponse.reservation_status:type_name -> common.ReservationStatus
+	17, // 5: seckill.SeckillResultResponse.order_status:type_name -> common.OrderLifecycleStatus
+	18, // 6: seckill.SeckillResultResponse.payment_status:type_name -> common.PaymentStatus
+	16, // 7: seckill.ReservationInfo.status:type_name -> common.ReservationStatus
 	6,  // 8: seckill.ReleaseReservationResponse.reservation:type_name -> seckill.ReservationInfo
-	0,  // 9: seckill.SeckillService.Seckill:input_type -> seckill.SeckillRequest
-	2,  // 10: seckill.SeckillService.GetSeckillStatus:input_type -> seckill.SeckillStatusRequest
-	4,  // 11: seckill.SeckillService.GetSeckillResult:input_type -> seckill.SeckillResultRequest
-	10, // 12: seckill.SeckillService.UpdateOrderStatus:input_type -> seckill.UpdateOrderStatusRequest
-	12, // 13: seckill.SeckillService.CompensateFailedOrder:input_type -> seckill.CompensateFailedOrderRequest
-	7,  // 14: seckill.SeckillService.GetReservation:input_type -> seckill.GetReservationRequest
-	8,  // 15: seckill.SeckillService.ReleaseReservation:input_type -> seckill.ReleaseReservationRequest
-	1,  // 16: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
-	3,  // 17: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
-	5,  // 18: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
-	11, // 19: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
-	13, // 20: seckill.SeckillService.CompensateFailedOrder:output_type -> seckill.CompensateFailedOrderResponse
-	6,  // 21: seckill.SeckillService.GetReservation:output_type -> seckill.ReservationInfo
-	9,  // 22: seckill.SeckillService.ReleaseReservation:output_type -> seckill.ReleaseReservationResponse
-	16, // [16:23] is the sub-list for method output_type
-	9,  // [9:16] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	16, // 9: seckill.AdvanceReservationRequest.target_status:type_name -> common.ReservationStatus
+	6,  // 10: seckill.AdvanceReservationResponse.reservation:type_name -> seckill.ReservationInfo
+	0,  // 11: seckill.SeckillService.Seckill:input_type -> seckill.SeckillRequest
+	2,  // 12: seckill.SeckillService.GetSeckillStatus:input_type -> seckill.SeckillStatusRequest
+	4,  // 13: seckill.SeckillService.GetSeckillResult:input_type -> seckill.SeckillResultRequest
+	12, // 14: seckill.SeckillService.UpdateOrderStatus:input_type -> seckill.UpdateOrderStatusRequest
+	14, // 15: seckill.SeckillService.CompensateFailedOrder:input_type -> seckill.CompensateFailedOrderRequest
+	7,  // 16: seckill.SeckillService.GetReservation:input_type -> seckill.GetReservationRequest
+	8,  // 17: seckill.SeckillService.ReleaseReservation:input_type -> seckill.ReleaseReservationRequest
+	10, // 18: seckill.SeckillService.AdvanceReservation:input_type -> seckill.AdvanceReservationRequest
+	1,  // 19: seckill.SeckillService.Seckill:output_type -> seckill.SeckillResponse
+	3,  // 20: seckill.SeckillService.GetSeckillStatus:output_type -> seckill.SeckillStatusResponse
+	5,  // 21: seckill.SeckillService.GetSeckillResult:output_type -> seckill.SeckillResultResponse
+	13, // 22: seckill.SeckillService.UpdateOrderStatus:output_type -> seckill.UpdateOrderStatusResponse
+	15, // 23: seckill.SeckillService.CompensateFailedOrder:output_type -> seckill.CompensateFailedOrderResponse
+	6,  // 24: seckill.SeckillService.GetReservation:output_type -> seckill.ReservationInfo
+	9,  // 25: seckill.SeckillService.ReleaseReservation:output_type -> seckill.ReleaseReservationResponse
+	11, // 26: seckill.SeckillService.AdvanceReservation:output_type -> seckill.AdvanceReservationResponse
+	19, // [19:27] is the sub-list for method output_type
+	11, // [11:19] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_proto_seckill_proto_init() }
@@ -1228,7 +1400,7 @@ func file_proto_seckill_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_seckill_proto_rawDesc), len(file_proto_seckill_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -22,6 +22,7 @@ type PersistReservationInput struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	SeckillPrice     int64
 	Source           string
 	Reason           string
 	RedisOrderKey    string
@@ -40,11 +41,22 @@ type ReleaseReservationInput struct {
 	Operator      string
 }
 
+type AdvanceReservationInput struct {
+	ReservationID string
+	OrderID       string
+	TargetStatus  int32
+	Reason        string
+	Operator      string
+	PaymentID     string
+	AllowRecover  bool
+}
+
 type ReservationLedger interface {
 	PersistReservation(ctx context.Context, in *PersistReservationInput) (*PersistReservationResult, error)
 	GetReservation(ctx context.Context, reservationID, orderID string) (*entity.SeckillReservation, error)
 	FindReservationByUserProduct(ctx context.Context, userID, seckillProductID int64) (*entity.SeckillReservation, error)
 	ReleaseReservation(ctx context.Context, in *ReleaseReservationInput) (*entity.SeckillReservation, error)
+	AdvanceReservation(ctx context.Context, in *AdvanceReservationInput) (*entity.SeckillReservation, error)
 }
 
 func BuildUserProductKey(userID, seckillProductID int64) string {
@@ -121,12 +133,14 @@ func (m *reservationLedger) PersistReservation(ctx context.Context, in *PersistR
 		}
 
 		payload, err := json.Marshal(map[string]any{
+			"message_id":          in.OrderID,
 			"reservation_id":     in.ReservationID,
 			"order_id":           in.OrderID,
 			"user_id":            in.UserID,
 			"seckill_product_id": in.SeckillProductID,
 			"product_id":         in.ProductID,
 			"quantity":           in.Quantity,
+			"seckill_price":      in.SeckillPrice,
 			"amount":             in.Amount,
 			"status":             entity.ReservationStatusReserved,
 			"expire_at":          in.ExpireAt,
@@ -136,18 +150,32 @@ func (m *reservationLedger) PersistReservation(ctx context.Context, in *PersistR
 			return err
 		}
 
-		outbox := entity.EventOutbox{
-			EventId:       "evt-reservation-created-" + in.ReservationID,
-			AggregateType: "reservation",
-			AggregateId:   in.ReservationID,
-			EventType:     "reservation.created",
-			PayloadJSON:   string(payload),
-			Status:        entity.OutboxStatusNew,
-			CreatedAt:     now,
-			UpdatedAt:     now,
+		outboxRows := []entity.EventOutbox{
+			{
+				EventId:       "evt-reservation-created-" + in.ReservationID,
+				AggregateType: "reservation",
+				AggregateId:   in.ReservationID,
+				EventType:     "reservation.created",
+				PayloadJSON:   string(payload),
+				Status:        entity.OutboxStatusNew,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			},
+			{
+				EventId:       "evt-reservation-timeout-check-" + in.ReservationID,
+				AggregateType: "reservation",
+				AggregateId:   in.ReservationID,
+				EventType:     "reservation.timeout.check",
+				PayloadJSON:   string(payload),
+				Status:        entity.OutboxStatusNew,
+				CreatedAt:     now,
+				UpdatedAt:     now,
+			},
 		}
-		if err := tx.Create(&outbox).Error; err != nil {
-			return err
+		for _, outbox := range outboxRows {
+			if err := tx.Create(&outbox).Error; err != nil {
+				return err
+			}
 		}
 
 		*reservation = record
@@ -277,4 +305,109 @@ func (m *reservationLedger) ReleaseReservation(ctx context.Context, in *ReleaseR
 	}
 
 	return &reservation, nil
+}
+
+func (m *reservationLedger) AdvanceReservation(ctx context.Context, in *AdvanceReservationInput) (*entity.SeckillReservation, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("reservation ledger db is nil")
+	}
+	if in == nil || (in.ReservationID == "" && in.OrderID == "") {
+		return nil, ErrInvalidParams
+	}
+
+	now := time.Now().Unix()
+	var reservation entity.SeckillReservation
+	err := m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		query := tx.Model(&entity.SeckillReservation{})
+		switch {
+		case in.ReservationID != "":
+			query = query.Where("reservation_id = ?", in.ReservationID)
+		case in.OrderID != "":
+			query = query.Where("order_id = ?", in.OrderID)
+		default:
+			return ErrInvalidParams
+		}
+
+		if err := query.First(&reservation).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+
+		fromStatus := reservation.Status
+		if fromStatus == in.TargetStatus {
+			return nil
+		}
+		if !canAdvanceReservationStatus(fromStatus, in.TargetStatus, in.AllowRecover) {
+			return ErrInvalidParams
+		}
+
+		reservation.Status = in.TargetStatus
+		reservation.Reason = in.Reason
+		reservation.UpdatedAt = now
+		if err := tx.Save(&reservation).Error; err != nil {
+			return err
+		}
+
+		statusLog := entity.OrderStatusLog{
+			OrderID:    reservation.OrderId,
+			FromStatus: fromStatus,
+			ToStatus:   in.TargetStatus,
+			EventType:  "reservation.advanced",
+			Reason:     in.Reason,
+			Operator:   defaultReservationOperator(in.Operator),
+			CreatedAt:  now,
+		}
+		if err := tx.Create(&statusLog).Error; err != nil {
+			return err
+		}
+
+		payload, err := json.Marshal(map[string]any{
+			"reservation_id": reservation.ReservationId,
+			"order_id":       reservation.OrderId,
+			"payment_id":     in.PaymentID,
+			"status":         in.TargetStatus,
+			"reason":         in.Reason,
+			"occurred_at":    now,
+		})
+		if err != nil {
+			return err
+		}
+
+		outbox := entity.EventOutbox{
+			EventId:       fmt.Sprintf("evt-reservation-advanced-%s-%d", reservation.ReservationId, now),
+			AggregateType: "reservation",
+			AggregateId:   reservation.ReservationId,
+			EventType:     "reservation.advanced",
+			PayloadJSON:   string(payload),
+			Status:        entity.OutboxStatusNew,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		return tx.Create(&outbox).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &reservation, nil
+}
+
+func canAdvanceReservationStatus(fromStatus, toStatus int32, allowRecover bool) bool {
+	if fromStatus == toStatus {
+		return true
+	}
+	if allowRecover && fromStatus == entity.ReservationStatusFailed &&
+		(toStatus == entity.ReservationStatusPaid || toStatus == entity.ReservationStatusConsumed) {
+		return true
+	}
+	return toStatus >= fromStatus
+}
+
+func defaultReservationOperator(operator string) string {
+	if operator == "" {
+		return "system"
+	}
+	return operator
 }

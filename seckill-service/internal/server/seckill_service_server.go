@@ -108,6 +108,46 @@ func (s *SeckillServiceServer) ReleaseReservation(ctx context.Context, in *secki
 	}, nil
 }
 
+func (s *SeckillServiceServer) AdvanceReservation(ctx context.Context, in *seckill.AdvanceReservationRequest) (*seckill.AdvanceReservationResponse, error) {
+	if s.svcCtx.ReservationLedger == nil {
+		return &seckill.AdvanceReservationResponse{
+			Success: false,
+			Message: "reservation ledger 未初始化",
+		}, nil
+	}
+
+	reservation, err := s.svcCtx.ReservationLedger.AdvanceReservation(ctx, &model.AdvanceReservationInput{
+		ReservationID: in.GetReservationId(),
+		OrderID:       in.GetOrderId(),
+		TargetStatus:  fromProtoReservationStatus(in.GetTargetStatus()),
+		Reason:        in.GetReason(),
+		Operator:      in.GetOperator(),
+		PaymentID:     in.GetPaymentId(),
+		AllowRecover:  in.GetAllowRecover(),
+	})
+	if err != nil {
+		if err == model.ErrNotFound {
+			return &seckill.AdvanceReservationResponse{
+				Success: false,
+				Message: "预占不存在",
+			}, nil
+		}
+		if err == model.ErrInvalidParams {
+			return &seckill.AdvanceReservationResponse{
+				Success: false,
+				Message: "预占状态推进非法",
+			}, nil
+		}
+		return nil, err
+	}
+
+	return &seckill.AdvanceReservationResponse{
+		Success:     true,
+		Message:     "预占推进成功",
+		Reservation: reservationToProto(reservation),
+	}, nil
+}
+
 func reservationToProto(reservation *entity.SeckillReservation) *seckill.ReservationInfo {
 	if reservation == nil {
 		return &seckill.ReservationInfo{}
@@ -150,5 +190,30 @@ func toProtoReservationStatus(status int32) commonpb.ReservationStatus {
 		return commonpb.ReservationStatus_RESERVATION_STATUS_FAILED
 	default:
 		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	}
+}
+
+func fromProtoReservationStatus(status commonpb.ReservationStatus) int32 {
+	switch status {
+	case commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED:
+		return entity.ReservationStatusReserved
+	case commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATING:
+		return entity.ReservationStatusOrderCreating
+	case commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATED:
+		return entity.ReservationStatusOrderCreated
+	case commonpb.ReservationStatus_RESERVATION_STATUS_PAYING:
+		return entity.ReservationStatusPaying
+	case commonpb.ReservationStatus_RESERVATION_STATUS_PAID:
+		return entity.ReservationStatusPaid
+	case commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED:
+		return entity.ReservationStatusConsumed
+	case commonpb.ReservationStatus_RESERVATION_STATUS_RELEASED:
+		return entity.ReservationStatusReleased
+	case commonpb.ReservationStatus_RESERVATION_STATUS_EXPIRED:
+		return entity.ReservationStatusExpired
+	case commonpb.ReservationStatus_RESERVATION_STATUS_FAILED:
+		return entity.ReservationStatusFailed
+	default:
+		return entity.ReservationStatusReserved
 	}
 }

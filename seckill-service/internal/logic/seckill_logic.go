@@ -284,7 +284,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			}(in.SeckillProductId)
 		}
 
-		if err := l.persistReservation(orderId, in.UserId, in.SeckillProductId, productId, quantity, amount); err != nil {
+		if err := l.persistReservation(orderId, in.UserId, in.SeckillProductId, productId, quantity, amount, seckillPrice); err != nil {
 			l.compensateLocalReservationFailure(orderId, in.SeckillProductId, in.UserId, quantity)
 			l.Logger.Errorf("reservation persist failed after redis success: userId=%d, seckillProductId=%d, orderId=%s, err=%v",
 				in.UserId, in.SeckillProductId, orderId, err)
@@ -296,7 +296,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			}, nil
 		}
 
-		l.Logger.Debugf("秒杀成功，Reservation 已落库，准备兼容发送RabbitMQ消息: userId=%d, seckillProductId=%d, orderId=%s",
+		l.Logger.Debugf("秒杀成功，Reservation 已落库，准备发送超时检查消息并等待 Outbox Publisher 发布主链路: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
 
 		seckillMsg := &mq.SeckillOrderMessage{
@@ -310,7 +310,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			Amount:           amount,
 			CreatedAt:        time.Now().Unix(),
 		}
-		l.enqueueCompatibilityMessages(seckillMsg)
+		l.enqueueTimeoutCheckMessage(seckillMsg)
 
 		l.Logger.Debugf("秒杀成功: userId=%d, seckillProductId=%d, orderId=%s",
 			in.UserId, in.SeckillProductId, orderId)
@@ -337,7 +337,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	}
 }
 
-func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProductID, productID, quantity, amount int64) error {
+func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProductID, productID, quantity, amount, seckillPrice int64) error {
 	if l.svcCtx.ReservationLedger == nil {
 		return errors.New("reservation ledger is nil")
 	}
@@ -350,6 +350,7 @@ func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProduct
 		ProductID:        productID,
 		Quantity:         quantity,
 		Amount:           amount,
+		SeckillPrice:     seckillPrice,
 		Source:           "gateway",
 		Reason:           "reservation.created",
 		RedisOrderKey:    "seckill:order:" + orderID,
@@ -373,23 +374,16 @@ func (l *SeckillLogic) compensateLocalReservationFailure(orderID string, seckill
 	}
 }
 
-func (l *SeckillLogic) enqueueCompatibilityMessages(seckillMsg *mq.SeckillOrderMessage) {
+func (l *SeckillLogic) enqueueTimeoutCheckMessage(seckillMsg *mq.SeckillOrderMessage) {
 	if l.svcCtx.OrderProducer == nil {
 		return
 	}
 
 	if delayErr := l.svcCtx.OrderProducer.SendDelayOrder(l.ctx, seckillMsg); delayErr != nil {
 		metrics.SeckillMQEnqueueTotal.WithLabelValues("delay", "failed").Inc()
-		l.Logger.Errorf("发送延迟检查消息失败（兼容路径，非致命）: orderId=%s, err=%v", seckillMsg.OrderId, delayErr)
+		l.Logger.Errorf("发送延迟检查消息失败: orderId=%s, err=%v", seckillMsg.OrderId, delayErr)
 	} else {
 		metrics.SeckillMQEnqueueTotal.WithLabelValues("delay", "ok").Inc()
-	}
-
-	if err := l.svcCtx.OrderProducer.SendAsync(l.ctx, seckillMsg); err != nil {
-		metrics.SeckillMQEnqueueTotal.WithLabelValues("async", "failed").Inc()
-		l.Logger.Errorf("异步MQ兼容投递失败: orderId=%s, err=%v", seckillMsg.OrderId, err)
-	} else {
-		metrics.SeckillMQEnqueueTotal.WithLabelValues("async", "ok").Inc()
 	}
 }
 

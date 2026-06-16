@@ -82,6 +82,21 @@ message CompensateFailedOrderResponse {
     string result = 3;             // compensated | idempotent_failed | already_success | order_not_found | invalid_status
 }
 
+message AdvanceReservationRequest {
+    string reservation_id = 1;
+    string order_id = 2;
+    int32 target_status = 3;
+    string reason = 4;
+    string operator = 5;
+    string payment_id = 6;
+    bool allow_recover = 7;
+}
+
+message AdvanceReservationResponse {
+    bool success = 1;
+    string message = 2;
+}
+
 // 秒杀服务（gRPC）
 service SeckillService {
     // 秒杀下单（核心接口）
@@ -98,4 +113,7 @@ service SeckillService {
 
     // 超时失败补偿（Order-Service 内部调用）
     rpc CompensateFailedOrder(CompensateFailedOrderRequest) returns (CompensateFailedOrderResponse);
+
+    // 推进预占事实
+    rpc AdvanceReservation(AdvanceReservationRequest) returns (AdvanceReservationResponse);
 }

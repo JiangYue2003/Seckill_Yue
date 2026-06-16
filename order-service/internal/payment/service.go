@@ -20,6 +20,7 @@ type Adapter interface {
 
 type HotOrderWriter interface {
 	UpdateOrderStatus(ctx context.Context, orderID, status string, allowRecover bool) error
+	AdvanceReservation(ctx context.Context, in *AdvanceReservationInput) error
 }
 
 type Service struct {
@@ -100,7 +101,17 @@ func (s *Service) HandlePaymentCallback(ctx context.Context, in *HandlePaymentCa
 	if result == nil || result.Payment == nil {
 		return nil, errors.New("payment callback result is nil")
 	}
-	if !result.Duplicate && result.Payment.Status == entity.PaymentStatusSuccess && s.hotWriter != nil {
+	if result.Payment.Status == entity.PaymentStatusSuccess && s.hotWriter != nil {
+		if err := s.hotWriter.AdvanceReservation(ctx, &AdvanceReservationInput{
+			OrderID:      result.Payment.OrderId,
+			TargetStatus: entity.ReservationStatusConsumed,
+			Reason:       "payment.succeeded",
+			Operator:     defaultPaymentOperator(in),
+			PaymentID:    result.Payment.PaymentId,
+			AllowRecover: true,
+		}); err != nil {
+			return nil, err
+		}
 		if err := s.hotWriter.UpdateOrderStatus(ctx, result.Payment.OrderId, "success", true); err != nil {
 			return nil, err
 		}
@@ -120,4 +131,11 @@ func isTerminalPayment(status int32) bool {
 		status == entity.PaymentStatusClosed ||
 		status == entity.PaymentStatusRefunded ||
 		status == entity.PaymentStatusFailed
+}
+
+func defaultPaymentOperator(in *HandlePaymentCallbackInput) string {
+	if in == nil || in.Operator == "" {
+		return "payment_callback"
+	}
+	return in.Operator
 }

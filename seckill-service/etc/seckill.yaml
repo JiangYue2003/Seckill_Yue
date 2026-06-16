@@ -69,6 +69,7 @@ RocketMQ:
   ProducerGroup: seckill_producer
   OrderTopic: seckill_order
   CheckTopic: seckill_order_check
+  EventTopic: seckill_event
 
 AsyncProducer:
   BufferSize: 10000

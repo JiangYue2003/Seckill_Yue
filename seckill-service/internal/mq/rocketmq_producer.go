@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"seckill-mall/seckill-service/internal/model/entity"
+
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 	"github.com/apache/rocketmq-client-go/v2/producer"
@@ -20,6 +22,7 @@ type RocketMQProducer struct {
 	p          rocketmq.Producer
 	orderTopic string
 	checkTopic string
+	eventTopic string
 }
 
 // RocketMQConfig 生产者配置
@@ -28,6 +31,7 @@ type RocketMQConfig struct {
 	ProducerGroup string
 	OrderTopic    string
 	CheckTopic    string
+	EventTopic    string
 }
 
 // NewRocketMQProducer 创建 RocketMQ 生产者
@@ -40,6 +44,9 @@ func NewRocketMQProducer(cfg RocketMQConfig) (*RocketMQProducer, error) {
 	}
 	if cfg.CheckTopic == "" {
 		cfg.CheckTopic = "seckill_order_check"
+	}
+	if cfg.EventTopic == "" {
+		cfg.EventTopic = "seckill_event"
 	}
 
 	p, err := rocketmq.NewProducer(
@@ -61,6 +68,7 @@ func NewRocketMQProducer(cfg RocketMQConfig) (*RocketMQProducer, error) {
 		p:          p,
 		orderTopic: cfg.OrderTopic,
 		checkTopic: cfg.CheckTopic,
+		eventTopic: cfg.EventTopic,
 	}, nil
 }
 
@@ -100,6 +108,47 @@ func (r *RocketMQProducer) SendDelayOrder(ctx context.Context, msg *SeckillOrder
 	logx.Infof("RocketMQ send delay success: orderId=%s, msgId=%s, delayLevel=%d",
 		msg.OrderId, result.MsgID, DelayLevel5Min)
 	return nil
+}
+
+func (r *RocketMQProducer) PublishEvent(ctx context.Context, event entity.EventOutbox) error {
+	switch event.EventType {
+	case "reservation.created":
+		msg, err := decodeSeckillOrderMessage(event.PayloadJSON)
+		if err != nil {
+			return err
+		}
+		return r.SendSeckillOrder(ctx, msg)
+	case "reservation.timeout.check":
+		msg, err := decodeSeckillOrderMessage(event.PayloadJSON)
+		if err != nil {
+			return err
+		}
+		return r.SendDelayOrder(ctx, msg)
+	default:
+		body := []byte(event.PayloadJSON)
+		message := primitive.NewMessage(r.eventTopic, body)
+		message.WithKeys([]string{event.AggregateId, event.EventId})
+		result, err := r.p.SendSync(ctx, message)
+		if err != nil {
+			return fmt.Errorf("publish generic outbox event failed: %w", err)
+		}
+		logx.Infof("RocketMQ publish generic event success: eventId=%s, eventType=%s, msgId=%s", event.EventId, event.EventType, result.MsgID)
+		return nil
+	}
+}
+
+func decodeSeckillOrderMessage(payload string) (*SeckillOrderMessage, error) {
+	var msg SeckillOrderMessage
+	if err := json.Unmarshal([]byte(payload), &msg); err != nil {
+		return nil, fmt.Errorf("decode seckill outbox payload failed: %w", err)
+	}
+	if msg.OrderId == "" {
+		return nil, fmt.Errorf("decode seckill outbox payload failed: missing order_id")
+	}
+	if msg.MessageId == "" {
+		msg.MessageId = msg.OrderId
+	}
+	return &msg, nil
 }
 
 // Close 关闭生产者

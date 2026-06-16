@@ -99,6 +99,22 @@ message ReleaseReservationResponse {
     ReservationInfo reservation = 3;
 }
 
+message AdvanceReservationRequest {
+    string reservation_id = 1;
+    string order_id = 2;
+    common.ReservationStatus target_status = 3;
+    string reason = 4;
+    string operator = 5;
+    string payment_id = 6;
+    bool allow_recover = 7;
+}
+
+message AdvanceReservationResponse {
+    bool success = 1;
+    string message = 2;
+    ReservationInfo reservation = 3;
+}
+
 // 更新秒杀订单状态（Order-Service 处理完成后回调，将 Redis 订单状态从 pending → success）
 message UpdateOrderStatusRequest {
     string order_id = 1;          // 订单号 [required]
@@ -149,4 +165,7 @@ service SeckillService {
 
     // 释放预占
     rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
+
+    // 推进预占事实
+    rpc AdvanceReservation(AdvanceReservationRequest) returns (AdvanceReservationResponse);
 }

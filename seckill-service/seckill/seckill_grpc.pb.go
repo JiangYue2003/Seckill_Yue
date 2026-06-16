@@ -24,6 +24,7 @@ const (
 	SeckillService_GetSeckillResult_FullMethodName      = "/seckill.SeckillService/GetSeckillResult"
 	SeckillService_UpdateOrderStatus_FullMethodName     = "/seckill.SeckillService/UpdateOrderStatus"
 	SeckillService_CompensateFailedOrder_FullMethodName = "/seckill.SeckillService/CompensateFailedOrder"
+	SeckillService_AdvanceReservation_FullMethodName    = "/seckill.SeckillService/AdvanceReservation"
 )
 
 // SeckillServiceClient is the client API for SeckillService service.
@@ -42,6 +43,8 @@ type SeckillServiceClient interface {
 	UpdateOrderStatus(ctx context.Context, in *UpdateOrderStatusRequest, opts ...grpc.CallOption) (*UpdateOrderStatusResponse, error)
 	// 超时失败补偿（Order-Service 内部调用）
 	CompensateFailedOrder(ctx context.Context, in *CompensateFailedOrderRequest, opts ...grpc.CallOption) (*CompensateFailedOrderResponse, error)
+	// 推进预占事实
+	AdvanceReservation(ctx context.Context, in *AdvanceReservationRequest, opts ...grpc.CallOption) (*AdvanceReservationResponse, error)
 }
 
 type seckillServiceClient struct {
@@ -102,6 +105,16 @@ func (c *seckillServiceClient) CompensateFailedOrder(ctx context.Context, in *Co
 	return out, nil
 }
 
+func (c *seckillServiceClient) AdvanceReservation(ctx context.Context, in *AdvanceReservationRequest, opts ...grpc.CallOption) (*AdvanceReservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdvanceReservationResponse)
+	err := c.cc.Invoke(ctx, SeckillService_AdvanceReservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeckillServiceServer is the server API for SeckillService service.
 // All implementations must embed UnimplementedSeckillServiceServer
 // for forward compatibility.
@@ -118,6 +131,8 @@ type SeckillServiceServer interface {
 	UpdateOrderStatus(context.Context, *UpdateOrderStatusRequest) (*UpdateOrderStatusResponse, error)
 	// 超时失败补偿（Order-Service 内部调用）
 	CompensateFailedOrder(context.Context, *CompensateFailedOrderRequest) (*CompensateFailedOrderResponse, error)
+	// 推进预占事实
+	AdvanceReservation(context.Context, *AdvanceReservationRequest) (*AdvanceReservationResponse, error)
 	mustEmbedUnimplementedSeckillServiceServer()
 }
 
@@ -142,6 +157,9 @@ func (UnimplementedSeckillServiceServer) UpdateOrderStatus(context.Context, *Upd
 }
 func (UnimplementedSeckillServiceServer) CompensateFailedOrder(context.Context, *CompensateFailedOrderRequest) (*CompensateFailedOrderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompensateFailedOrder not implemented")
+}
+func (UnimplementedSeckillServiceServer) AdvanceReservation(context.Context, *AdvanceReservationRequest) (*AdvanceReservationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdvanceReservation not implemented")
 }
 func (UnimplementedSeckillServiceServer) mustEmbedUnimplementedSeckillServiceServer() {}
 func (UnimplementedSeckillServiceServer) testEmbeddedByValue()                        {}
@@ -254,6 +272,24 @@ func _SeckillService_CompensateFailedOrder_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeckillService_AdvanceReservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdvanceReservationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeckillServiceServer).AdvanceReservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeckillService_AdvanceReservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeckillServiceServer).AdvanceReservation(ctx, req.(*AdvanceReservationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeckillService_ServiceDesc is the grpc.ServiceDesc for SeckillService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -280,6 +316,10 @@ var SeckillService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CompensateFailedOrder",
 			Handler:    _SeckillService_CompensateFailedOrder_Handler,
+		},
+		{
+			MethodName: "AdvanceReservation",
+			Handler:    _SeckillService_AdvanceReservation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

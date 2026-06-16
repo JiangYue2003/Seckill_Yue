@@ -82,11 +82,17 @@ func (f *fakeAdapter) RequestPayment(ctx context.Context, in *RequestPaymentInpu
 }
 
 type fakeHotOrderWriter struct {
-	updateCalls int
-	orderID     string
-	status      string
-	recover     bool
-	err         error
+	updateCalls      int
+	orderID          string
+	status           string
+	recover          bool
+	advanceCalls     int
+	advanceOrderID   string
+	advanceStatus    int32
+	advanceReason    string
+	advanceOperator  string
+	advancePaymentID string
+	err              error
 }
 
 func (f *fakeHotOrderWriter) UpdateOrderStatus(ctx context.Context, orderID, status string, allowRecover bool) error {
@@ -94,6 +100,18 @@ func (f *fakeHotOrderWriter) UpdateOrderStatus(ctx context.Context, orderID, sta
 	f.orderID = orderID
 	f.status = status
 	f.recover = allowRecover
+	return f.err
+}
+
+func (f *fakeHotOrderWriter) AdvanceReservation(ctx context.Context, in *AdvanceReservationInput) error {
+	f.advanceCalls++
+	if in != nil {
+		f.advanceOrderID = in.OrderID
+		f.advanceStatus = in.TargetStatus
+		f.advanceReason = in.Reason
+		f.advanceOperator = in.Operator
+		f.advancePaymentID = in.PaymentID
+	}
 	return f.err
 }
 
@@ -171,6 +189,15 @@ func TestServiceCreatePaymentRunsFullMockPaymentFlow(t *testing.T) {
 	if hotWriter.updateCalls != 1 || hotWriter.orderID != "order-1" || hotWriter.status != "success" {
 		t.Fatalf("expected one hot status success update, got calls=%d order=%s status=%s", hotWriter.updateCalls, hotWriter.orderID, hotWriter.status)
 	}
+	if hotWriter.advanceCalls != 1 {
+		t.Fatalf("expected one reservation advancement, got %d", hotWriter.advanceCalls)
+	}
+	if hotWriter.advanceOrderID != "order-1" || hotWriter.advanceStatus != entity.ReservationStatusConsumed {
+		t.Fatalf("expected reservation advancement to order-1/consumed, got order=%s status=%d", hotWriter.advanceOrderID, hotWriter.advanceStatus)
+	}
+	if hotWriter.advancePaymentID != "pay-1" {
+		t.Fatalf("expected payment id pay-1 in reservation advancement, got %s", hotWriter.advancePaymentID)
+	}
 }
 
 func TestServiceCreatePaymentReturnsExistingTerminalPayment(t *testing.T) {
@@ -244,8 +271,11 @@ func TestServiceHandlePaymentCallbackDuplicateIsIdempotent(t *testing.T) {
 	if got == nil || !got.Duplicate {
 		t.Fatalf("HandlePaymentCallback() got = %+v, want duplicate result", got)
 	}
-	if hotWriter.updateCalls != 0 {
-		t.Fatalf("expected duplicate callback not to update hot status, got %d", hotWriter.updateCalls)
+	if hotWriter.updateCalls != 1 || hotWriter.orderID != "order-1" || hotWriter.status != "success" {
+		t.Fatalf("expected duplicate callback to re-drive hot status sync, got calls=%d order=%s status=%s", hotWriter.updateCalls, hotWriter.orderID, hotWriter.status)
+	}
+	if hotWriter.advanceCalls != 1 || hotWriter.advanceStatus != entity.ReservationStatusConsumed {
+		t.Fatalf("expected duplicate callback to re-drive reservation advancement, got calls=%d status=%d", hotWriter.advanceCalls, hotWriter.advanceStatus)
 	}
 }
 

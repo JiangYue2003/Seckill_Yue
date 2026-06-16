@@ -11,6 +11,7 @@ import (
 	"seckill-mall/seckill-service/internal/model"
 	"seckill-mall/seckill-service/internal/metrics"
 	"seckill-mall/seckill-service/internal/mq"
+	"seckill-mall/seckill-service/internal/outbox"
 	"seckill-mall/seckill-service/internal/redis"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -21,6 +22,8 @@ type ServiceContext struct {
 	Redis            *redis.SeckillRedis
 	AsyncProducer    *mq.AsyncProducer
 	OrderProducer    OrderProducer
+	SyncMQProducer   *mq.RocketMQProducer
+	OutboxPublisher  *outbox.Publisher
 	ReservationLedger model.ReservationLedger
 	ProductMetaCache *ProductMetaCache
 	ProductFilter    *ProductIDFilter
@@ -65,6 +68,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		ProducerGroup: c.RocketMQ.ProducerGroup,
 		OrderTopic:    c.RocketMQ.OrderTopic,
 		CheckTopic:    c.RocketMQ.CheckTopic,
+		EventTopic:    c.RocketMQ.EventTopic,
 	})
 	if err != nil {
 		logx.Errorf("failed to initialize RocketMQ producer: %v", err)
@@ -81,11 +85,12 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	)
 
 	instanceID := buildInstanceID()
-	reservationLedger, ledgerErr := model.NewReservationLedger(c)
-	if ledgerErr != nil {
-		logx.Errorf("failed to initialize reservation ledger: %v", ledgerErr)
-		panic(ledgerErr)
+	db, dbErr := model.NewDB(c)
+	if dbErr != nil {
+		logx.Errorf("failed to initialize reservation db: %v", dbErr)
+		panic(dbErr)
 	}
+	reservationLedger := model.NewReservationLedgerWithDB(db)
 	productMetaCache := NewProductMetaCache(
 		c.ProductMetaCache.Enabled,
 		redisClient,
@@ -104,12 +109,14 @@ func NewServiceContext(c config.Config) *ServiceContext {
 		Redis:            redisClient,
 		AsyncProducer:    asyncProducer,
 		OrderProducer:    asyncProducer,
+		SyncMQProducer:   producer,
 		ReservationLedger: reservationLedger,
 		ProductMetaCache: productMetaCache,
 		ProductFilter:    productFilter,
 		QuotaRefillGate:  NewQuotaRefillGate(),
 		InstanceID:       instanceID,
 	}
+	ctx.OutboxPublisher = outbox.NewPublisher(model.NewOutboxStore(db), producer)
 
 	if productMetaCache != nil && productMetaCache.Enabled() {
 		if count, preloadErr := productMetaCache.Refresh(context.Background()); preloadErr != nil {
@@ -138,6 +145,7 @@ func NewServiceContext(c config.Config) *ServiceContext {
 	if c.LocalQuota.Enabled {
 		ctx.startQuotaBackgroundWorkers()
 	}
+	ctx.startOutboxPublisher()
 
 	return ctx
 }
@@ -201,6 +209,18 @@ func (s *ServiceContext) startQuotaBackgroundWorkers() {
 				}
 			}
 		}
+	}()
+}
+
+func (s *ServiceContext) startOutboxPublisher() {
+	if s == nil || s.OutboxPublisher == nil {
+		return
+	}
+	bgCtx := s.ensureBackgroundContext()
+	s.bgWg.Add(1)
+	go func() {
+		defer s.bgWg.Done()
+		s.OutboxPublisher.Run(bgCtx)
 	}()
 }
 

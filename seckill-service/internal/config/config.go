@@ -40,6 +40,7 @@ type Config struct {
 		ProducerGroup string // 生产者组名
 		OrderTopic    string // 主链路 Topic
 		CheckTopic    string // 超时检查 Topic（延迟消息）
+		EventTopic    string // 通用领域事件 Topic
 	}
 
 	// 异步 MQ 生产者配置

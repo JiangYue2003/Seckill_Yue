@@ -29,6 +29,9 @@ type fakeReservationLedger struct {
 	releaseCalls               []*model.ReleaseReservationInput
 	releaseErr                 error
 	releaseResult              *entity.SeckillReservation
+	advanceCalls               []*model.AdvanceReservationInput
+	advanceErr                 error
+	advanceResult              *entity.SeckillReservation
 }
 
 func (f *fakeReservationLedger) PersistReservation(ctx context.Context, in *model.PersistReservationInput) (*model.PersistReservationResult, error) {
@@ -110,6 +113,35 @@ func (f *fakeReservationLedger) ReleaseReservation(ctx context.Context, in *mode
 		Status:        in.TargetStatus,
 		Reason:        in.Reason,
 		UpdatedAt:     time.Now().Unix(),
+	}
+	return reservation, nil
+}
+
+func (f *fakeReservationLedger) AdvanceReservation(ctx context.Context, in *model.AdvanceReservationInput) (*entity.SeckillReservation, error) {
+	f.advanceCalls = append(f.advanceCalls, in)
+	if f.advanceErr != nil {
+		return nil, f.advanceErr
+	}
+	if f.advanceResult != nil {
+		return f.advanceResult, nil
+	}
+	if in == nil {
+		return nil, model.ErrInvalidParams
+	}
+	reservation := &entity.SeckillReservation{
+		ReservationId: in.ReservationID,
+		OrderId:       in.OrderID,
+		Status:        in.TargetStatus,
+		Reason:        in.Reason,
+		UpdatedAt:     time.Now().Unix(),
+	}
+	if reservation.ReservationId == "" && in.OrderID != "" && f.byOrderID != nil {
+		if existing, ok := f.byOrderID[in.OrderID]; ok {
+			existing.Status = in.TargetStatus
+			existing.Reason = in.Reason
+			existing.UpdatedAt = reservation.UpdatedAt
+			return existing, nil
+		}
 	}
 	return reservation, nil
 }
@@ -207,8 +239,8 @@ func TestSeckillPersistsReservationBeforeReturningSuccess(t *testing.T) {
 	if ledger.persistCalls[0].ReservationID != resp.ReservationId {
 		t.Fatalf("expected persisted reservation id %s, got %s", resp.ReservationId, ledger.persistCalls[0].ReservationID)
 	}
-	if producer.delayCalls != 1 || producer.asyncCalls != 1 {
-		t.Fatalf("expected compatibility mq sends once each, got delay=%d async=%d", producer.delayCalls, producer.asyncCalls)
+	if producer.delayCalls != 1 || producer.asyncCalls != 0 {
+		t.Fatalf("expected only timeout-check mq send, got delay=%d async=%d", producer.delayCalls, producer.asyncCalls)
 	}
 }
 

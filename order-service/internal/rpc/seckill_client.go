@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	commonpb "seckill-mall/common/common"
 	"seckill-mall/common/seckill"
 	"seckill-mall/order-service/internal/config"
+	"seckill-mall/order-service/internal/payment"
 
 	"github.com/zeromicro/go-zero/zrpc"
 )
@@ -71,6 +73,35 @@ func (c *SeckillServiceClient) UpdateOrderStatus(ctx context.Context, orderId, s
 	return nil
 }
 
+func (c *SeckillServiceClient) AdvanceReservation(ctx context.Context, in *payment.AdvanceReservationInput) error {
+	if c == nil || c.client == nil || in == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := c.client.AdvanceReservation(ctx, &seckill.AdvanceReservationRequest{
+		ReservationId: in.ReservationID,
+		OrderId:       in.OrderID,
+		TargetStatus:  toProtoReservationStatus(in.TargetStatus),
+		Reason:        in.Reason,
+		Operator:      in.Operator,
+		PaymentId:     in.PaymentID,
+		AllowRecover:  in.AllowRecover,
+	})
+	if err != nil {
+		return err
+	}
+	if resp == nil {
+		return errors.New("advance reservation returned nil response")
+	}
+	if !resp.Success {
+		return fmt.Errorf("advance reservation rejected: %s", resp.Message)
+	}
+	return nil
+}
+
 // CompensateFailedOrder 超时失败补偿：
 // 仅当订单当前状态为 pending 时，原子执行 pending->failed + 回补 Redis 库存 + 删除 userKey。
 func (c *SeckillServiceClient) CompensateFailedOrder(
@@ -109,4 +140,29 @@ func (c *SeckillServiceClient) CompensateFailedOrder(
 		return resp, fmt.Errorf("compensate failed order rejected: %s", resp.Message)
 	}
 	return resp, nil
+}
+
+func toProtoReservationStatus(status int32) commonpb.ReservationStatus {
+	switch status {
+	case 0:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	case 1:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATING
+	case 2:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_ORDER_CREATED
+	case 3:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_PAYING
+	case 4:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_PAID
+	case 5:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_CONSUMED
+	case 6:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RELEASED
+	case 7:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_EXPIRED
+	case 8:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_FAILED
+	default:
+		return commonpb.ReservationStatus_RESERVATION_STATUS_RESERVED
+	}
 }
