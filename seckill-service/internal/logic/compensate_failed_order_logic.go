@@ -36,7 +36,7 @@ func (l *CompensateFailedOrderLogic) CompensateFailedOrder(in *seckill.Compensat
 			Result:  "invalid_request",
 		}, nil
 	}
-	if in.SeckillProductId <= 0 || in.UserId <= 0 || in.Quantity <= 0 {
+	if in.SeckillProductId <= 0 || in.UserId <= 0 || in.Quantity <= 0 || in.ShardNo < 0 {
 		return &seckill.CompensateFailedOrderResponse{
 			Success: false,
 			Message: "参数非法",
@@ -50,6 +50,7 @@ func (l *CompensateFailedOrderLogic) CompensateFailedOrder(in *seckill.Compensat
 		in.SeckillProductId,
 		in.UserId,
 		in.Quantity,
+		in.ShardNo,
 		OrderStatusTTL,
 	)
 	if err != nil {

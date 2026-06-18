@@ -136,6 +136,7 @@ type SeckillOrderMessage struct {
 	SeckillPrice     int64                  `protobuf:"varint,6,opt,name=seckill_price,json=seckillPrice,proto3" json:"seckill_price,omitempty"`               // 秒杀价格(分)
 	Amount           int64                  `protobuf:"varint,7,opt,name=amount,proto3" json:"amount,omitempty"`                                               // 实付金额(分)
 	CreatedAt        int64                  `protobuf:"varint,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`                        // 创建时间戳
+	ShardNo          int32                  `protobuf:"varint,9,opt,name=shard_no,json=shardNo,proto3" json:"shard_no,omitempty"`                              // 固定库存分片号
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -222,6 +223,13 @@ func (x *SeckillOrderMessage) GetAmount() int64 {
 func (x *SeckillOrderMessage) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *SeckillOrderMessage) GetShardNo() int32 {
+	if x != nil {
+		return x.ShardNo
 	}
 	return 0
 }
@@ -684,7 +692,7 @@ func (x *CancelOrderRequest) GetUserId() int64 {
 type PayOrderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	PaymentId     string                 `protobuf:"bytes,2,opt,name=payment_id,json=paymentId,proto3" json:"payment_id,omitempty"` // 兼容字段，后续由服务端生成支付单号
+	PaymentId     string                 `protobuf:"bytes,2,opt,name=payment_id,json=paymentId,proto3" json:"payment_id,omitempty"` // 废弃兼容字段，服务端忽略其业务语义
 	Channel       string                 `protobuf:"bytes,3,opt,name=channel,proto3" json:"channel,omitempty"`                      // 支付渠道，如 mock_alipay
 	RequestId     string                 `protobuf:"bytes,4,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"` // 请求幂等号
 	unknownFields protoimpl.UnknownFields
@@ -1207,7 +1215,7 @@ var File_proto_order_proto protoreflect.FileDescriptor
 
 const file_proto_order_proto_rawDesc = "" +
 	"\n" +
-	"\x11proto/order.proto\x12\x05order\x1a\x12proto/common.proto\"\x8e\x02\n" +
+	"\x11proto/order.proto\x12\x05order\x1a\x12proto/common.proto\"\xa9\x02\n" +
 	"\x13SeckillOrderMessage\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12,\n" +
@@ -1218,7 +1226,8 @@ const file_proto_order_proto_rawDesc = "" +
 	"\rseckill_price\x18\x06 \x01(\x03R\fseckillPrice\x12\x16\n" +
 	"\x06amount\x18\a \x01(\x03R\x06amount\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\b \x01(\x03R\tcreatedAt\"\xd5\x04\n" +
+	"created_at\x18\b \x01(\x03R\tcreatedAt\x12\x19\n" +
+	"\bshard_no\x18\t \x01(\x05R\ashardNo\"\xd5\x04\n" +
 	"\tOrderInfo\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x17\n" +
 	"\auser_id\x18\x02 \x01(\x03R\x06userId\x12\x1d\n" +

@@ -219,6 +219,7 @@ type compensateCall struct {
 	userID           int64
 	quantity         int64
 	reason           string
+	shardNo          int32
 }
 
 type fakeSeckillClient struct {
@@ -232,13 +233,14 @@ func (f *fakeSeckillClient) UpdateOrderStatus(ctx context.Context, orderID, stat
 	return nil
 }
 
-func (f *fakeSeckillClient) CompensateFailedOrder(ctx context.Context, orderID string, seckillProductID, userID, quantity int64, reason string) (string, error) {
+func (f *fakeSeckillClient) CompensateFailedOrder(ctx context.Context, orderID string, seckillProductID, userID, quantity int64, reason string, shardNo int32) (string, error) {
 	f.compensateCalls = append(f.compensateCalls, compensateCall{
 		orderID:          orderID,
 		seckillProductID: seckillProductID,
 		userID:           userID,
 		quantity:         quantity,
 		reason:           reason,
+		shardNo:          shardNo,
 	})
 	return "compensated", nil
 }
@@ -558,5 +560,194 @@ func TestRunnerDoesNotFlagEventOrderWhenPrimaryChainIsOrdered(t *testing.T) {
 
 	if got := sum.ManualAnomalyCount[AnomalyOutboxEventOrderInvalid]; got != 0 {
 		t.Fatalf("expected no event order invalid anomaly, got %d", got)
+	}
+}
+
+func TestRunnerFlagsMissingShardNoInStrictOutboxPayload(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                "S118_S50014",
+				ReservationID:          "S118_S50014",
+				UserID:                 111,
+				ProductID:              24,
+				Quantity:               1,
+				Amount:                 25900,
+				Status:                 OrderStatusOrderCreated,
+				PayStatus:              OrderPayStatusInit,
+				CreatedAt:              1710001300,
+				SeckillProductID:       118,
+				SeckillQuantity:        1,
+				ReservationFound:       true,
+				ReservationUserID:      111,
+				ReservationProductID:   24,
+				ReservationQuantity:    1,
+				ReservationAmount:      25900,
+				ReservationStatus:      ReservationStatusOrderCreated,
+				ProcessedMessageFound:  true,
+				ProcessedMessageStatus: ProcessedMessageStatusSucceeded,
+			},
+		},
+		outboxMap: map[string][]OutboxEventRow{
+			"S118_S50014": {
+				{
+					ID:        71,
+					EventType: "order.created",
+					Status:    OutboxStatusPublished,
+					PayloadJSON: `{
+						"event_id":"evt-71",
+						"event_type":"order.created",
+						"occurred_at":1710001300,
+						"aggregate_type":"order",
+						"aggregate_id":"S118_S50014",
+						"trace_id":"trace-71",
+						"source":"order-service",
+						"version":1,
+						"message_id":"S118_S50014",
+						"reservation_id":"S118_S50014",
+						"order_id":"S118_S50014",
+						"user_id":111,
+						"seckill_product_id":118,
+						"product_id":24,
+						"quantity":1,
+						"amount":25900,
+						"status":2,
+						"order_type":1,
+						"pay_status":0
+					}`,
+				},
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S118_S50014": "pending"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyOutboxPayloadMissingFields]; got != 1 {
+		t.Fatalf("expected one outbox payload missing fields anomaly, got %d", got)
+	}
+}
+
+func TestRunnerFlagsShardMismatchBetweenOrderAndReservation(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                "S119_S50015",
+				ReservationID:          "S119_S50015",
+				UserID:                 112,
+				ProductID:              25,
+				Quantity:               1,
+				Amount:                 26900,
+				ShardNo:                3,
+				Status:                 OrderStatusOrderCreated,
+				PayStatus:              OrderPayStatusInit,
+				CreatedAt:              1710001400,
+				SeckillProductID:       119,
+				SeckillQuantity:        1,
+				SeckillShardNo:         3,
+				ReservationFound:       true,
+				ReservationUserID:      112,
+				ReservationProductID:   25,
+				ReservationQuantity:    1,
+				ReservationAmount:      26900,
+				ReservationShardNo:     4,
+				ReservationStatus:      ReservationStatusOrderCreated,
+				ProcessedMessageFound:  true,
+				ProcessedMessageStatus: ProcessedMessageStatusSucceeded,
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S119_S50015": "pending"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if got := sum.ManualAnomalyCount[AnomalyShardMismatch]; got != 1 {
+		t.Fatalf("expected one shard mismatch anomaly, got %d", got)
+	}
+}
+
+func TestRunnerSkipsCompensationWhenReservationShardMissing(t *testing.T) {
+	repo := &fakeRepo{
+		rows: []OrderRow{
+			{
+				OrderID:                "S120_S50016",
+				ReservationID:          "S120_S50016",
+				UserID:                 113,
+				ProductID:              26,
+				Quantity:               1,
+				Amount:                 27900,
+				ShardNo:                2,
+				Status:                 OrderStatusFailed,
+				PayStatus:              OrderPayStatusInit,
+				CreatedAt:              1710001500,
+				SeckillProductID:       120,
+				SeckillQuantity:        1,
+				SeckillShardNo:         2,
+				ReservationFound:       true,
+				ReservationUserID:      113,
+				ReservationProductID:   26,
+				ReservationQuantity:    1,
+				ReservationAmount:      27900,
+				ReservationShardNo:     0,
+				ReservationStatus:      ReservationStatusFailed,
+				ProcessedMessageFound:  true,
+				ProcessedMessageStatus: ProcessedMessageStatusSucceeded,
+			},
+		},
+	}
+	store := &fakeStore{statuses: map[string]string{"S120_S50016": "pending"}}
+	client := &fakeSeckillClient{}
+
+	runner, err := NewRunner(Config{
+		WindowStartUnix: 1,
+		WindowEndUnix:   2,
+		BatchSize:       10,
+		DryRun:          false,
+		MaxRepair:       10,
+	}, repo, store, client, nil)
+	if err != nil {
+		t.Fatalf("NewRunner() error = %v", err)
+	}
+
+	sum, err := runner.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if len(client.compensateCalls) != 0 {
+		t.Fatalf("expected compensation to be skipped, got %+v", client.compensateCalls)
+	}
+	if got := sum.ManualAnomalyCount[AnomalyCompensationShardMissing]; got != 1 {
+		t.Fatalf("expected one compensation shard missing anomaly, got %d", got)
 	}
 }

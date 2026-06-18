@@ -111,6 +111,7 @@ func (c *SeckillServiceClient) CompensateFailedOrder(
 	userId int64,
 	quantity int64,
 	reason string,
+	shardNo int32,
 ) (*seckill.CompensateFailedOrderResponse, error) {
 	if c == nil || c.client == nil {
 		return &seckill.CompensateFailedOrderResponse{
@@ -129,6 +130,7 @@ func (c *SeckillServiceClient) CompensateFailedOrder(
 		UserId:           userId,
 		Quantity:         quantity,
 		Reason:           reason,
+		ShardNo:          shardNo,
 	})
 	if err != nil {
 		return nil, err

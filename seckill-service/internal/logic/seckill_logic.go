@@ -35,14 +35,6 @@ const (
 	// 用户预占过期时间（秒）：MQ 处理超时兜底，消息失败时库存自动归还 Redis
 	// 5分钟 = 300秒，足够 MQ 正常重试 3 次（每次 < 2 分钟）
 	UserPreemptTTL = 300
-
-	defaultQuotaBatchSize       = 200
-	defaultQuotaLowWatermark    = 40
-	defaultQuotaLeaseTTLSeconds = 15
-
-	quotaRefillSourceInitial      = "initial"
-	quotaRefillSourceInsufficient = "insufficient"
-	quotaRefillSourceLowWater     = "low_water"
 )
 
 type SeckillLogic struct {
@@ -139,24 +131,10 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 	}
 
-	quotaEnabled := l.svcCtx.Config.LocalQuota.Enabled
-	if quotaEnabled {
-		// 配额模式：本地计数器从 0 起步，仅在不足时领取，避免每请求打 Redis
-		l.svcCtx.Redis.GetOrInitLocalStockWithValue(in.SeckillProductId, 0)
-		if l.svcCtx.Redis.GetLocalStock(in.SeckillProductId) <= 0 {
-			if err := l.refillQuota(l.ctx, in.SeckillProductId, quotaRefillSourceInitial); err != nil {
-				l.Logger.Errorf("initial quota refill failed: spid=%d, err=%v", in.SeckillProductId, err)
-			}
-		}
-	} else {
-		// 旧模式：懒初始化本地库存计数器（首次请求时从 Redis 同步库存）
-		counter, _ := l.svcCtx.Redis.GetOrInitLocalStock(l.ctx, in.SeckillProductId)
-		// 兜底：服务长期运行后，若本地计数器耗尽但 Redis 仍有库存（例如压测复跑重置了 Redis），
-		// 则按 Redis 权威值回填，避免“必须重启服务”才能恢复。
-		if counter != nil && counter.Load() <= 0 {
-			if stock, stockErr := l.svcCtx.Redis.GetStock(l.ctx, in.SeckillProductId); stockErr == nil && stock > 0 {
-				counter.Store(stock)
-			}
+	counter, _ := l.svcCtx.Redis.GetOrInitLocalStock(l.ctx, in.SeckillProductId)
+	if counter != nil && counter.Load() <= 0 {
+		if stock, stockErr := l.svcCtx.Redis.GetStock(l.ctx, in.SeckillProductId); stockErr == nil && stock > 0 {
+			counter.Store(stock)
 		}
 	}
 
@@ -165,18 +143,6 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	if remaining < 0 {
 		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
 
-		// 配额模式：尝试快速补一批本地配额再重试一次
-		if quotaEnabled {
-			if err := l.refillQuota(l.ctx, in.SeckillProductId, quotaRefillSourceInsufficient); err != nil {
-				l.Logger.Errorf("quota refill failed: spid=%d, err=%v", in.SeckillProductId, err)
-			}
-			if l.svcCtx.Redis.GetLocalStock(in.SeckillProductId) > 0 {
-				remaining = l.svcCtx.Redis.DecrLocalStock(in.SeckillProductId, quantity)
-				if remaining < 0 {
-					l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
-				}
-			}
-		}
 	}
 
 	if remaining < 0 {
@@ -211,11 +177,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	// 执行 Redis Lua 脚本（原子性操作）
 	var result *redis.SeckillResult
 	var err error
-	if quotaEnabled {
-		result, err = l.svcCtx.Redis.DoSeckillWithQuota(l.ctx, seckillReq, l.svcCtx.InstanceID)
-	} else {
-		result, err = l.svcCtx.Redis.DoSeckill(l.ctx, seckillReq)
-	}
+	result, err = l.svcCtx.Redis.DoSeckill(l.ctx, seckillReq)
 	if err != nil {
 		// Lua 执行失败时，回滚本地预扣计数，避免本地计数与 Redis 权威库存长期偏移。
 		l.svcCtx.Redis.IncrLocalStock(in.SeckillProductId, quantity)
@@ -274,18 +236,8 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 		}, nil
 
 	case redis.LuaResultSuccess:
-		if quotaEnabled && remaining <= l.quotaLowWatermark() {
-			go func(spid int64) {
-				bgCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				if refillErr := l.refillQuota(bgCtx, spid, quotaRefillSourceLowWater); refillErr != nil {
-					l.Logger.Errorf("low-water quota refill failed: spid=%d, err=%v", spid, refillErr)
-				}
-			}(in.SeckillProductId)
-		}
-
-		if err := l.persistReservation(orderId, in.UserId, in.SeckillProductId, productId, quantity, amount, seckillPrice); err != nil {
-			l.compensateLocalReservationFailure(orderId, in.SeckillProductId, in.UserId, quantity)
+		if err := l.persistReservation(orderId, in.UserId, in.SeckillProductId, productId, quantity, amount, seckillPrice, result.ShardNo); err != nil {
+			l.compensateLocalReservationFailure(orderId, in.SeckillProductId, in.UserId, quantity, result.ShardNo)
 			l.Logger.Errorf("reservation persist failed after redis success: userId=%d, seckillProductId=%d, orderId=%s, err=%v",
 				in.UserId, in.SeckillProductId, orderId, err)
 			resultLabel = "reservation_persist_failed"
@@ -309,6 +261,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 			SeckillPrice:     seckillPrice,
 			Amount:           amount,
 			CreatedAt:        time.Now().Unix(),
+			ShardNo:          result.ShardNo,
 		}
 		l.enqueueTimeoutCheckMessage(seckillMsg)
 
@@ -337,7 +290,7 @@ func (l *SeckillLogic) Seckill(in *seckill.SeckillRequest) (*seckill.SeckillResp
 	}
 }
 
-func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProductID, productID, quantity, amount, seckillPrice int64) error {
+func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProductID, productID, quantity, amount, seckillPrice int64, shardNo int32) error {
 	if l.svcCtx.ReservationLedger == nil {
 		return errors.New("reservation ledger is nil")
 	}
@@ -351,6 +304,7 @@ func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProduct
 		Quantity:         quantity,
 		Amount:           amount,
 		SeckillPrice:     seckillPrice,
+		ShardNo:          shardNo,
 		Source:           "gateway",
 		Reason:           "reservation.created",
 		RedisOrderKey:    redis.KeyOrder(seckillProductID, orderID),
@@ -362,9 +316,9 @@ func (l *SeckillLogic) persistReservation(orderID string, userID, seckillProduct
 	return err
 }
 
-func (l *SeckillLogic) compensateLocalReservationFailure(orderID string, seckillProductID, userID, quantity int64) {
+func (l *SeckillLogic) compensateLocalReservationFailure(orderID string, seckillProductID, userID, quantity int64, shardNo int32) {
 	l.svcCtx.Redis.IncrLocalStock(seckillProductID, quantity)
-	code, _, err := l.svcCtx.Redis.CompensateFailedOrder(l.ctx, orderID, seckillProductID, userID, quantity, OrderStatusTTL)
+	code, _, err := l.svcCtx.Redis.CompensateFailedOrder(l.ctx, orderID, seckillProductID, userID, quantity, shardNo, OrderStatusTTL)
 	if err != nil {
 		l.Logger.Errorf("compensate redis hot state failed after reservation persist error: orderId=%s, err=%v", orderID, err)
 		return
@@ -385,62 +339,6 @@ func (l *SeckillLogic) enqueueTimeoutCheckMessage(seckillMsg *mq.SeckillOrderMes
 	} else {
 		metrics.SeckillMQEnqueueTotal.WithLabelValues("delay", "ok").Inc()
 	}
-}
-
-func (l *SeckillLogic) quotaBatchSize() int64 {
-	if l.svcCtx.Config.LocalQuota.BatchSize > 0 {
-		return l.svcCtx.Config.LocalQuota.BatchSize
-	}
-	return defaultQuotaBatchSize
-}
-
-func (l *SeckillLogic) quotaLowWatermark() int64 {
-	if l.svcCtx.Config.LocalQuota.LowWatermark > 0 {
-		return l.svcCtx.Config.LocalQuota.LowWatermark
-	}
-	return defaultQuotaLowWatermark
-}
-
-func (l *SeckillLogic) quotaLeaseTTLSeconds() int64 {
-	if l.svcCtx.Config.LocalQuota.LeaseTTLSeconds > 0 {
-		return l.svcCtx.Config.LocalQuota.LeaseTTLSeconds
-	}
-	return defaultQuotaLeaseTTLSeconds
-}
-
-// refillQuota performs quota refill with per-product single-flight protection.
-// The first caller executes EnsureQuota; concurrent callers wait for that result.
-func (l *SeckillLogic) refillQuota(ctx context.Context, seckillProductId int64, source string) error {
-	outcome := "ok"
-	shared, err := l.svcCtx.QuotaRefillGate.Do(ctx, seckillProductId, func() error {
-		allocated, _, allocErr := l.svcCtx.Redis.EnsureQuota(
-			ctx,
-			seckillProductId,
-			l.svcCtx.InstanceID,
-			l.quotaBatchSize(),
-			l.quotaLeaseTTLSeconds(),
-		)
-		if allocErr != nil {
-			outcome = "failed"
-			metrics.SeckillQuotaAllocateTotal.WithLabelValues("failed").Inc()
-			return allocErr
-		}
-		if allocated > 0 {
-			outcome = "ok"
-			metrics.SeckillQuotaAllocateTotal.WithLabelValues("ok").Inc()
-			l.svcCtx.Redis.IncrLocalStock(seckillProductId, allocated)
-			return nil
-		}
-		outcome = "empty"
-		metrics.SeckillQuotaAllocateTotal.WithLabelValues("empty").Inc()
-		return nil
-	})
-	if shared {
-		metrics.SeckillQuotaRefillTotal.WithLabelValues(source, "coalesced").Inc()
-		return err
-	}
-	metrics.SeckillQuotaRefillTotal.WithLabelValues(source, outcome).Inc()
-	return err
 }
 
 // getSeckillProductInfo 从 Redis 获取秒杀商品信息（productId, seckillPrice, productName, startTime, endTime）

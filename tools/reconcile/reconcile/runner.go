@@ -153,9 +153,25 @@ func (r *Runner) checkReservationConsistency(ctx context.Context, sum *Summary, 
 	if row.SeckillProductID <= 0 {
 		r.markManualAnomaly(sum, AnomalyMissingSeckillOrderRecord, row.OrderID)
 	}
+	if row.ShardNo <= 0 {
+		r.markManualAnomaly(sum, AnomalyOrderShardMissing, row.OrderID)
+	}
+	if row.SeckillProductID > 0 && row.SeckillShardNo <= 0 {
+		r.markManualAnomaly(sum, AnomalySeckillOrderShardMissing, row.OrderID)
+	}
 	if !row.ReservationFound {
 		r.markManualAnomaly(sum, AnomalyReservationMissing, row.OrderID)
 		return
+	}
+	if row.ReservationShardNo <= 0 {
+		r.markManualAnomaly(sum, AnomalyReservationShardMissing, row.OrderID)
+	} else if row.ShardNo > 0 && row.ShardNo != row.ReservationShardNo {
+		r.markManualAnomaly(sum, AnomalyShardMismatch, row.OrderID)
+	} else if row.SeckillShardNo > 0 && row.SeckillShardNo != row.ReservationShardNo {
+		r.markManualAnomaly(sum, AnomalyShardMismatch, row.OrderID)
+	}
+	if row.ShardNo > 0 && row.SeckillShardNo > 0 && row.ShardNo != row.SeckillShardNo {
+		r.markManualAnomaly(sum, AnomalyShardMismatch, row.OrderID)
 	}
 	if row.ReservationUserID != 0 && row.ReservationUserID != row.UserID {
 		r.markManualAnomaly(sum, AnomalyReservationUserMismatch, row.OrderID)
@@ -309,6 +325,14 @@ func (r *Runner) checkRedisConsistency(ctx context.Context, sum *Summary, row Or
 			)
 			return nil
 		}
+		if row.ReservationShardNo <= 0 {
+			r.markManualAnomaly(sum, AnomalyCompensationShardMissing, row.OrderID)
+			r.logf(
+				"level=warn msg=\"skip failed compensation due to missing shard\" order_id=%s seckill_product_id=%d user_id=%d quantity=%d",
+				row.OrderID, row.SeckillProductID, row.UserID, quantity,
+			)
+			return nil
+		}
 
 		return r.doRepair(ctx, sum, func(ctx context.Context) error {
 			_, err := r.client.CompensateFailedOrder(
@@ -318,6 +342,7 @@ func (r *Runner) checkRedisConsistency(ctx context.Context, sum *Summary, row Or
 				row.UserID,
 				quantity,
 				reconcileReasonDBFailed,
+				row.ReservationShardNo,
 			)
 			return err
 		})
@@ -423,6 +448,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"status",
 			"expire_at",
 		)
@@ -436,6 +462,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"from_status",
 			"status",
 			"reason",
@@ -451,6 +478,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"from_status",
 			"status",
 			"reason",
@@ -465,6 +493,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"status",
 			"order_type",
 			"pay_status",
@@ -480,6 +509,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"status",
 			"channel",
 		)
@@ -494,6 +524,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"status",
 			"channel",
 			"third_party_trade_no",
@@ -511,6 +542,7 @@ func hasRequiredOutboxFields(outbox OutboxEventRow) bool {
 			"product_id",
 			"quantity",
 			"amount",
+			"shard_no",
 			"status",
 			"order_type",
 			"pay_status",

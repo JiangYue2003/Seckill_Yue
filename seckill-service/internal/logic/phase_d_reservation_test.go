@@ -49,6 +49,7 @@ func (f *fakeReservationLedger) PersistReservation(ctx context.Context, in *mode
 		ProductId:        in.ProductID,
 		Quantity:         int(in.Quantity),
 		Amount:           in.Amount,
+		ShardNo:          in.ShardNo,
 		Status:           entity.ReservationStatusReserved,
 		Source:           in.Source,
 		Reason:           in.Reason,
@@ -252,6 +253,9 @@ func TestSeckillPersistsReservationBeforeReturningSuccess(t *testing.T) {
 	wantRedisKey := "{101}:sk:order:" + resp.OrderId
 	if ledger.persistCalls[0].RedisOrderKey != wantRedisKey {
 		t.Fatalf("expected redis order key %s, got %s", wantRedisKey, ledger.persistCalls[0].RedisOrderKey)
+	}
+	if ledger.persistCalls[0].ShardNo < 0 || ledger.persistCalls[0].ShardNo >= 16 {
+		t.Fatalf("expected shard no in [0,15], got %d", ledger.persistCalls[0].ShardNo)
 	}
 	if producer.delayCalls != 1 || producer.asyncCalls != 0 {
 		t.Fatalf("expected only timeout-check mq send, got delay=%d async=%d", producer.delayCalls, producer.asyncCalls)
@@ -489,6 +493,7 @@ func TestMainChainRedisSuccessMirrorReturnsCompleted(t *testing.T) {
 	if err := svcCtx.Redis.SetOrderInfo(context.Background(), 107, orderID, &redisstore.OrderInfo{
 		Status:      redisstore.OrderStatusPending,
 		OrderId:     orderID,
+		ShardNo:     2,
 		ProductId:   1007,
 		Quantity:    1,
 		Amount:      3300,
@@ -580,12 +585,21 @@ func TestTimeoutCompensationChainReturnsFailedAndRestoresHotState(t *testing.T) 
 		t.Fatalf("expected user key to exist before compensation, order_id=%s", seckillResp.OrderId)
 	}
 
+	orderInfoBefore, err := svcCtx.Redis.GetOrderInfo(context.Background(), seckillResp.OrderId)
+	if err != nil {
+		t.Fatalf("GetOrderInfo() before compensation error = %v", err)
+	}
+	if orderInfoBefore == nil {
+		t.Fatalf("expected order info before compensation for %s", seckillResp.OrderId)
+	}
+
 	compensateResp, err := NewCompensateFailedOrderLogic(context.Background(), svcCtx).CompensateFailedOrder(&seckillpb.CompensateFailedOrderRequest{
 		OrderId:          seckillResp.OrderId,
 		SeckillProductId: 108,
 		UserId:           2008,
 		Quantity:         1,
 		Reason:           "timeout_not_found_in_db",
+		ShardNo:          orderInfoBefore.ShardNo,
 	})
 	if err != nil {
 		t.Fatalf("CompensateFailedOrder() error = %v", err)
@@ -685,6 +699,14 @@ func TestCompensateFailedOrderReleasesReservationLedger(t *testing.T) {
 		t.Fatalf("DoSeckill() error = %v", err)
 	}
 
+	orderInfoBefore, err := svcCtx.Redis.GetOrderInfo(context.Background(), orderID)
+	if err != nil {
+		t.Fatalf("GetOrderInfo() before compensation error = %v", err)
+	}
+	if orderInfoBefore == nil {
+		t.Fatalf("expected order info before compensation for %s", orderID)
+	}
+
 	logic := NewCompensateFailedOrderLogic(context.Background(), svcCtx)
 	resp, rpcErr := logic.CompensateFailedOrder(&seckillpb.CompensateFailedOrderRequest{
 		OrderId:          orderID,
@@ -692,6 +714,7 @@ func TestCompensateFailedOrderReleasesReservationLedger(t *testing.T) {
 		UserId:           2005,
 		Quantity:         1,
 		Reason:           "timeout",
+		ShardNo:          orderInfoBefore.ShardNo,
 	})
 	if rpcErr != nil {
 		t.Fatalf("CompensateFailedOrder() error = %v", rpcErr)

@@ -38,6 +38,7 @@ message SeckillOrderMessage {
     int64 seckill_price = 6;       // 秒杀价格(分)
     int64 amount = 7;              // 实付金额(分)
     int64 created_at = 8;          // 创建时间戳
+    int32 shard_no = 9;            // 固定库存分片号
 }
 
 // 订单详情

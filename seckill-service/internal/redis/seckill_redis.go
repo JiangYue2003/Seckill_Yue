@@ -36,6 +36,9 @@ const (
 )
 
 const (
+	defaultShardCount         = 16
+	defaultProbeShardCount    = 4
+	defaultTailDrainThreshold = 32
 	defaultPoolSize      = 256
 	defaultMinIdleConns  = 32
 	defaultDialTimeoutMs = 200
@@ -67,261 +70,6 @@ type SeckillProductMeta struct {
 	StartTime        int64
 	EndTime          int64
 }
-
-// seckillLuaScript 秒杀 Lua 脚本
-// 功能：原子性完成 时间兜底校验 + 防重 + 库存扣减 + 最小状态落点写入
-// 返回值：{结果码, 剩余库存}
-// KEYS[1]: stockKey, KEYS[2]: userKey, KEYS[3]: orderKey
-// ARGV[1]: quantity
-// ARGV[2]: orderId
-// ARGV[3]: userKeyTTLSeconds
-// ARGV[4]: startTime
-// ARGV[5]: endTime
-// ARGV[6]: nowUnix
-// ARGV[7]: orderStatusTTLSeconds
-var seckillLuaScript = `
-local stockKey = KEYS[1]
-local userKey = KEYS[2]
-local orderKey = KEYS[3]
-local quantity = tonumber(ARGV[1])
-local orderId = ARGV[2]
-local ttl = tonumber(ARGV[3])
-local startTime = tonumber(ARGV[4])
-local endTime = tonumber(ARGV[5])
-local now = tonumber(ARGV[6])
-local orderTTL = tonumber(ARGV[7] or "0")
-
--- 0. 时间校验
-if startTime > 0 and now < startTime then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {-3, currentStock}  -- 秒杀未开始
-end
-if endTime > 0 and now > endTime then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {-4, currentStock}  -- 秒杀已结束
-end
-
--- 1. 检查用户是否已购买
-local alreadyBought = redis.call('EXISTS', userKey)
-if alreadyBought == 1 then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {-1, currentStock}
-end
-
--- 2. 检查库存
-local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-if currentStock < quantity then
-    return {0, currentStock}
-end
-
--- 3. 扣减库存
-local newStock = redis.call('DECRBY', stockKey, quantity)
-if newStock < 0 then
-    redis.call('INCRBY', stockKey, quantity)
-    return {0, currentStock}
-end
-
--- 4. 记录用户购买记录（TTL 需足够覆盖订单处理时间）
-redis.call('SETEX', userKey, ttl, orderId)
-
--- 5. 写入订单最小状态（status:orderId）
-local orderValue = 'pending:' .. tostring(orderId)
-if orderTTL > 0 then
-    redis.call('SETEX', orderKey, orderTTL, orderValue)
-else
-    redis.call('SET', orderKey, orderValue)
-end
-
-return {1, newStock}
-`
-
-// compensateFailedOrderLuaScript 原子执行超时失败补偿
-// KEYS[1]: order status key (seckill:order:{orderId})
-// KEYS[2]: stock key (seckill:stock:{seckillProductId})
-// KEYS[3]: user key (seckill:user:{seckillProductId}:{userId})
-// ARGV[1]: quantity
-// ARGV[2]: orderStatusTTLSeconds
-// return: {code, stock}
-var compensateFailedOrderLuaScript = `
-local orderKey = KEYS[1]
-local stockKey = KEYS[2]
-local userKey = KEYS[3]
-local quantity = tonumber(ARGV[1])
-local ttl = tonumber(ARGV[2])
-
-local orderVal = redis.call('GET', orderKey)
-if not orderVal then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {-1, currentStock}
-end
-
-local currentStatus = orderVal
-local idx = string.find(orderVal, ':')
-if idx then
-    currentStatus = string.sub(orderVal, 1, idx - 1)
-end
-
-if currentStatus == 'failed' then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {1, currentStock}
-end
-
-if currentStatus == 'success' then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {2, currentStock}
-end
-
-if currentStatus ~= 'pending' then
-    local currentStock = tonumber(redis.call('GET', stockKey) or 0)
-    return {3, currentStock}
-end
-
-local failedVal = 'failed'
-if idx then
-    failedVal = 'failed' .. string.sub(orderVal, idx)
-end
-
-if ttl > 0 then
-    redis.call('SETEX', orderKey, ttl, failedVal)
-else
-    redis.call('SET', orderKey, failedVal)
-end
-
-local newStock = redis.call('INCRBY', stockKey, quantity)
-redis.call('DEL', userKey)
-return {0, tonumber(newStock)}
-`
-
-// quotaAllocateLuaScript 批量领取配额（回收由后台 Reaper 统一执行）
-// KEYS[1]: global stock key
-// KEYS[2]: current instance bucket key
-// KEYS[3]: lease zset key
-// ARGV[1]: instanceId
-// ARGV[2]: batchSize
-// ARGV[3]: leaseTTLSeconds
-// ARGV[4]: seckillProductId (unused, kept for arity compatibility)
-// ARGV[5]: nowUnix
-// return: {allocated, currentBucket}
-var quotaAllocateLuaScript = `
-local globalKey = KEYS[1]
-local bucketKey = KEYS[2]
-local leaseKey = KEYS[3]
-
-local instanceId = ARGV[1]
-local batchSize = tonumber(ARGV[2])
-local leaseTTL = tonumber(ARGV[3])
-local now = tonumber(ARGV[5])
-
-local allocated = 0
-if batchSize > 0 then
-    local globalStock = tonumber(redis.call('GET', globalKey) or 0)
-    if globalStock > 0 then
-        allocated = math.min(batchSize, globalStock)
-        redis.call('DECRBY', globalKey, allocated)
-        redis.call('INCRBY', bucketKey, allocated)
-    end
-end
-
-local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
-if currentBucket > 0 then
-    redis.call('ZADD', leaseKey, now + leaseTTL, instanceId)
-else
-    redis.call('ZREM', leaseKey, instanceId)
-end
-
-return {allocated, currentBucket}
-`
-
-// quotaConsumeLuaScript 消费实例桶配额做秒杀裁决（最小状态落点）
-// KEYS[1]: instance bucket key
-// KEYS[2]: user preempt key
-// KEYS[3]: order status key
-// ARGV[1]: quantity
-// ARGV[2]: orderId
-// ARGV[3]: userKeyTTL
-// ARGV[4]: startTime
-// ARGV[5]: endTime
-// ARGV[6]: nowUnix
-// ARGV[7]: orderStatusTTLSeconds
-// return: {code, bucketRemaining}
-var quotaConsumeLuaScript = `
-local bucketKey = KEYS[1]
-local userKey = KEYS[2]
-local orderKey = KEYS[3]
-local quantity = tonumber(ARGV[1])
-local orderId = ARGV[2]
-local ttl = tonumber(ARGV[3])
-local startTime = tonumber(ARGV[4])
-local endTime = tonumber(ARGV[5])
-local now = tonumber(ARGV[6])
-local orderTTL = tonumber(ARGV[7] or "0")
-
-if startTime > 0 and now < startTime then
-    local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
-    return {-3, currentBucket}
-end
-if endTime > 0 and now > endTime then
-    local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
-    return {-4, currentBucket}
-end
-
-local alreadyBought = redis.call('EXISTS', userKey)
-if alreadyBought == 1 then
-    local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
-    return {-1, currentBucket}
-end
-
-local currentBucket = tonumber(redis.call('GET', bucketKey) or 0)
-if currentBucket < quantity then
-    return {0, currentBucket}
-end
-
-local newBucket = redis.call('DECRBY', bucketKey, quantity)
-if newBucket < 0 then
-    redis.call('INCRBY', bucketKey, quantity)
-    return {0, currentBucket}
-end
-
-redis.call('SETEX', userKey, ttl, orderId)
-
-local orderValue = 'pending:' .. tostring(orderId)
-if orderTTL > 0 then
-    redis.call('SETEX', orderKey, orderTTL, orderValue)
-else
-    redis.call('SET', orderKey, orderValue)
-end
-
-return {1, newBucket}
-`
-
-// quotaReapLuaScript 回收某商品的过期租约配额
-// KEYS[1]: global stock key
-// KEYS[2]: lease zset key
-// ARGV[1]: nowUnix
-// ARGV[2]: bucketPrefixWithProduct
-// return: reclaimed
-var quotaReapLuaScript = `
-local globalKey = KEYS[1]
-local leaseKey = KEYS[2]
-
-local now = tonumber(ARGV[1])
-local bucketPrefix = ARGV[2]
-
-local reclaimed = 0
-local expired = redis.call('ZRANGEBYSCORE', leaseKey, '-inf', now)
-for _, inst in ipairs(expired) do
-    local expiredBucketKey = bucketPrefix .. inst
-    local left = tonumber(redis.call('GET', expiredBucketKey) or 0)
-    if left > 0 then
-        redis.call('INCRBY', globalKey, left)
-        reclaimed = reclaimed + left
-    end
-    redis.call('DEL', expiredBucketKey)
-    redis.call('ZREM', leaseKey, inst)
-end
-
-return reclaimed
-`
 
 // SeckillRedis Redis 客户端封装
 type SeckillRedis struct {
@@ -430,54 +178,119 @@ type SeckillRequest struct {
 
 // SeckillResult 秒杀结果
 type SeckillResult struct {
-	Code  int   // 结果码: 1=成功, 0=库存不足, -1=已购买, -2=超限
-	Stock int64 // 剩余库存
+	Code    int   // 结果码: 1=成功, 0=库存不足, -1=已购买, -2=超限
+	Stock   int64 // 剩余库存
+	ShardNo int32
 }
 
 // DoSeckill 执行秒杀（原子性操作）
 func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*SeckillResult, error) {
-	stockKey := keyStock(req.SeckillProductId)
 	userKey := keyUser(req.SeckillProductId, req.UserId)
 	orderKey := keyOrder(req.SeckillProductId, req.OrderId)
+	totalKey := keyStock(req.SeckillProductId)
 
-	keys := []string{stockKey, userKey, orderKey}
-	argv := []interface{}{
-		req.Quantity,
-		req.OrderId,
-		req.TTL,
-		req.StartTime,
-		req.EndTime,
-		time.Now().Unix(),
-		req.OrderStatusTTL,
+	nowUnix := time.Now().Unix()
+	if req.StartTime > 0 && nowUnix < req.StartTime {
+		stock, _ := r.GetStock(ctx, req.SeckillProductId)
+		return &SeckillResult{Code: LuaResultNotStarted, Stock: stock}, nil
+	}
+	if req.EndTime > 0 && nowUnix > req.EndTime {
+		stock, _ := r.GetStock(ctx, req.SeckillProductId)
+		return &SeckillResult{Code: LuaResultEnded, Stock: stock}, nil
 	}
 
-	// Lua 脚本返回 {code, stock}
-	result, err := r.client.Eval(ctx, seckillLuaScript, keys, argv...).Result()
+	exists, err := r.client.Exists(ctx, userKey).Result()
 	if err != nil {
-		return nil, fmt.Errorf("执行秒杀Lua脚本失败: %w", err)
+		return nil, fmt.Errorf("check user key failed: %w", err)
+	}
+	if exists > 0 {
+		stock, _ := r.GetStock(ctx, req.SeckillProductId)
+		return &SeckillResult{Code: LuaResultAlreadyBought, Stock: stock}, nil
 	}
 
-	// 解析返回值：Redis Lua 返回数组为 []interface{}
-	arr, ok := result.([]interface{})
-	if !ok || len(arr) != 2 {
-		return nil, fmt.Errorf("Lua脚本返回值格式错误: %v", result)
+	totalStock, err := r.GetStock(ctx, req.SeckillProductId)
+	if err != nil {
+		return nil, err
+	}
+	if totalStock < req.Quantity {
+		return &SeckillResult{Code: LuaResultStockNotEnough, Stock: totalStock}, nil
 	}
 
-	code, ok1 := arr[0].(int64)
-	stock, ok2 := arr[1].(int64)
-	if !ok1 || !ok2 {
-		return nil, fmt.Errorf("Lua脚本返回值类型错误: code=%v, stock=%v", arr[0], arr[1])
+	primary := shardNoForUser(req.UserId)
+	probeOrder := shardProbeOrder(primary)
+	probeLimit := defaultProbeShardCount
+	if totalStock <= defaultTailDrainThreshold {
+		probeLimit = defaultShardCount
+	}
+	if probeLimit > len(probeOrder) {
+		probeLimit = len(probeOrder)
 	}
 
-	return &SeckillResult{
-		Code:  int(code),
-		Stock: stock,
-	}, nil
+	for _, shardNo := range probeOrder[:probeLimit] {
+		pipe := r.client.TxPipeline()
+		shardKey := keyShardStock(req.SeckillProductId, shardNo)
+		decrShard := pipe.DecrBy(ctx, shardKey, req.Quantity)
+		decrTotal := pipe.DecrBy(ctx, totalKey, req.Quantity)
+		setUser := pipe.SetNX(ctx, userKey, req.OrderId, time.Duration(req.TTL)*time.Second)
+		orderValue := fmt.Sprintf("%s:%s:%d", OrderStatusPending, req.OrderId, shardNo)
+		setOrder := pipe.Set(ctx, orderKey, orderValue, time.Duration(req.OrderStatusTTL)*time.Second)
+		_, execErr := pipe.Exec(ctx)
+		if execErr != nil {
+			_ = setUser.Err()
+			_ = setOrder.Err()
+		}
+
+		shardLeft, shardErr := decrShard.Result()
+		totalLeft, totalErr := decrTotal.Result()
+		userSet, userErr := setUser.Result()
+		orderErr := setOrder.Err()
+
+		if execErr == nil && shardErr == nil && totalErr == nil && userErr == nil && orderErr == nil && userSet && shardLeft >= 0 && totalLeft >= 0 {
+			return &SeckillResult{
+				Code:    LuaResultSuccess,
+				Stock:   totalLeft,
+				ShardNo: shardNo,
+			}, nil
+		}
+
+		pipe = r.client.TxPipeline()
+		if userSet {
+			pipe.Del(ctx, userKey)
+		}
+		if orderErr == nil {
+			pipe.Del(ctx, orderKey)
+		}
+		if shardErr == nil {
+			pipe.IncrBy(ctx, shardKey, req.Quantity)
+		}
+		if totalErr == nil {
+			pipe.IncrBy(ctx, totalKey, req.Quantity)
+		}
+		_, _ = pipe.Exec(ctx)
+
+		if userErr == nil && !userSet {
+			stock, _ := r.GetStock(ctx, req.SeckillProductId)
+			return &SeckillResult{Code: LuaResultAlreadyBought, Stock: stock}, nil
+		}
+	}
+
+	stock, err := r.GetStock(ctx, req.SeckillProductId)
+	if err != nil {
+		return nil, err
+	}
+	return &SeckillResult{Code: LuaResultStockNotEnough, Stock: stock}, nil
 }
 
 // InitStock 初始化秒杀库存（活动开始前调用）
 func (r *SeckillRedis) InitStock(ctx context.Context, seckillProductId int64, stock int64) error {
-	return r.client.Set(ctx, keyStock(seckillProductId), stock, 0).Err()
+	pipe := r.client.TxPipeline()
+	pipe.Set(ctx, keyStock(seckillProductId), stock, 0)
+	pipe.Set(ctx, keyShardMeta(seckillProductId), defaultShardCount, 0)
+	for shardNo, shardStock := range splitStockIntoShards(stock) {
+		pipe.Set(ctx, keyShardStock(seckillProductId, int32(shardNo)), shardStock, 0)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // GetStock 获取秒杀库存
@@ -494,7 +307,16 @@ func (r *SeckillRedis) GetStock(ctx context.Context, seckillProductId int64) (in
 
 // SetOrderStatus 设置订单状态
 func (r *SeckillRedis) SetOrderStatus(ctx context.Context, spid int64, orderId string, status string, ttl int64) error {
-	return r.client.Set(ctx, keyOrder(spid, orderId), status, time.Duration(ttl)*time.Second).Err()
+	current, err := r.GetOrderInfo(ctx, orderId)
+	if err != nil {
+		return err
+	}
+	shardNo := int32(0)
+	if current != nil {
+		shardNo = current.ShardNo
+	}
+	value := fmt.Sprintf("%s:%s:%d", status, orderId, shardNo)
+	return r.client.Set(ctx, keyOrder(spid, orderId), value, time.Duration(ttl)*time.Second).Err()
 }
 
 // GetOrderStatus 获取订单状态
@@ -519,6 +341,14 @@ func (r *SeckillRedis) GetOrderStatus(ctx context.Context, orderId string) (stri
 // RollbackStock 回滚库存（秒杀失败时调用）
 func (r *SeckillRedis) RollbackStock(ctx context.Context, seckillProductId int64, quantity int64) error {
 	return r.client.IncrBy(ctx, keyStock(seckillProductId), quantity).Err()
+}
+
+func (r *SeckillRedis) RollbackShardStock(ctx context.Context, seckillProductId int64, shardNo int32, quantity int64) error {
+	pipe := r.client.TxPipeline()
+	pipe.IncrBy(ctx, keyStock(seckillProductId), quantity)
+	pipe.IncrBy(ctx, keyShardStock(seckillProductId, shardNo), quantity)
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // DeleteUserKey 删除用户购买记录（秒杀失败时调用）
@@ -647,6 +477,7 @@ type OrderInfo struct {
 	Quantity    int64
 	Amount      int64
 	ProductName string
+	ShardNo     int32
 }
 
 // FormatSeckillUserKey 格式化用户秒杀Key（保留兼容，内部改用 keyUser）
@@ -684,13 +515,13 @@ func (r *SeckillRedis) SetOrderInfo(ctx context.Context, spid int64, orderId str
 	value := info.Status
 	if info != nil {
 		if info.ProductId > 0 || info.Quantity > 0 || info.Amount > 0 || info.ProductName != "" {
-			value = fmt.Sprintf("%s:%d:%d:%d:%s", info.Status, info.ProductId, info.Quantity, info.Amount, info.ProductName)
+			value = fmt.Sprintf("%s:%s:%d:%d:%d:%d:%s", info.Status, orderId, info.ShardNo, info.ProductId, info.Quantity, info.Amount, info.ProductName)
 		} else {
 			id := info.OrderId
 			if id == "" {
 				id = orderId
 			}
-			value = fmt.Sprintf("%s:%s", info.Status, id)
+			value = fmt.Sprintf("%s:%s:%d", info.Status, id, info.ShardNo)
 		}
 	}
 
@@ -707,35 +538,55 @@ func (r *SeckillRedis) CompensateFailedOrder(
 	seckillProductId int64,
 	userId int64,
 	quantity int64,
+	shardNo int32,
 	orderStatusTTL int64,
 ) (int, int64, error) {
 	orderKey := keyOrder(seckillProductId, orderId)
-	stockKey := keyStock(seckillProductId)
 	userKey := keyUser(seckillProductId, userId)
+	totalKey := keyStock(seckillProductId)
+	shardKey := keyShardStock(seckillProductId, shardNo)
 
-	raw, err := r.client.Eval(
-		ctx,
-		compensateFailedOrderLuaScript,
-		[]string{orderKey, stockKey, userKey},
-		quantity,
-		orderStatusTTL,
-	).Result()
+	info, err := r.GetOrderInfo(ctx, orderId)
 	if err != nil {
-		return 0, 0, fmt.Errorf("execute compensate failed lua failed: %w", err)
+		return 0, 0, err
+	}
+	if info == nil {
+		stock, _ := r.GetStock(ctx, seckillProductId)
+		return CompensateResultOrderNotFound, stock, nil
+	}
+	if info.ShardNo != shardNo {
+		return CompensateResultInvalidStatus, 0, fmt.Errorf("shard mismatch for compensation: order=%s redis=%d req=%d", orderId, info.ShardNo, shardNo)
+	}
+	if info.Status == OrderStatusFailed {
+		stock, _ := r.GetStock(ctx, seckillProductId)
+		return CompensateResultAlreadyFailed, stock, nil
+	}
+	if info.Status == OrderStatusSuccess {
+		stock, _ := r.GetStock(ctx, seckillProductId)
+		return CompensateResultAlreadySuccess, stock, nil
+	}
+	if info.Status != OrderStatusPending {
+		stock, _ := r.GetStock(ctx, seckillProductId)
+		return CompensateResultInvalidStatus, stock, nil
 	}
 
-	arr, ok := raw.([]interface{})
-	if !ok || len(arr) != 2 {
-		return 0, 0, fmt.Errorf("invalid compensate result: %v", raw)
+	pipe := r.client.TxPipeline()
+	pipe.Set(ctx, orderKey, fmt.Sprintf("%s:%s:%d", OrderStatusFailed, orderId, shardNo), time.Duration(orderStatusTTL)*time.Second)
+	pipe.IncrBy(ctx, totalKey, quantity)
+	shardStock := pipe.IncrBy(ctx, shardKey, quantity)
+	pipe.Del(ctx, userKey)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, 0, fmt.Errorf("execute compensate failed failed: %w", err)
 	}
-
-	code, ok1 := arr[0].(int64)
-	stock, ok2 := arr[1].(int64)
-	if !ok1 || !ok2 {
-		return 0, 0, fmt.Errorf("invalid compensate result type: %v", raw)
+	stock, err := shardStock.Result()
+	if err != nil {
+		return 0, 0, err
 	}
-
-	return int(code), stock, nil
+	totalStock, totalErr := r.GetStock(ctx, seckillProductId)
+	if totalErr != nil {
+		totalStock = stock
+	}
+	return CompensateResultCompensated, totalStock, nil
 }
 
 // GetOrderInfo 获取订单信息
@@ -764,8 +615,13 @@ func (r *SeckillRedis) GetOrderInfo(ctx context.Context, orderId string) (*Order
 		return &OrderInfo{Status: val, OrderId: orderId}, nil
 	}
 
-	// status:orderId 或 status:productId:quantity:amount:productName
-	parts := strings.SplitN(val, ":", 5)
+	// 新格式：
+	// 1) status:orderId:shardNo
+	// 2) status:orderId:shardNo:productId:quantity:amount:productName
+	// 兼容旧格式：
+	// 3) status:orderId
+	// 4) status:productId:quantity:amount:productName
+	parts := strings.SplitN(val, ":", 7)
 	if len(parts) < 1 {
 		return nil, fmt.Errorf("invalid order info format: %s", val)
 	}
@@ -773,10 +629,31 @@ func (r *SeckillRedis) GetOrderInfo(ctx context.Context, orderId string) (*Order
 	info := &OrderInfo{Status: parts[0], OrderId: orderId}
 
 	if len(parts) == 2 {
-		// 最小状态格式：status:orderId
 		info.OrderId = parts[1]
 		return info, nil
 	}
+
+	if len(parts) == 3 {
+		info.OrderId = parts[1]
+		shardNo, err := strconv.ParseInt(parts[2], 10, 32)
+		if err == nil {
+			info.ShardNo = int32(shardNo)
+			return info, nil
+		}
+	}
+
+	if len(parts) >= 7 {
+		info.OrderId = parts[1]
+		shardNo, _ := strconv.ParseInt(parts[2], 10, 32)
+		info.ShardNo = int32(shardNo)
+		info.ProductId, _ = strconv.ParseInt(parts[3], 10, 64)
+		info.Quantity, _ = strconv.ParseInt(parts[4], 10, 64)
+		info.Amount, _ = strconv.ParseInt(parts[5], 10, 64)
+		info.ProductName = parts[6]
+		return info, nil
+	}
+
+	// 旧完整格式：status:productId:quantity:amount:productName
 	if len(parts) >= 2 {
 		info.ProductId, _ = strconv.ParseInt(parts[1], 10, 64)
 	}
@@ -853,19 +730,17 @@ func (r *SeckillRedis) IncrLocalStock(seckillProductId int64, quantity int64) {
 // 所有同一商品的 key 使用 {spid} 作为 hash tag，保证落在同一 slot。
 // 单节点 Redis 忽略 hash tag，行为与原来完全一致。
 
-func keyStock(spid int64) string     { return fmt.Sprintf("{%d}:sk:stock", spid) }
+func keyStock(spid int64) string     { return fmt.Sprintf("{%d}:sk:stock:total", spid) }
+func keyShardStock(spid int64, shardNo int32) string {
+	return fmt.Sprintf("{%d}:sk:stock:%d", spid, shardNo)
+}
+func keyShardMeta(spid int64) string { return fmt.Sprintf("{%d}:sk:stock:meta", spid) }
 func keyUser(spid, uid int64) string { return fmt.Sprintf("{%d}:sk:user:%d", spid, uid) }
 func keyOrder(spid int64, orderId string) string {
 	return fmt.Sprintf("{%d}:sk:order:%s", spid, orderId)
 }
 func keyInfo(spid int64) string { return fmt.Sprintf("{%d}:sk:info", spid) }
 func keyName(spid int64) string { return fmt.Sprintf("{%d}:sk:name", spid) }
-func keyQBucket(spid int64, instanceID string) string {
-	return fmt.Sprintf("{%d}:sk:qbucket:%s", spid, instanceID)
-}
-func keyQBucketPrefix(spid int64) string { return fmt.Sprintf("{%d}:sk:qbucket:", spid) }
-func keyQLease(spid int64) string        { return fmt.Sprintf("{%d}:sk:qlease", spid) }
-func keyQReaperLock(spid int64) string   { return fmt.Sprintf("{%d}:sk:qlock", spid) }
 
 // KeyUser 导出版本，供 logic 包使用
 func KeyUser(spid, uid int64) string { return keyUser(spid, uid) }
@@ -911,150 +786,54 @@ func parseSpidFromInfoKey(key string) int64 {
 	return spid
 }
 
-// EnsureQuota 批量领取本地配额（并回收过期租约）
-func (r *SeckillRedis) EnsureQuota(ctx context.Context, seckillProductId int64, instanceID string, batchSize int64, leaseTTLSeconds int64) (int64, int64, error) {
-	keys := []string{keyStock(seckillProductId), keyQBucket(seckillProductId, instanceID), keyQLease(seckillProductId)}
-	argv := []interface{}{
-		instanceID,
-		batchSize,
-		leaseTTLSeconds,
-		strconv.FormatInt(seckillProductId, 10),
-		time.Now().Unix(),
+func shardNoForUser(userId int64) int32 {
+	if userId < 0 {
+		userId = -userId
 	}
-
-	raw, err := r.client.Eval(ctx, quotaAllocateLuaScript, keys, argv...).Result()
-	if err != nil {
-		return 0, 0, err
-	}
-
-	arr, ok := raw.([]interface{})
-	if !ok || len(arr) != 2 {
-		return 0, 0, fmt.Errorf("invalid allocate result: %v", raw)
-	}
-	allocated, ok1 := arr[0].(int64)
-	currentBucket, ok2 := arr[1].(int64)
-	if !ok1 || !ok2 {
-		return 0, 0, fmt.Errorf("invalid allocate result type: %v", raw)
-	}
-	return allocated, currentBucket, nil
+	return int32(userId % defaultShardCount)
 }
 
-// DoSeckillWithQuota 使用实例配额桶执行秒杀原子裁决
-func (r *SeckillRedis) DoSeckillWithQuota(ctx context.Context, req *SeckillRequest, instanceID string) (*SeckillResult, error) {
-	bucketKey := keyQBucket(req.SeckillProductId, instanceID)
-	userKey := keyUser(req.SeckillProductId, req.UserId)
-	orderKey := keyOrder(req.SeckillProductId, req.OrderId)
-
-	keys := []string{bucketKey, userKey, orderKey}
-	argv := []interface{}{
-		req.Quantity,
-		req.OrderId,
-		req.TTL,
-		req.StartTime,
-		req.EndTime,
-		time.Now().Unix(),
-		req.OrderStatusTTL,
+func shardProbeOrder(primary int32) []int32 {
+	order := make([]int32, 0, defaultShardCount)
+	seen := make(map[int32]struct{}, defaultShardCount)
+	add := func(shard int32) {
+		if shard < 0 {
+			return
+		}
+		shard = shard % defaultShardCount
+		if _, ok := seen[shard]; ok {
+			return
+		}
+		seen[shard] = struct{}{}
+		order = append(order, shard)
 	}
 
-	raw, err := r.client.Eval(ctx, quotaConsumeLuaScript, keys, argv...).Result()
-	if err != nil {
-		return nil, fmt.Errorf("execute quota consume lua failed: %w", err)
+	add(primary)
+	for i := int32(1); i < defaultProbeShardCount; i++ {
+		add(primary + i)
 	}
-
-	arr, ok := raw.([]interface{})
-	if !ok || len(arr) != 2 {
-		return nil, fmt.Errorf("invalid consume result: %v", raw)
+	for shard := int32(0); shard < defaultShardCount; shard++ {
+		add(shard)
 	}
-	code, ok1 := arr[0].(int64)
-	stock, ok2 := arr[1].(int64)
-	if !ok1 || !ok2 {
-		return nil, fmt.Errorf("invalid consume result type: %v", raw)
-	}
-
-	return &SeckillResult{Code: int(code), Stock: stock}, nil
+	return order
 }
 
-// RenewLease 为当前实例续租（仅当桶内仍有配额）
-func (r *SeckillRedis) RenewLease(ctx context.Context, seckillProductId int64, instanceID string, leaseTTLSeconds int64) error {
-	bucketLeft, err := r.client.Get(ctx, keyQBucket(seckillProductId, instanceID)).Int64()
-	if err != nil && err != redis.Nil {
-		return err
+func splitStockIntoShards(total int64) []int64 {
+	if total < 0 {
+		total = 0
 	}
-	leaseKey := keyQLease(seckillProductId)
-	if bucketLeft <= 0 {
-		return r.client.ZRem(ctx, leaseKey, instanceID).Err()
+	shards := make([]int64, defaultShardCount)
+	base := total / defaultShardCount
+	rem := total % defaultShardCount
+	for i := range shards {
+		shards[i] = base
+		if int64(i) < rem {
+			shards[i]++
+		}
 	}
-	expireAt := time.Now().Unix() + leaseTTLSeconds
-	return r.client.ZAdd(ctx, leaseKey, redis.Z{Score: float64(expireAt), Member: instanceID}).Err()
+	return shards
 }
 
-// RenewAllActiveLeases 遍历本地已追踪商品，为当前实例续租
-func (r *SeckillRedis) RenewAllActiveLeases(ctx context.Context, instanceID string, leaseTTLSeconds int64) error {
-	var firstErr error
-	r.localStock.Range(func(key, value any) bool {
-		spid, ok := key.(int64)
-		if !ok {
-			return true
-		}
-		counter, ok := value.(*atomic.Int64)
-		if !ok {
-			return true
-		}
-		if counter.Load() <= 0 {
-			return true
-		}
-		if err := r.RenewLease(ctx, spid, instanceID, leaseTTLSeconds); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		return true
-	})
-	return firstErr
-}
-
-// ReapExpiredQuotaForProduct 回收单个商品的过期租约配额
-func (r *SeckillRedis) ReapExpiredQuotaForProduct(ctx context.Context, seckillProductId int64) (int64, error) {
-	lockOK, err := r.client.SetNX(ctx, keyQReaperLock(seckillProductId), "1", 1200*time.Millisecond).Result()
-	if err != nil || !lockOK {
-		return 0, err
-	}
-	defer r.client.Del(ctx, keyQReaperLock(seckillProductId))
-
-	keys := []string{keyStock(seckillProductId), keyQLease(seckillProductId)}
-	argv := []interface{}{
-		time.Now().Unix(),
-		keyQBucketPrefix(seckillProductId),
-	}
-
-	raw, err := r.client.Eval(ctx, quotaReapLuaScript, keys, argv...).Result()
-	if err != nil {
-		return 0, err
-	}
-	reclaimed, ok := raw.(int64)
-	if !ok {
-		return 0, fmt.Errorf("invalid reclaim result: %v", raw)
-	}
-	return reclaimed, nil
-}
-
-// ReapExpiredQuotaForAllProducts 遍历本地已追踪商品，回收所有过期租约配额
-// 不再依赖 Redis 全局 products set，改为遍历内存中的 localStock
-func (r *SeckillRedis) ReapExpiredQuotaForAllProducts(ctx context.Context) (int64, error) {
-	var reclaimedTotal int64
-	var firstErr error
-	r.localStock.Range(func(key, _ any) bool {
-		spid, ok := key.(int64)
-		if !ok {
-			return true
-		}
-		reclaimed, reclaimErr := r.ReapExpiredQuotaForProduct(ctx, spid)
-		if reclaimErr != nil && firstErr == nil {
-			firstErr = reclaimErr
-		}
-		reclaimedTotal += reclaimed
-		return true
-	})
-	return reclaimedTotal, firstErr
-}
 
 // Close 关闭连接
 func (r *SeckillRedis) Close() error {

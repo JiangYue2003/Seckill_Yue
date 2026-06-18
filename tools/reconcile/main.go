@@ -258,16 +258,19 @@ SELECT
   o.product_id,
   o.quantity,
   o.amount,
+  o.shard_no,
   o.status,
   o.pay_status,
   o.created_at,
   so.seckill_product_id,
   so.quantity,
+  so.shard_no,
   sr.reservation_id IS NOT NULL AS reservation_found,
   sr.user_id,
   sr.product_id,
   sr.quantity,
   sr.amount,
+  sr.shard_no,
   sr.status,
   p.payment_id IS NOT NULL AS payment_found,
   p.user_id,
@@ -316,13 +319,16 @@ OFFSET ?`
 		var row reconcile.OrderRow
 		var reservationID sql.NullString
 		var paymentID sql.NullString
+		var orderShardNo sql.NullInt64
 		var seckillProductID sql.NullInt64
 		var seckillQuantity sql.NullInt64
+		var seckillShardNo sql.NullInt64
 		var reservationFound bool
 		var reservationUserID sql.NullInt64
 		var reservationProductID sql.NullInt64
 		var reservationQuantity sql.NullInt64
 		var reservationAmount sql.NullInt64
+		var reservationShardNo sql.NullInt64
 		var reservationStatus sql.NullInt64
 		var paymentFound bool
 		var paymentUserID sql.NullInt64
@@ -338,16 +344,19 @@ OFFSET ?`
 			&row.ProductID,
 			&row.Quantity,
 			&row.Amount,
+			&orderShardNo,
 			&row.Status,
 			&row.PayStatus,
 			&row.CreatedAt,
 			&seckillProductID,
 			&seckillQuantity,
+			&seckillShardNo,
 			&reservationFound,
 			&reservationUserID,
 			&reservationProductID,
 			&reservationQuantity,
 			&reservationAmount,
+			&reservationShardNo,
 			&reservationStatus,
 			&paymentFound,
 			&paymentUserID,
@@ -370,11 +379,17 @@ OFFSET ?`
 		if paymentID.Valid {
 			row.PaymentID = paymentID.String
 		}
+		if orderShardNo.Valid {
+			row.ShardNo = int32(orderShardNo.Int64)
+		}
 		if seckillProductID.Valid {
 			row.SeckillProductID = seckillProductID.Int64
 		}
 		if seckillQuantity.Valid {
 			row.SeckillQuantity = seckillQuantity.Int64
+		}
+		if seckillShardNo.Valid {
+			row.SeckillShardNo = int32(seckillShardNo.Int64)
 		}
 		row.ReservationFound = reservationFound
 		if reservationUserID.Valid {
@@ -388,6 +403,9 @@ OFFSET ?`
 		}
 		if reservationAmount.Valid {
 			row.ReservationAmount = reservationAmount.Int64
+		}
+		if reservationShardNo.Valid {
+			row.ReservationShardNo = int32(reservationShardNo.Int64)
 		}
 		if reservationStatus.Valid {
 			row.ReservationStatus = int32(reservationStatus.Int64)
@@ -621,6 +639,7 @@ func (s *seckillRPCClient) CompensateFailedOrder(
 	orderID string,
 	seckillProductID, userID, quantity int64,
 	reason string,
+	shardNo int32,
 ) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -630,6 +649,7 @@ func (s *seckillRPCClient) CompensateFailedOrder(
 		UserId:           userID,
 		Quantity:         quantity,
 		Reason:           reason,
+		ShardNo:          shardNo,
 	})
 	if err != nil {
 		return "", err

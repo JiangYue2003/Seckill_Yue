@@ -63,6 +63,22 @@ CREATE TABLE IF NOT EXISTS `seckill_products` (
     CONSTRAINT `fk_seckill_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='秒杀商品表';
 
+CREATE TABLE IF NOT EXISTS `seckill_stock_shards` (
+    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `seckill_product_id` BIGINT UNSIGNED NOT NULL COMMENT '秒杀商品ID',
+    `shard_no` TINYINT NOT NULL COMMENT '固定库存分片号[0-15]',
+    `stock` INT NOT NULL DEFAULT 0 COMMENT '分片总库存',
+    `available_stock` INT NOT NULL DEFAULT 0 COMMENT '分片可用库存',
+    `sold_count` INT NOT NULL DEFAULT 0 COMMENT '分片已售数量',
+    `version` INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
+    `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
+    `updated_at` BIGINT NOT NULL COMMENT '更新时间戳',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_spid_shard_no` (`seckill_product_id`, `shard_no`),
+    KEY `idx_shard_available` (`seckill_product_id`, `available_stock`),
+    CONSTRAINT `fk_seckill_stock_shards_product` FOREIGN KEY (`seckill_product_id`) REFERENCES `seckill_products` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='秒杀库存固定分片事实表';
+
 
 CREATE TABLE IF NOT EXISTS `orders` (
     `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
@@ -73,6 +89,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
     `quantity` INT NOT NULL DEFAULT 1 COMMENT '购买数量',
     `amount` BIGINT NOT NULL COMMENT '实付金额（分）',
     `seckill_price` BIGINT DEFAULT 0 COMMENT '秒杀价格（分，普通订单为0）',
+    `shard_no` TINYINT NOT NULL DEFAULT 0 COMMENT '固定库存分片号',
     `order_type` TINYINT NOT NULL DEFAULT 0 COMMENT '订单类型: 0=普通订单, 1=秒杀订单',
     `status` TINYINT NOT NULL DEFAULT 0 COMMENT '订单状态: 0=INIT, 1=RESERVED, 2=ORDER_CREATED, 3=PAYING, 4=PAID, 5=COMPLETED, 6=CANCELLED, 7=EXPIRED, 8=FAILED, 9=REFUNDED',
     `pay_status` TINYINT NOT NULL DEFAULT 0 COMMENT '支付状态: 0=PAY_INIT, 1=PAY_REQUESTED, 2=PAY_SUCCESS, 3=PAY_FAILED, 4=PAY_CLOSED, 5=PAY_REFUNDED',
@@ -87,6 +104,7 @@ CREATE TABLE IF NOT EXISTS `orders` (
     KEY `idx_reservation_id` (`reservation_id`),
     KEY `idx_user_id` (`user_id`),
     KEY `idx_product_id` (`product_id`),
+    KEY `idx_shard_no` (`shard_no`),
     KEY `idx_status` (`status`),
     KEY `idx_pay_status` (`pay_status`),
     KEY `idx_created_at` (`created_at`)
@@ -97,6 +115,7 @@ CREATE TABLE IF NOT EXISTS `stock_logs` (
     `product_id` BIGINT UNSIGNED NOT NULL COMMENT '商品ID',
     `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
     `change_type` TINYINT NOT NULL COMMENT '变更类型: 1=扣减, 2=回滚',
+    `shard_no` TINYINT NOT NULL DEFAULT 0 COMMENT '固定库存分片号',
     `quantity` INT NOT NULL COMMENT '变更数量',
     `before_stock` INT NOT NULL COMMENT '变更前库存',
     `after_stock` INT NOT NULL COMMENT '变更后库存',
@@ -104,6 +123,7 @@ CREATE TABLE IF NOT EXISTS `stock_logs` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_order_change_type` (`order_id`, `change_type`),
     KEY `idx_product_id` (`product_id`),
+    KEY `idx_shard_no` (`shard_no`),
     KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存流水表';
 
@@ -114,6 +134,7 @@ CREATE TABLE IF NOT EXISTS `seckill_orders` (
     `order_id` VARCHAR(64) NOT NULL COMMENT '订单号',
     `reservation_id` VARCHAR(64) DEFAULT NULL COMMENT '预占号',
     `quantity` INT NOT NULL DEFAULT 1 COMMENT '购买数量',
+    `shard_no` TINYINT NOT NULL DEFAULT 0 COMMENT '固定库存分片号',
     `status` TINYINT NOT NULL DEFAULT 0 COMMENT '记录状态: 0=RESERVED, 1=ORDER_CREATED, 2=PAID, 3=COMPLETED, 4=RELEASED, 5=FAILED',
     `created_at` BIGINT NOT NULL COMMENT '创建时间戳',
     PRIMARY KEY (`id`),
@@ -122,6 +143,7 @@ CREATE TABLE IF NOT EXISTS `seckill_orders` (
     KEY `idx_seckill_product_id` (`seckill_product_id`),
     KEY `idx_order_id` (`order_id`),
     KEY `idx_reservation_id` (`reservation_id`),
+    KEY `idx_shard_no` (`shard_no`),
     KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户秒杀购买记录表';
 
@@ -133,6 +155,7 @@ CREATE TABLE IF NOT EXISTS `seckill_reservations` (
     `product_id` BIGINT UNSIGNED NOT NULL COMMENT '商品ID',
     `quantity` INT NOT NULL DEFAULT 1 COMMENT '预占数量',
     `amount` BIGINT NOT NULL COMMENT '预占金额（分）',
+    `shard_no` TINYINT NOT NULL DEFAULT 0 COMMENT '固定库存分片号',
     `status` TINYINT NOT NULL DEFAULT 0 COMMENT '预占状态: 0=RESERVED, 1=ORDER_CREATING, 2=ORDER_CREATED, 3=PAYING, 4=PAID, 5=CONSUMED, 6=RELEASED, 7=EXPIRED, 8=FAILED',
     `source` VARCHAR(32) NOT NULL DEFAULT 'gateway' COMMENT '来源: gateway/reconcile/system',
     `reason` VARCHAR(64) DEFAULT NULL COMMENT '状态变更原因',

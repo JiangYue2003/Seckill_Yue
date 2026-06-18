@@ -67,6 +67,9 @@ type SeckillProductModel interface {
 
 	// UpdateSoldCount 更新已售数量
 	UpdateSoldCount(ctx context.Context, id int64, soldCount int) error
+
+	// SyncStockShards 重建固定库存分片事实表
+	SyncStockShards(ctx context.Context, seckillProductID int64, stock int) error
 }
 
 // NewProductModel 创建 ProductModel 实例
@@ -430,4 +433,51 @@ func (m *seckillProductModel) UpdateSoldCount(ctx context.Context, id int64, sol
 	return m.db.WithContext(ctx).Model(&entity.SeckillProduct{}).
 		Where("id = ?", id).
 		Update("sold_count", soldCount).Error
+}
+
+func (m *seckillProductModel) SyncStockShards(ctx context.Context, seckillProductID int64, stock int) error {
+	now := time.Now().Unix()
+	shards := splitStockIntoShards(stock)
+
+	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("seckill_product_id = ?", seckillProductID).Delete(&entity.SeckillStockShard{}).Error; err != nil {
+			return err
+		}
+
+		rows := make([]entity.SeckillStockShard, 0, len(shards))
+		for shardNo, shardStock := range shards {
+			rows = append(rows, entity.SeckillStockShard{
+				SeckillProductID: seckillProductID,
+				ShardNo:          int32(shardNo),
+				Stock:            shardStock,
+				AvailableStock:   shardStock,
+				SoldCount:        0,
+				Version:          0,
+				CreatedAt:        now,
+				UpdatedAt:        now,
+			})
+		}
+
+		if len(rows) == 0 {
+			return nil
+		}
+		return tx.Create(&rows).Error
+	})
+}
+
+func splitStockIntoShards(total int) []int {
+	if total < 0 {
+		total = 0
+	}
+	const shardCount = 16
+	shards := make([]int, shardCount)
+	base := total / shardCount
+	rem := total % shardCount
+	for i := range shards {
+		shards[i] = base
+		if i < rem {
+			shards[i]++
+		}
+	}
+	return shards
 }

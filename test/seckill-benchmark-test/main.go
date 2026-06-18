@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -15,180 +17,402 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
-	seckill "seckill-mall/common/seckill"
+	seckillpb "seckill-mall/common/seckill"
 )
 
 const (
-	// Redis key 格式与 seckill-service 保持一致（hash tag 格式）
-	keyPrefixSeckillInfo  = "{%d}:sk:info"    // fmt.Sprintf(keyPrefixSeckillInfo, spid)
-	keyPrefixSeckillName  = "{%d}:sk:name"    // fmt.Sprintf(keyPrefixSeckillName, spid)
-	keyPrefixSeckillStock = "{%d}:sk:stock"   // fmt.Sprintf(keyPrefixSeckillStock, spid)
-	keyPrefixSeckillUser  = "{%d}:sk:user:%d" // fmt.Sprintf(keyPrefixSeckillUser, spid, uid)
-	benchmarkUserStart    = int64(10000)
-	defaultMySQLDSN       = "root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local"
-	defaultTargets        = "127.0.0.1:9083"
+	keyPrefixSeckillInfo  = "{%d}:sk:info"
+	keyPrefixSeckillName  = "{%d}:sk:name"
+	keyPrefixSeckillStock = "{%d}:sk:stock:total"
+	keyPrefixSeckillShard = "{%d}:sk:stock:%d"
+	keyPrefixSeckillMeta  = "{%d}:sk:stock:meta"
+	keyPrefixSeckillUser  = "{%d}:sk:user:%d"
+
+	benchmarkUserStart = int64(10000)
+	defaultMySQLDSN    = "root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local"
+	defaultTargets     = "127.0.0.1:9083"
+	defaultPoolSize    = 64
+	defaultShardCount  = 16
+
+	benchmarkModeLegacy = "legacy"
+	benchmarkModeBurst  = "burst"
+)
+
+var (
+	targetsFlag   = flag.String("targets", defaultTargets, "comma-separated seckill grpc targets, e.g. 127.0.0.1:9083,127.0.0.1:19083")
+	modeFlag      = flag.String("mode", benchmarkModeLegacy, "benchmark mode: legacy | burst")
+	productID     = flag.Int64("product-id", 9101, "seckill product id")
+	stock         = flag.Int64("stock", 15000, "initial seckill stock")
+	users         = flag.Int64("users", 100000, "unique users")
+	rps           = flag.Int("rate", 20000, "target requests per second")
+	duration      = flag.Duration("duration", 30*time.Second, "upper bound for burst dispatch window, e.g. 30s")
+	workers       = flag.Int("workers", 4096, "worker goroutines")
+	queueSize     = flag.Int("queue-size", 20000, "request queue size")
+	reqTimeout    = flag.Duration("request-timeout", 3*time.Second, "per-request timeout")
+	quantity      = flag.Int64("quantity", 1, "purchase quantity per request")
+	redisAddr     = flag.String("redis", "localhost:6379", "redis address")
+	poolSize      = flag.Int("pool-size", defaultPoolSize, "grpc client pool size")
+	idealMode     = flag.Bool("ideal", false, "auto expand stock/users for near-all-success throughput test")
+	totalRequests = flag.Int64("total-requests", 10000, "total requests for legacy mode")
+	concurrency   = flag.Int("concurrency", 1000, "max in-flight requests for legacy mode")
+	burstWindow   = flag.Duration("burst-window", time.Second, "dispatch window for burst mode")
 )
 
 var (
 	redisClient *redis.Client
 	mysqlDB     *sql.DB
-
-	targetsFlag = flag.String("targets", defaultTargets, "comma-separated seckill grpc targets, e.g. 127.0.0.1:9083,127.0.0.1:19083")
 )
 
-// 测试场景配置
-var scenarios = []struct {
-	name          string
-	productId     int64
-	totalRequests int64
-	concurrency   int
-	stock         int64
-}{
-	{"基准测试 (100用户/50库存)", 2001, 100, 50, 50},
-	{"小规模压测 (1000用户/500库存)", 2011, 1000, 500, 500},
-	{"中规模压测 (3000用户/1500库存)", 2031, 3000, 1000, 1500},
-	{"大规模压测 (5000用户/2000库存)", 2061, 5000, 1500, 2000},
-	{"超高并发 (8000用户/3000库存)", 2101, 8000, 2000, 3000},
-	{"万级并发 (10000用户/4000库存)", 2201, 10000, 2500, 4000},
-	{"1.5万并发 (15000用户/5000库存)", 2401, 15000, 3000, 5000},
-	{"2万并发 (20000用户/6000库存)", 2701, 20000, 4000, 6000},
-	{"3万并发 (30000用户/8000库存)", 3101, 30000, 5000, 8000},
-	{"5万并发 (50000用户/10000库存)", 3501, 50000, 6000, 10000},
-	{"10万并发 (100000用户/15000库存)", 4101, 100000, 8000, 15000},
+type requestTask struct {
+	seq int64
 }
 
-const poolSize = 32 // 连接池大小：高并发下增大连接数减少 gRPC 队头阻塞
+type result struct {
+	success       bool
+	bizCode       string
+	failReason    string
+	systemErr     bool
+	systemErrCode string
+}
 
-// SeckillServiceClient gRPC 单连接封装
-type SeckillServiceClient struct {
+type seckillClient struct {
 	conn   *grpc.ClientConn
-	client seckill.SeckillServiceClient
+	client seckillpb.SeckillServiceClient
 }
 
-func (c *SeckillServiceClient) Close() {
-	if c.conn != nil {
-		c.conn.Close()
+func (c *seckillClient) Close() {
+	if c != nil && c.conn != nil {
+		_ = c.conn.Close()
 	}
 }
 
-// ConnectionPool gRPC 连接池，round-robin 分发请求
-type ConnectionPool struct {
-	clients []*SeckillServiceClient
+type connectionPool struct {
+	clients []*seckillClient
 	counter uint64
 }
 
-func (p *ConnectionPool) Seckill(ctx context.Context, req *seckill.SeckillRequest) (*seckill.SeckillResponse, error) {
+func (p *connectionPool) Seckill(ctx context.Context, req *seckillpb.SeckillRequest) (*seckillpb.SeckillResponse, error) {
 	idx := atomic.AddUint64(&p.counter, 1) % uint64(len(p.clients))
 	return p.clients[idx].client.Seckill(ctx, req)
 }
 
-func (p *ConnectionPool) Close() {
-	for _, c := range p.clients {
-		c.Close()
+func (p *connectionPool) Close() {
+	if p == nil {
+		return
+	}
+	for _, client := range p.clients {
+		client.Close()
 	}
 }
 
 func main() {
 	flag.Parse()
 
-	fmt.Println("========================================")
-	fmt.Println("   秒杀系统性能测试")
-	fmt.Println("========================================")
-	fmt.Println()
+	if *users <= 0 || *workers <= 0 || *poolSize <= 0 || *quantity <= 0 {
+		log.Fatal("invalid args: users/workers/pool-size/quantity must be > 0")
+	}
+	if *queueSize <= 0 {
+		log.Fatal("invalid args: queue-size must be > 0")
+	}
 
-	// 初始化 Redis
-	initRedis("localhost:6379")
-	initMySQL()
-	defer closeMySQL()
+	mode, err := normalizeMode(*modeFlag)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	targets := parseTargets(*targetsFlag)
 	if len(targets) == 0 {
-		log.Fatal("invalid --targets: no valid grpc target found")
+		log.Fatal("invalid --targets")
 	}
 
-	// 初始化 gRPC 连接池
-	pool := initGrpcPool(targets, poolSize)
+	expectedRequests, err := resolveExpectedRequests(mode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dispatchWindow := effectiveDispatchWindow()
+	effectiveStock := *stock
+	effectiveUsers := *users
+	if *idealMode {
+		minRequired := expectedRequests + 1000
+		if effectiveStock < minRequired {
+			effectiveStock = minRequired
+		}
+		if effectiveUsers < minRequired {
+			effectiveUsers = minRequired
+		}
+	}
+
+	fmt.Println("========================================")
+	fmt.Println(" Seckill 同步入口压测 (gRPC)")
+	fmt.Println("========================================")
+	fmt.Printf("Mode: %s\n", mode)
+	fmt.Printf("Targets: %s\n", strings.Join(targets, ","))
+	switch mode {
+	case benchmarkModeLegacy:
+		fmt.Printf("Config: totalRequests=%d, concurrency=%d, users=%d, stock=%d, pool=%d\n",
+			*totalRequests, *concurrency, effectiveUsers, effectiveStock, *poolSize)
+	case benchmarkModeBurst:
+		fmt.Printf("Config: rate=%d req/s, duration=%s, burstWindow=%s, effectiveDispatchWindow=%s, workers=%d, queue=%d, users=%d, stock=%d, pool=%d\n",
+			*rps, duration.String(), burstWindow.String(), dispatchWindow.String(), *workers, *queueSize, effectiveUsers, effectiveStock, *poolSize)
+	}
+	fmt.Printf("Expected requests: %d\n", expectedRequests)
+	if !*idealMode && (*stock < expectedRequests || *users < expectedRequests) {
+		fmt.Printf("[WARN] stock/users below expected requests, results will include many SOLD_OUT or duplicates. recommended: --ideal or stock/users >= %d\n", expectedRequests)
+	}
+	if *idealMode {
+		fmt.Println("[OK] ideal mode enabled: stock/users auto-expanded for near-all-success throughput measurement")
+	}
+	fmt.Println()
+
+	initRedis(*redisAddr)
+	initMySQL()
+	defer closeMySQL()
+
+	ctx := context.Background()
+	prepareScenario(ctx, *productID, effectiveStock, effectiveUsers)
+	defer cleanupScenario(ctx, *productID, effectiveUsers)
+
+	pool := initGRPCPool(targets, *poolSize)
 	defer pool.Close()
 
-	// 运行所有测试场景
-	for _, scenario := range scenarios {
-		runBenchmark(pool, scenario)
-		time.Sleep(2 * time.Second)
-	}
-
-	fmt.Println()
-	fmt.Println("========================================")
-	fmt.Println("   性能测试完成")
-	fmt.Println("========================================")
-}
-
-func initRedis(addr string) {
-	redisClient = redis.NewClient(&redis.Options{
-		Addr: addr,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		log.Fatalf("连接 Redis 失败: %v", err)
-	}
-
-	fmt.Println("[OK] Redis 连接成功")
-}
-
-func initMySQL() {
-	dsn := os.Getenv("BENCHMARK_MYSQL_DSN")
-	if dsn == "" {
-		dsn = defaultMySQLDSN
-	}
-
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		log.Printf("[WARN] MySQL init failed, skip seckill_orders cleanup: %v", err)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if err := db.PingContext(ctx); err != nil {
-		log.Printf("[WARN] MySQL ping failed, skip seckill_orders cleanup: %v", err)
-		_ = db.Close()
-		return
-	}
-
-	mysqlDB = db
-	fmt.Println("[OK] MySQL connected (seckill_orders cleanup enabled)")
-}
-
-func closeMySQL() {
-	if mysqlDB != nil {
-		_ = mysqlDB.Close()
+	switch mode {
+	case benchmarkModeLegacy:
+		runLegacy(pool, effectiveStock)
+	case benchmarkModeBurst:
+		runBurst(pool, effectiveStock)
+	default:
+		log.Fatalf("unsupported mode: %s", mode)
 	}
 }
 
-func initGrpcClient(addr string) *SeckillServiceClient {
-	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		log.Fatalf("连接 gRPC 服务器失败: %v", err)
-	}
-	return &SeckillServiceClient{
-		conn:   conn,
-		client: seckill.NewSeckillServiceClient(conn),
-	}
-}
-
-func initGrpcPool(addrs []string, size int) *ConnectionPool {
-	clients := make([]*SeckillServiceClient, size)
+func initGRPCPool(targets []string, size int) *connectionPool {
+	clients := make([]*seckillClient, size)
 	for i := range clients {
-		target := addrs[i%len(addrs)]
-		clients[i] = initGrpcClient(target)
+		target := targets[i%len(targets)]
+		conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Fatalf("连接 gRPC 服务器失败: target=%s, err=%v", target, err)
+		}
+		clients[i] = &seckillClient{
+			conn:   conn,
+			client: seckillpb.NewSeckillServiceClient(conn),
+		}
 	}
-	fmt.Printf("[OK] gRPC 连接池初始化完成 (size=%d, targets=%s)\n", size, strings.Join(addrs, ","))
-	return &ConnectionPool{clients: clients}
+	fmt.Printf("[OK] gRPC 连接池初始化完成: size=%d, targets=%s\n", size, strings.Join(targets, ","))
+	return &connectionPool{clients: clients}
+}
+
+func runLegacy(pool *connectionPool, configuredStock int64) {
+	metrics := NewMetrics()
+	semaphore := make(chan struct{}, *concurrency)
+
+	var wg sync.WaitGroup
+	start := time.Now()
+
+	fmt.Println("----------------------------------------")
+	fmt.Println("开始压测...")
+	fmt.Println("----------------------------------------")
+
+	for i := int64(0); i < *totalRequests; i++ {
+		metrics.IncScheduled()
+		semaphore <- struct{}{}
+		metrics.IncDispatched()
+		wg.Add(1)
+
+		go func(seq int64) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+
+			startAt := time.Now()
+			userID := benchmarkUserStart + seq
+			reqCtx, cancel := context.WithTimeout(context.Background(), *reqTimeout)
+			resp, err := pool.Seckill(reqCtx, &seckillpb.SeckillRequest{
+				UserId:           userID,
+				SeckillProductId: *productID,
+				Quantity:         *quantity,
+			})
+			cancel()
+
+			metrics.RecordResult(time.Since(startAt).Milliseconds(), classifySeckillResponse(resp, err))
+		}(i)
+	}
+
+	wg.Wait()
+	totalDuration := time.Since(start)
+	actualSold := countReservedOrders(context.Background(), *productID)
+	metrics.Report(totalDuration, configuredStock, actualSold)
+}
+
+func runBurst(pool *connectionPool, configuredStock int64) {
+	metrics := NewMetrics()
+	tasks := make(chan requestTask, *queueSize)
+
+	var wg sync.WaitGroup
+	for i := 0; i < *workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range tasks {
+				start := time.Now()
+				userID := benchmarkUserStart + task.seq
+
+				reqCtx, cancel := context.WithTimeout(context.Background(), *reqTimeout)
+				resp, err := pool.Seckill(reqCtx, &seckillpb.SeckillRequest{
+					UserId:           userID,
+					SeckillProductId: *productID,
+					Quantity:         *quantity,
+				})
+				cancel()
+
+				latencyMs := time.Since(start).Milliseconds()
+				metrics.RecordResult(latencyMs, classifySeckillResponse(resp, err))
+			}
+		}()
+	}
+
+	start := time.Now()
+	dispatchWindow := effectiveDispatchWindow()
+	end := start.Add(dispatchWindow)
+	const tickInterval = 10 * time.Millisecond
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	var budget float64
+
+	fmt.Println("----------------------------------------")
+	fmt.Println("开始压测 (burst)...")
+	fmt.Println("----------------------------------------")
+
+	var seq int64
+	for {
+		now := time.Now()
+		if now.After(end) {
+			break
+		}
+		<-ticker.C
+
+		budget += float64(*rps) * tickInterval.Seconds()
+		toDispatch := int(budget)
+		if toDispatch <= 0 {
+			continue
+		}
+		budget -= float64(toDispatch)
+
+		for i := 0; i < toDispatch; i++ {
+			metrics.IncScheduled()
+			task := requestTask{seq: atomic.AddInt64(&seq, 1) - 1}
+			select {
+			case tasks <- task:
+				metrics.IncDispatched()
+			default:
+				metrics.IncDropped("queue_full")
+			}
+		}
+	}
+
+	close(tasks)
+	wg.Wait()
+	totalDuration := time.Since(start)
+
+	actualSold := countReservedOrders(context.Background(), *productID)
+	metrics.Report(totalDuration, configuredStock, actualSold)
+}
+
+func classifySeckillResponse(resp *seckillpb.SeckillResponse, err error) result {
+	if err != nil {
+		code := classifyRPCError(err)
+		return result{
+			systemErr:     true,
+			systemErrCode: code,
+			failReason:    code,
+		}
+	}
+	if resp == nil {
+		return result{
+			systemErr:     true,
+			systemErrCode: "RESP_NIL",
+			failReason:    "RESP_NIL",
+		}
+	}
+	if resp.Success || resp.Code == "SUCCESS" {
+		return result{success: true, bizCode: "SUCCESS"}
+	}
+
+	code := resp.Code
+	if code == "" {
+		code = "EMPTY_CODE"
+	}
+	out := result{
+		bizCode:    code,
+		failReason: "RESP_" + code,
+	}
+	switch code {
+	case "SOLD_OUT", "ALREADY_PURCHASED", "SECKILL_NOT_STARTED", "SECKILL_ENDED":
+		return out
+	default:
+		out.systemErr = true
+		out.systemErrCode = "RESP_" + code
+		return out
+	}
+}
+
+func classifyRPCError(err error) string {
+	if err == nil {
+		return "ERR_UNKNOWN"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "ERR_CONTEXT_DEADLINE_EXCEEDED"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "ERR_CONTEXT_CANCELED"
+	}
+	if st, ok := status.FromError(err); ok {
+		if st.Code() == codes.OK {
+			return "ERR_RPC_OK"
+		}
+		return "ERR_RPC_" + strings.ToUpper(st.Code().String())
+	}
+	return "ERR_LOCAL"
+}
+
+func normalizeMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "" {
+		return benchmarkModeLegacy, nil
+	}
+	switch mode {
+	case benchmarkModeLegacy, benchmarkModeBurst:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid --mode=%q, allowed values: %s | %s", raw, benchmarkModeLegacy, benchmarkModeBurst)
+	}
+}
+
+func resolveExpectedRequests(mode string) (int64, error) {
+	switch mode {
+	case benchmarkModeLegacy:
+		if *totalRequests <= 0 || *concurrency <= 0 {
+			return 0, fmt.Errorf("legacy mode requires total-requests > 0 and concurrency > 0")
+		}
+		return *totalRequests, nil
+	case benchmarkModeBurst:
+		if *rps <= 0 || *duration <= 0 || *burstWindow <= 0 {
+			return 0, fmt.Errorf("burst mode requires rate > 0, duration > 0 and burst-window > 0")
+		}
+		return int64(math.Ceil(float64(*rps) * effectiveDispatchWindow().Seconds())), nil
+	default:
+		return 0, fmt.Errorf("unsupported mode: %s", mode)
+	}
+}
+
+func effectiveDispatchWindow() time.Duration {
+	if *burstWindow < *duration {
+		return *burstWindow
+	}
+	return *duration
 }
 
 func parseTargets(raw string) []string {
@@ -204,29 +428,148 @@ func parseTargets(raw string) []string {
 	return targets
 }
 
-// Redis 操作函数
-func initStock(ctx context.Context, seckillProductId, stock int64) error {
-	key := fmt.Sprintf(keyPrefixSeckillStock, seckillProductId)
-	return redisClient.Set(ctx, key, stock, 0).Err()
-}
-
-func getStock(ctx context.Context, seckillProductId int64) (int64, error) {
-	key := fmt.Sprintf(keyPrefixSeckillStock, seckillProductId)
-	val, err := redisClient.Get(ctx, key).Int64()
-	if err == redis.Nil {
-		return 0, nil
+func initRedis(addr string) {
+	redisClient = redis.NewClient(&redis.Options{Addr: addr})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		log.Fatalf("连接 Redis 失败: %v", err)
 	}
-	return val, err
+	fmt.Println("[OK] Redis 连接成功")
 }
 
-func rollbackStock(ctx context.Context, seckillProductId, amount int64) {
-	key := fmt.Sprintf(keyPrefixSeckillStock, seckillProductId)
-	redisClient.IncrBy(ctx, key, amount)
+func initMySQL() {
+	dsn := os.Getenv("BENCHMARK_MYSQL_DSN")
+	if dsn == "" {
+		dsn = defaultMySQLDSN
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("[WARN] MySQL init failed, skip benchmark cleanup: %v", err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		log.Printf("[WARN] MySQL ping failed, skip benchmark cleanup: %v", err)
+		_ = db.Close()
+		return
+	}
+	mysqlDB = db
+	fmt.Println("[OK] MySQL connected (benchmark cleanup enabled)")
 }
 
-func deleteUserKey(ctx context.Context, seckillProductId, userId int64) {
-	key := fmt.Sprintf(keyPrefixSeckillUser, seckillProductId, userId)
-	redisClient.Del(ctx, key)
+func closeMySQL() {
+	if mysqlDB != nil {
+		_ = mysqlDB.Close()
+	}
+}
+
+func prepareScenario(ctx context.Context, seckillProductId, initStock, userCount int64) {
+	cleanupScenario(ctx, seckillProductId, userCount)
+
+	now := time.Now().Unix()
+	startTime := now - 3600
+	endTime := now + 3600
+	ttl := int64(86400)
+	if err := setSeckillProductInfo(ctx, seckillProductId, 1, 999, "seckill benchmark product", startTime, endTime, ttl); err != nil {
+		log.Fatalf("初始化秒杀商品信息失败: %v", err)
+	}
+	if err := initStockValue(ctx, seckillProductId, initStock); err != nil {
+		log.Fatalf("初始化库存失败: %v", err)
+	}
+	fmt.Printf("[OK] 场景已初始化: productId=%d, stock=%d\n", seckillProductId, initStock)
+
+	fmt.Printf("[WAIT] 等待 seckill-service 缓存刷新 (5s)...\n")
+	time.Sleep(5 * time.Second)
+	fmt.Printf("[OK] 缓存刷新等待完成\n")
+}
+
+func cleanupScenario(ctx context.Context, seckillProductId, userCount int64) {
+	clearScenarioStock(ctx, seckillProductId)
+
+	pipe := redisClient.Pipeline()
+	for i := int64(0); i < userCount; i++ {
+		uid := benchmarkUserStart + i
+		pipe.Del(ctx, fmt.Sprintf(keyPrefixSeckillUser, seckillProductId, uid))
+	}
+	_, _ = pipe.Exec(ctx)
+
+	if mysqlDB != nil {
+		startUserID := benchmarkUserStart
+		endUserID := benchmarkUserStart + userCount - 1
+
+		cleanupStatements := []struct {
+			sql  string
+			args []any
+		}{
+			{
+				sql:  "DELETE FROM event_outbox WHERE aggregate_type = 'reservation' AND aggregate_id IN (SELECT reservation_id FROM seckill_reservations WHERE seckill_product_id = ? AND user_id BETWEEN ? AND ?)",
+				args: []any{seckillProductId, startUserID, endUserID},
+			},
+			{
+				sql:  "DELETE FROM seckill_orders WHERE seckill_product_id = ? AND user_id BETWEEN ? AND ?",
+				args: []any{seckillProductId, startUserID, endUserID},
+			},
+			{
+				sql:  "DELETE FROM processed_messages WHERE message_id LIKE ?",
+				args: []any{fmt.Sprintf("S%d_%%", seckillProductId)},
+			},
+			{
+				sql:  "DELETE FROM orders WHERE order_id IN (SELECT order_id FROM seckill_reservations WHERE seckill_product_id = ? AND user_id BETWEEN ? AND ?)",
+				args: []any{seckillProductId, startUserID, endUserID},
+			},
+			{
+				sql:  "DELETE FROM seckill_reservations WHERE seckill_product_id = ? AND user_id BETWEEN ? AND ?",
+				args: []any{seckillProductId, startUserID, endUserID},
+			},
+		}
+
+		for _, stmt := range cleanupStatements {
+			if _, err := mysqlDB.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
+				log.Printf("[WARN] cleanup sql failed: sql=%q, err=%v", stmt.sql, err)
+			}
+		}
+	}
+}
+
+func initStockValue(ctx context.Context, seckillProductId, stock int64) error {
+	pipe := redisClient.TxPipeline()
+	pipe.Set(ctx, fmt.Sprintf(keyPrefixSeckillStock, seckillProductId), stock, 0)
+	pipe.Set(ctx, fmt.Sprintf(keyPrefixSeckillMeta, seckillProductId), defaultShardCount, 0)
+	for shardNo, shardStock := range splitStockIntoShards(stock) {
+		pipe.Set(ctx, fmt.Sprintf(keyPrefixSeckillShard, seckillProductId, shardNo), shardStock, 0)
+	}
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+func countReservedOrders(ctx context.Context, seckillProductId int64) int64 {
+	if mysqlDB == nil {
+		return 0
+	}
+
+	var count int64
+	err := mysqlDB.QueryRowContext(
+		ctx,
+		"SELECT COUNT(*) FROM seckill_reservations WHERE seckill_product_id = ? AND status IN (0,1,2,3,4,5)",
+		seckillProductId,
+	).Scan(&count)
+	if err != nil {
+		log.Printf("[WARN] count seckill_reservations failed: product=%d, err=%v", seckillProductId, err)
+		return 0
+	}
+	return count
+}
+
+func clearScenarioStock(ctx context.Context, seckillProductId int64) {
+	pipe := redisClient.TxPipeline()
+	pipe.Del(ctx, fmt.Sprintf(keyPrefixSeckillStock, seckillProductId))
+	pipe.Del(ctx, fmt.Sprintf(keyPrefixSeckillMeta, seckillProductId))
+	for shardNo := 0; shardNo < defaultShardCount; shardNo++ {
+		pipe.Del(ctx, fmt.Sprintf(keyPrefixSeckillShard, seckillProductId, shardNo))
+	}
+	_, _ = pipe.Exec(ctx)
 }
 
 func setSeckillProductInfo(ctx context.Context, seckillProductId, productId, price int64, name string, startTime, endTime, ttl int64) error {
@@ -235,126 +578,21 @@ func setSeckillProductInfo(ctx context.Context, seckillProductId, productId, pri
 	if err := redisClient.Set(ctx, infoKey, infoValue, time.Duration(ttl)*time.Second).Err(); err != nil {
 		return err
 	}
-
-	nameKey := fmt.Sprintf(keyPrefixSeckillName, seckillProductId)
-	return redisClient.Set(ctx, nameKey, name, time.Duration(ttl)*time.Second).Err()
+	return redisClient.Set(ctx, fmt.Sprintf(keyPrefixSeckillName, seckillProductId), name, time.Duration(ttl)*time.Second).Err()
 }
 
-// runBenchmark 运行单个压测场景
-func runBenchmark(client *ConnectionPool, scenario struct {
-	name          string
-	productId     int64
-	totalRequests int64
-	concurrency   int
-	stock         int64
-}) {
-	fmt.Println("\n----------------------------------------")
-	fmt.Printf("   场景: %s\n", scenario.name)
-	fmt.Printf("   总请求: %d | 并发: %d | 库存: %d\n", scenario.totalRequests, scenario.concurrency, scenario.stock)
-	fmt.Println("----------------------------------------")
-
-	seckillProductId := scenario.productId
-	now := time.Now().Unix()
-	ttl := int64(86400)
-	startTime := now - 3600
-	endTime := now + 3600
-
-	ctx := context.Background()
-
-	// 清理旧数据并初始化
-	cleanupProductData(seckillProductId, scenario.totalRequests)
-
-	if err := setSeckillProductInfo(ctx, seckillProductId, 1, 999, "压测商品", startTime, endTime, ttl); err != nil {
-		log.Printf("初始化商品信息失败: %v", err)
-		return
+func splitStockIntoShards(total int64) []int64 {
+	if total < 0 {
+		total = 0
 	}
-
-	if err := initStock(ctx, seckillProductId, scenario.stock); err != nil {
-		log.Printf("初始化库存失败: %v", err)
-		return
-	}
-
-	// 等待 seckill-service 本地缓存和布隆过滤器刷新（RefreshSeconds=3，等5秒确保刷新完成）
-	fmt.Printf("[WAIT] 等待 seckill-service 缓存刷新 (5s)...\n")
-	time.Sleep(5 * time.Second)
-
-	// 指标收集器
-	metrics := NewMetrics()
-
-	// 信号量控制并发
-	semaphore := make(chan struct{}, scenario.concurrency)
-
-	startTimeUnix := time.Now()
-	totalRequests := scenario.totalRequests
-
-	var wg sync.WaitGroup
-
-	for i := int64(0); i < totalRequests; i++ {
-		wg.Add(1)
-		semaphore <- struct{}{}
-
-		go func(userId int64) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-
-			reqStart := time.Now()
-
-			reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			resp, err := client.Seckill(reqCtx, &seckill.SeckillRequest{
-				UserId:           userId,
-				SeckillProductId: seckillProductId,
-				Quantity:         1,
-			})
-
-			latency := time.Since(reqStart).Milliseconds()
-
-			metrics.Record(latency, resp, err)
-		}(benchmarkUserStart + i)
-	}
-
-	wg.Wait()
-	totalDuration := time.Since(startTimeUnix)
-
-	// 获取最终库存
-	finalStock, _ := getStock(ctx, seckillProductId)
-	actualSold := scenario.stock - finalStock
-
-	// 清理数据
-	cleanupProductData(seckillProductId, totalRequests)
-
-	// 打印报告
-	metrics.Report(totalDuration, scenario.stock, actualSold)
-}
-
-// cleanupProductData 清理商品测试数据
-// userId 从 10000 开始，总量为 totalRequests
-func cleanupProductData(seckillProductId int64, totalRequests int64) {
-	ctx := context.Background()
-	rollbackStock(ctx, seckillProductId, 100000)
-
-	// 用 pipeline 批量删除 user keys
-	pipe := redisClient.Pipeline()
-	for i := int64(0); i < totalRequests; i++ {
-		uid := benchmarkUserStart + i
-		key := fmt.Sprintf(keyPrefixSeckillUser, seckillProductId, uid)
-		pipe.Del(ctx, key)
-	}
-	_, _ = pipe.Exec(ctx)
-
-	if mysqlDB != nil {
-		startUserID := benchmarkUserStart
-		endUserID := benchmarkUserStart + totalRequests - 1
-		if _, err := mysqlDB.ExecContext(
-			ctx,
-			"DELETE FROM seckill_orders WHERE seckill_product_id = ? AND user_id BETWEEN ? AND ?",
-			seckillProductId,
-			startUserID,
-			endUserID,
-		); err != nil {
-			log.Printf("[WARN] cleanup seckill_orders failed: product=%d, userRange=[%d,%d], err=%v",
-				seckillProductId, startUserID, endUserID, err)
+	shards := make([]int64, defaultShardCount)
+	base := total / defaultShardCount
+	rem := total % defaultShardCount
+	for i := range shards {
+		shards[i] = base
+		if int64(i) < rem {
+			shards[i]++
 		}
 	}
+	return shards
 }

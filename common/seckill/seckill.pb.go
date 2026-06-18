@@ -508,11 +508,12 @@ type ReservationInfo struct {
 	ProductId        int64                    `protobuf:"varint,5,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
 	Quantity         int64                    `protobuf:"varint,6,opt,name=quantity,proto3" json:"quantity,omitempty"`
 	Amount           int64                    `protobuf:"varint,7,opt,name=amount,proto3" json:"amount,omitempty"`
-	Status           common.ReservationStatus `protobuf:"varint,8,opt,name=status,proto3,enum=common.ReservationStatus" json:"status,omitempty"`
-	Reason           string                   `protobuf:"bytes,9,opt,name=reason,proto3" json:"reason,omitempty"`
-	ExpireAt         int64                    `protobuf:"varint,10,opt,name=expire_at,json=expireAt,proto3" json:"expire_at,omitempty"`
-	CreatedAt        int64                    `protobuf:"varint,11,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt        int64                    `protobuf:"varint,12,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	ShardNo          int32                    `protobuf:"varint,8,opt,name=shard_no,json=shardNo,proto3" json:"shard_no,omitempty"`
+	Status           common.ReservationStatus `protobuf:"varint,9,opt,name=status,proto3,enum=common.ReservationStatus" json:"status,omitempty"`
+	Reason           string                   `protobuf:"bytes,10,opt,name=reason,proto3" json:"reason,omitempty"`
+	ExpireAt         int64                    `protobuf:"varint,11,opt,name=expire_at,json=expireAt,proto3" json:"expire_at,omitempty"`
+	CreatedAt        int64                    `protobuf:"varint,12,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt        int64                    `protobuf:"varint,13,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -592,6 +593,13 @@ func (x *ReservationInfo) GetQuantity() int64 {
 func (x *ReservationInfo) GetAmount() int64 {
 	if x != nil {
 		return x.Amount
+	}
+	return 0
+}
+
+func (x *ReservationInfo) GetShardNo() int32 {
+	if x != nil {
+		return x.ShardNo
 	}
 	return 0
 }
@@ -1077,6 +1085,7 @@ type CompensateFailedOrderRequest struct {
 	UserId           int64                  `protobuf:"varint,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                                 // 用户ID [required]
 	Quantity         int64                  `protobuf:"varint,4,opt,name=quantity,proto3" json:"quantity,omitempty"`                                           // 回补数量 [required]
 	Reason           string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                                                // 失败原因 [optional]
+	ShardNo          int32                  `protobuf:"varint,6,opt,name=shard_no,json=shardNo,proto3" json:"shard_no,omitempty"`                              // 原始库存分片号 [required]
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1144,6 +1153,13 @@ func (x *CompensateFailedOrderRequest) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *CompensateFailedOrderRequest) GetShardNo() int32 {
+	if x != nil {
+		return x.ShardNo
+	}
+	return 0
 }
 
 type CompensateFailedOrderResponse struct {
@@ -1251,7 +1267,7 @@ const file_proto_seckill_proto_rawDesc = "" +
 	"\x12reservation_status\x18\n" +
 	" \x01(\x0e2\x19.common.ReservationStatusR\x11reservationStatus\x12?\n" +
 	"\forder_status\x18\v \x01(\x0e2\x1c.common.OrderLifecycleStatusR\vorderStatus\x12<\n" +
-	"\x0epayment_status\x18\f \x01(\x0e2\x15.common.PaymentStatusR\rpaymentStatus\"\x93\x03\n" +
+	"\x0epayment_status\x18\f \x01(\x0e2\x15.common.PaymentStatusR\rpaymentStatus\"\xae\x03\n" +
 	"\x0fReservationInfo\x12%\n" +
 	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x19\n" +
 	"\border_id\x18\x02 \x01(\tR\aorderId\x12\x17\n" +
@@ -1260,15 +1276,16 @@ const file_proto_seckill_proto_rawDesc = "" +
 	"\n" +
 	"product_id\x18\x05 \x01(\x03R\tproductId\x12\x1a\n" +
 	"\bquantity\x18\x06 \x01(\x03R\bquantity\x12\x16\n" +
-	"\x06amount\x18\a \x01(\x03R\x06amount\x121\n" +
-	"\x06status\x18\b \x01(\x0e2\x19.common.ReservationStatusR\x06status\x12\x16\n" +
-	"\x06reason\x18\t \x01(\tR\x06reason\x12\x1b\n" +
-	"\texpire_at\x18\n" +
-	" \x01(\x03R\bexpireAt\x12\x1d\n" +
+	"\x06amount\x18\a \x01(\x03R\x06amount\x12\x19\n" +
+	"\bshard_no\x18\b \x01(\x05R\ashardNo\x121\n" +
+	"\x06status\x18\t \x01(\x0e2\x19.common.ReservationStatusR\x06status\x12\x16\n" +
+	"\x06reason\x18\n" +
+	" \x01(\tR\x06reason\x12\x1b\n" +
+	"\texpire_at\x18\v \x01(\x03R\bexpireAt\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\v \x01(\x03R\tcreatedAt\x12\x1d\n" +
+	"created_at\x18\f \x01(\x03R\tcreatedAt\x12\x1d\n" +
 	"\n" +
-	"updated_at\x18\f \x01(\x03R\tupdatedAt\"Y\n" +
+	"updated_at\x18\r \x01(\x03R\tupdatedAt\"Y\n" +
 	"\x15GetReservationRequest\x12%\n" +
 	"\x0ereservation_id\x18\x01 \x01(\tR\rreservationId\x12\x19\n" +
 	"\border_id\x18\x02 \x01(\tR\aorderId\"u\n" +
@@ -1299,13 +1316,14 @@ const file_proto_seckill_proto_rawDesc = "" +
 	"\rallow_recover\x18\x03 \x01(\bR\fallowRecover\"O\n" +
 	"\x19UpdateOrderStatusResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"\xb4\x01\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xcf\x01\n" +
 	"\x1cCompensateFailedOrderRequest\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12,\n" +
 	"\x12seckill_product_id\x18\x02 \x01(\x03R\x10seckillProductId\x12\x17\n" +
 	"\auser_id\x18\x03 \x01(\x03R\x06userId\x12\x1a\n" +
 	"\bquantity\x18\x04 \x01(\x03R\bquantity\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\"k\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x12\x19\n" +
+	"\bshard_no\x18\x06 \x01(\x05R\ashardNo\"k\n" +
 	"\x1dCompensateFailedOrderResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x16\n" +

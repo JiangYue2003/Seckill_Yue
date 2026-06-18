@@ -187,6 +187,7 @@ func (m *paymentLedger) MarkPaymentRequested(ctx context.Context, in *payment.Ma
 			ProductID:        orderSnapshot.ProductId,
 			Quantity:         int64(orderSnapshot.Quantity),
 			Amount:           paymentRecord.Amount,
+			ShardNo:          orderSnapshot.ShardNo,
 			Status:           entity.PaymentStatusRequested,
 			Channel:          choosePaymentChannel(in.Channel, paymentRecord.Channel),
 		})
@@ -354,6 +355,7 @@ func (m *paymentLedger) HandlePaymentCallback(ctx context.Context, in *payment.H
 			ProductID:         orderSnapshot.ProductId,
 			Quantity:          int64(orderSnapshot.Quantity),
 			Amount:            paymentRecord.Amount,
+			ShardNo:           orderSnapshot.ShardNo,
 			Status:            entity.PaymentStatusSuccess,
 			Channel:           choosePaymentChannel(in.Channel, paymentRecord.Channel),
 			ThirdPartyTradeNo: in.ThirdPartyTradeNo,
@@ -380,6 +382,7 @@ func (m *paymentLedger) HandlePaymentCallback(ctx context.Context, in *payment.H
 			ProductID:        orderSnapshot.ProductId,
 			Quantity:         int64(orderSnapshot.Quantity),
 			Amount:           paymentRecord.Amount,
+			ShardNo:          orderSnapshot.ShardNo,
 			Status:           entity.OrderStatusCompleted,
 			OrderType:        orderSnapshot.OrderType,
 			PayStatus:        entity.OrderPayStatusSuccess,

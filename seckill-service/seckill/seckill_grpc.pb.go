@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v6.33.2
-// source: seckill.proto
+// source: proto/seckill.proto
 
 package seckill
 
@@ -24,6 +24,8 @@ const (
 	SeckillService_GetSeckillResult_FullMethodName      = "/seckill.SeckillService/GetSeckillResult"
 	SeckillService_UpdateOrderStatus_FullMethodName     = "/seckill.SeckillService/UpdateOrderStatus"
 	SeckillService_CompensateFailedOrder_FullMethodName = "/seckill.SeckillService/CompensateFailedOrder"
+	SeckillService_GetReservation_FullMethodName        = "/seckill.SeckillService/GetReservation"
+	SeckillService_ReleaseReservation_FullMethodName    = "/seckill.SeckillService/ReleaseReservation"
 	SeckillService_AdvanceReservation_FullMethodName    = "/seckill.SeckillService/AdvanceReservation"
 )
 
@@ -43,6 +45,10 @@ type SeckillServiceClient interface {
 	UpdateOrderStatus(ctx context.Context, in *UpdateOrderStatusRequest, opts ...grpc.CallOption) (*UpdateOrderStatusResponse, error)
 	// 超时失败补偿（Order-Service 内部调用）
 	CompensateFailedOrder(ctx context.Context, in *CompensateFailedOrderRequest, opts ...grpc.CallOption) (*CompensateFailedOrderResponse, error)
+	// 查询预占信息
+	GetReservation(ctx context.Context, in *GetReservationRequest, opts ...grpc.CallOption) (*ReservationInfo, error)
+	// 释放预占
+	ReleaseReservation(ctx context.Context, in *ReleaseReservationRequest, opts ...grpc.CallOption) (*ReleaseReservationResponse, error)
 	// 推进预占事实
 	AdvanceReservation(ctx context.Context, in *AdvanceReservationRequest, opts ...grpc.CallOption) (*AdvanceReservationResponse, error)
 }
@@ -105,6 +111,26 @@ func (c *seckillServiceClient) CompensateFailedOrder(ctx context.Context, in *Co
 	return out, nil
 }
 
+func (c *seckillServiceClient) GetReservation(ctx context.Context, in *GetReservationRequest, opts ...grpc.CallOption) (*ReservationInfo, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReservationInfo)
+	err := c.cc.Invoke(ctx, SeckillService_GetReservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seckillServiceClient) ReleaseReservation(ctx context.Context, in *ReleaseReservationRequest, opts ...grpc.CallOption) (*ReleaseReservationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseReservationResponse)
+	err := c.cc.Invoke(ctx, SeckillService_ReleaseReservation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *seckillServiceClient) AdvanceReservation(ctx context.Context, in *AdvanceReservationRequest, opts ...grpc.CallOption) (*AdvanceReservationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AdvanceReservationResponse)
@@ -131,6 +157,10 @@ type SeckillServiceServer interface {
 	UpdateOrderStatus(context.Context, *UpdateOrderStatusRequest) (*UpdateOrderStatusResponse, error)
 	// 超时失败补偿（Order-Service 内部调用）
 	CompensateFailedOrder(context.Context, *CompensateFailedOrderRequest) (*CompensateFailedOrderResponse, error)
+	// 查询预占信息
+	GetReservation(context.Context, *GetReservationRequest) (*ReservationInfo, error)
+	// 释放预占
+	ReleaseReservation(context.Context, *ReleaseReservationRequest) (*ReleaseReservationResponse, error)
 	// 推进预占事实
 	AdvanceReservation(context.Context, *AdvanceReservationRequest) (*AdvanceReservationResponse, error)
 	mustEmbedUnimplementedSeckillServiceServer()
@@ -157,6 +187,12 @@ func (UnimplementedSeckillServiceServer) UpdateOrderStatus(context.Context, *Upd
 }
 func (UnimplementedSeckillServiceServer) CompensateFailedOrder(context.Context, *CompensateFailedOrderRequest) (*CompensateFailedOrderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompensateFailedOrder not implemented")
+}
+func (UnimplementedSeckillServiceServer) GetReservation(context.Context, *GetReservationRequest) (*ReservationInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetReservation not implemented")
+}
+func (UnimplementedSeckillServiceServer) ReleaseReservation(context.Context, *ReleaseReservationRequest) (*ReleaseReservationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseReservation not implemented")
 }
 func (UnimplementedSeckillServiceServer) AdvanceReservation(context.Context, *AdvanceReservationRequest) (*AdvanceReservationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AdvanceReservation not implemented")
@@ -272,6 +308,42 @@ func _SeckillService_CompensateFailedOrder_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeckillService_GetReservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetReservationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeckillServiceServer).GetReservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeckillService_GetReservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeckillServiceServer).GetReservation(ctx, req.(*GetReservationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeckillService_ReleaseReservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseReservationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeckillServiceServer).ReleaseReservation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeckillService_ReleaseReservation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeckillServiceServer).ReleaseReservation(ctx, req.(*ReleaseReservationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _SeckillService_AdvanceReservation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AdvanceReservationRequest)
 	if err := dec(in); err != nil {
@@ -318,10 +390,18 @@ var SeckillService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SeckillService_CompensateFailedOrder_Handler,
 		},
 		{
+			MethodName: "GetReservation",
+			Handler:    _SeckillService_GetReservation_Handler,
+		},
+		{
+			MethodName: "ReleaseReservation",
+			Handler:    _SeckillService_ReleaseReservation_Handler,
+		},
+		{
 			MethodName: "AdvanceReservation",
 			Handler:    _SeckillService_AdvanceReservation_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
-	Metadata: "seckill.proto",
+	Metadata: "proto/seckill.proto",
 }

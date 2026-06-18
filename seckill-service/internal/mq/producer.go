@@ -44,6 +44,7 @@ type SeckillOrderMessage struct {
 	Amount           int64  `json:"amount"`
 	SeckillPrice     int64  `json:"seckill_price"`
 	CreatedAt        int64  `json:"created_at"`
+	ShardNo          int32  `json:"shard_no"`
 	IsDelay          bool   `json:"-"` // 内部标记，不序列化，true=发延迟队列
 }
 

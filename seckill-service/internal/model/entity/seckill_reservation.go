@@ -8,6 +8,7 @@ type SeckillReservation struct {
 	ProductId        int64  `gorm:"not null" json:"product_id"`
 	Quantity         int    `gorm:"not null;default:1" json:"quantity"`
 	Amount           int64  `gorm:"not null" json:"amount"`
+	ShardNo          int32  `gorm:"column:shard_no;not null" json:"shard_no"`
 	Status           int32  `gorm:"not null;default:0;index:idx_reservation_status_expire_at,priority:1" json:"status"`
 	Source           string `gorm:"type:varchar(32);not null;default:gateway" json:"source"`
 	Reason           string `gorm:"type:varchar(64)" json:"reason"`

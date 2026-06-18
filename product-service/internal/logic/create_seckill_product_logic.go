@@ -84,6 +84,10 @@ func (l *CreateSeckillProductLogic) CreateSeckillProduct(in *product.CreateSecki
 		l.Logger.Errorf("创建秒杀商品失败: %v", err)
 		return nil, errors.New("创建秒杀商品失败，请稍后重试")
 	}
+	if err := l.svcCtx.SeckillProductModel.SyncStockShards(l.ctx, seckillProduct.ID, seckillProduct.SeckillStock); err != nil {
+		l.Logger.Errorf("创建秒杀库存分片事实失败: seckillProductId=%d, err=%v", seckillProduct.ID, err)
+		return nil, errors.New("创建秒杀商品失败，请稍后重试")
+	}
 
 	// ========== 同步秒杀商品信息到 Redis（供 Seckill-Service 使用）==========
 	// 计算 TTL：秒杀结束时间 + 1小时缓冲

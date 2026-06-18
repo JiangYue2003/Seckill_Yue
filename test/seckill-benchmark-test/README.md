@@ -1,183 +1,127 @@
-# 秒杀系统性能测试
+# Seckill 同步入口压测
 
-通过 gRPC 直连 `seckill-service`，模拟高并发秒杀场景，测量系统的 QPS、TPS、延迟百分位数和超卖率等性能指标。
+这个工具用于评估新架构下 `seckill-service` 的纯同步入口吞吐能力，真实走：
 
-## 文件说明
+`client -> seckill-service (gRPC Seckill RPC)`
 
-| 文件 | 说明 |
-|------|------|
-| `main.go` | 程序入口：初始化连接，依次运行 11 个压测场景，每个场景间隔 2 秒 |
-| `metrics.go` | 性能指标收集器：统计请求结果、计算延迟百分位数、生成性能报告 |
-| `go.mod` | 依赖管理 |
-| `go.sum` | 依赖锁文件 |
+压测结果只统计同步返回，不经过 `gateway`，也不等待 RabbitMQ 异步建单、超时检查或最终订单落库完成。
+
+## 支持两种模式
+
+### `legacy`
+
+沿用旧版 benchmark 的思路：
+
+- 固定总请求数
+- 固定最大并发
+- 前一个请求返回后，后续请求继续补位
+
+适合：
+
+- 和旧 benchmark 历史结果做横向对比
+- 评估“某个并发度下跑完一批请求要多久”
+
+### `burst`
+
+更接近真实秒杀首波流量：
+
+- 固定到达率
+- 在短突发窗口内持续放请求
+- `burst-window` 是真实发压窗口，`duration` 是其上限
+- 服务端扛不住时会出现排队丢弃或超时/错误
+
+适合：
+
+- 评估真实抢购瞬时冲击
+- 看系统过载行为和稳定吞吐上限
 
 ## 前置条件
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| Redis | `localhost:6379` | 存储秒杀库存和用户购买记录（Redis Lua 保证原子性） |
-| Seckill-Service | `127.0.0.1:9083` | 秒杀核心服务（gRPC） |
+- `seckill-service` 已启动
+- `Redis` 已启动
+- `MySQL` 已启动
 
-> 不需要 Order-Service，因为性能测试只验证 Redis 层扣减性能，不涉及异步下单流程。
+默认地址：
+
+- `seckill-service`: `127.0.0.1:9083`
+- `Redis`: `localhost:6379`
+- `MySQL`: `root:Zz123456@tcp(localhost:3306)/seckill_mall?...`
 
 ## 快速开始
 
-```bash
-cd test/seckill-benchmark-test
-go mod tidy
-go run .
-```
-
-多实例压测（轮询多个 seckill-service）：
-
-```bash
-go run . --targets=127.0.0.1:9083,127.0.0.1:19083
-```
-
-可选：如果你希望每轮场景前后自动清理 `seckill_orders`（按“当前场景商品ID + 用户区间”删除），可设置：
-
-```bash
-export BENCHMARK_MYSQL_DSN='root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local'
-go run .
-```
-
-Windows PowerShell:
+默认 `legacy`：
 
 ```powershell
-$env:BENCHMARK_MYSQL_DSN='root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local'
+cd test\seckill-benchmark-test
 go run .
 ```
 
-Windows PowerShell 多实例示例：
+显式使用 `legacy`：
 
 ```powershell
-go run . --targets="127.0.0.1:9083,127.0.0.1:19083"
+go run . --mode=legacy --total-requests=10000 --concurrency=1000
 ```
 
-## 压测场景配置
+使用 `burst`：
 
-| 场景 | 秒杀商品 ID | 总请求数 | 并发数 | 初始库存 |
-|------|-----------|---------|--------|---------|
-| 基准测试 | 2001 | 100 | 50 | 50 |
-| 小规模压测 | 2011 | 1,000 | 500 | 500 |
-| 中规模压测 | 2031 | 3,000 | 1,000 | 1,500 |
-| 大规模压测 | 2061 | 5,000 | 1,500 | 2,000 |
-| 超高并发 | 2101 | 8,000 | 2,000 | 3,000 |
-| 万级并发 | 2201 | 10,000 | 2,500 | 4,000 |
-| 1.5万并发 | 2401 | 15,000 | 3,000 | 5,000 |
-| 2万并发 | 2701 | 20,000 | 4,000 | 6,000 |
-| 3万并发 | 3101 | 30,000 | 5,000 | 8,000 |
-| 5万并发 | 3501 | 50,000 | 6,000 | 10,000 |
-| 10万并发 | 4101 | 100,000 | 8,000 | 15,000 |
-
-> 每个场景使用独立的秒杀商品 ID（2001~4101），避免数据互相干扰。
-
-## 性能指标说明
-
-| 指标 | 说明 | 参考值 |
-|------|------|--------|
-| **QPS** | 每秒处理的 HTTP/gRPC 请求总数 | 越高越好 |
-| **TPS** | 每秒成功的秒杀订单数 | 理想 ≈ 库存数 / 持续时间 |
-| **成功率** | 成功订单数 / 总请求数 | 理想 ≈ 库存数 / 请求数 |
-| **超卖率** | 实际售出数 / 初始库存 | 理想 ≤ 100%，超过说明超卖 |
-| **P50/P95/P99** | 响应时间百分位数 | P99 < 100ms 为良好 |
-| **平均延迟** | 所有请求响应时间的算术平均 | 越低越好 |
-
-## 预期输出示例
-
-```
-========================================
-   秒杀系统性能测试
-========================================
-
-[OK] Redis 连接成功
-[OK] gRPC 客户端连接成功
-
-----------------------------------------
-   场景: 基准测试 (100用户/50库存)
-   总请求: 100 | 并发: 50 | 库存: 50
-----------------------------------------
-
-========================================
-   性能报告
-========================================
-  请求统计:
-    总请求数:     100
-    成功数:       50 (50.00%)
-    失败数:       50
-      - 库存不足:  50
-      - 用户重复:  0
-
-  库存统计:
-    初始库存:     50
-    实际售出:     50
-    超卖率:       100.00%
-
-  性能指标:
-    总耗时:       0.12s
-    QPS:          833.33 req/s
-    TPS:          416.67 orders/s
-
-  延迟统计 (ms):
-    平均延迟:     2
-    P50:          1
-    P95:          4
-    P99:          6
-    最小延迟:     0
-    最大延迟:     12
-========================================
-
-... (继续运行后续场景)
-
-========================================
-   性能测试完成
-========================================
+```powershell
+go run . --mode=burst --rate=20000 --duration=10s --burst-window=1s --ideal
 ```
 
-## 关键性能目标
+多实例压测：
 
-| 指标 | 目标值 | 说明 |
-|------|--------|------|
-| 超卖率 | ≤ 100% | 绝对不能超卖（Redis Lua 保证） |
-| P99 延迟 | < 100ms | 高并发下仍需保持低延迟 |
-| QPS | > 1000 req/s | 取决于 gRPC 和 Redis 性能 |
-
-## 实现细节
-
-### 并发模型
-
-使用 Go 的 `sync.WaitGroup` + 信号量控制并发：
-
-```go
-semaphore := make(chan struct{}, concurrency) // 信号量
-for i := 0; i < totalRequests; i++ {
-    wg.Add(1)
-    semaphore <- struct{}{}
-    go func(userId int64) {
-        defer wg.Done()
-        defer func() { <-semaphore }()
-        resp, _ := client.Seckill(ctx, req)
-        metrics.Record(latency, resp, err)
-    }(userId)
-}
-wg.Wait()
+```powershell
+go run . --targets="127.0.0.1:9083,127.0.0.1:19083" --pool-size=128 --mode=burst --ideal
 ```
 
-### Redis Lua 脚本保证原子性
+## 常用参数
 
-秒杀库存扣减由 `seckill-service` 中的 Lua 脚本保证原子性，防止超卖：
+通用参数：
 
-```lua
--- 伪代码
-local stock = redis.call('GET', stockKey)
-if stock < quantity then return 0 end  -- 库存不足
-redis.call('DECRBY', stockKey, quantity)
-redis.call('SET', userKey, orderId, 'EX', ttl)
-return 1
-```
+- `--targets`
+- `--mode`
+- `--product-id`
+- `--stock`
+- `--users`
+- `--workers`
+- `--request-timeout`
+- `--quantity`
+- `--redis`
+- `--pool-size`
+- `--ideal`
 
-## 调优建议
+`legacy` 专用：
 
-1. **提高 QPS**：增加 seckill-service 的 gRPC 连接池大小
-2. **降低延迟**：优化 Redis 网络（本地部署 vs 跨机器）
-3. **更高并发**：调整压测场景的并发数和库存配置
+- `--total-requests`
+- `--concurrency`
+
+`burst` 专用：
+
+- `--rate`
+- `--duration`
+- `--queue-size`
+- `--burst-window`
+
+## 场景准备
+
+每次运行前会自动：
+
+- 初始化 Redis 商品信息和库存
+- 清理压测用户对应的 `userKey`
+- 尝试清理 `seckill_orders`
+- 尝试清理 `seckill_reservations`
+- 尝试清理 `event_outbox`
+- 尝试清理 `orders`
+- 尝试清理 `processed_messages`
+
+注意：
+
+- 这个工具的目标是同步入口压测，不保证把异步链路完全清空
+- 如果你要做严格的多轮对比，建议压测前额外执行一次 [`test/cleanup_benchmark_data.sql`](/abs/path/F:/sec1.1/test/cleanup_benchmark_data.sql)
+
+## 结果理解
+
+- `TPS (业务成功)` 代表同步返回 `SUCCESS` 的吞吐
+- `TPS (秒杀阶段)` 代表首个成功到最后一个成功之间的成功吞吐，更接近真实成功窗口
+- `SOLD_OUT`、`ALREADY_PURCHASED` 属于业务失败，不算系统错误
+- `ERR_RPC_*`、超时、连接错误等算系统错误

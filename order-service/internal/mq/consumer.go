@@ -49,6 +49,7 @@ type SeckillOrderMessage struct {
 	SeckillPrice     int64  `json:"seckill_price"`
 	Amount           int64  `json:"amount"`
 	CreatedAt        int64  `json:"created_at"`
+	ShardNo          int32  `json:"shard_no"`
 }
 
 // ProcessFunc 消息处理函数类型

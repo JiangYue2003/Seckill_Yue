@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	seckillpb "seckill-mall/common/seckill"
@@ -106,7 +107,7 @@ func (f *fakeSeckillServiceRPC) UpdateOrderStatus(ctx context.Context, orderId, 
 	return nil
 }
 
-func (f *fakeSeckillServiceRPC) CompensateFailedOrder(ctx context.Context, orderId string, seckillProductId int64, userId int64, quantity int64, reason string) (*seckillpb.CompensateFailedOrderResponse, error) {
+func (f *fakeSeckillServiceRPC) CompensateFailedOrder(ctx context.Context, orderId string, seckillProductId int64, userId int64, quantity int64, reason string, shardNo int32) (*seckillpb.CompensateFailedOrderResponse, error) {
 	f.compensateCalls++
 	f.lastCompensateOrderID = orderId
 	f.lastCompensateProductID = seckillProductId
@@ -123,6 +124,49 @@ func (f *fakeSeckillServiceRPC) CompensateFailedOrder(ctx context.Context, order
 		Success: true,
 		Result:  "compensated",
 	}, nil
+}
+
+func setIntFieldOnMessage(t *testing.T, target any, field string, value int64) {
+	t.Helper()
+
+	rv := reflect.ValueOf(target)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		t.Fatalf("target must be non-nil pointer, got %T", target)
+	}
+	rv = rv.Elem()
+	fv := rv.FieldByName(field)
+	if !fv.IsValid() {
+		t.Fatalf("expected field %q on %T", field, target)
+	}
+	switch fv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fv.SetInt(value)
+	default:
+		t.Fatalf("field %q on %T is not int kind, got %s", field, target, fv.Kind())
+	}
+}
+
+func getIntFieldOnStruct(t *testing.T, target any, field string) int64 {
+	t.Helper()
+
+	rv := reflect.ValueOf(target)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			t.Fatalf("target is nil: %T", target)
+		}
+		rv = rv.Elem()
+	}
+	fv := rv.FieldByName(field)
+	if !fv.IsValid() {
+		t.Fatalf("expected field %q on %T", field, target)
+	}
+	switch fv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fv.Int()
+	default:
+		t.Fatalf("field %q on %T is not int kind, got %s", field, target, fv.Kind())
+		return 0
+	}
 }
 
 func TestProcessSeckillOrderUsesTransactionalPersistence(t *testing.T) {
@@ -143,6 +187,7 @@ func TestProcessSeckillOrderUsesTransactionalPersistence(t *testing.T) {
 		Amount:           999,
 		SeckillPrice:     999,
 	}
+	setIntFieldOnMessage(t, msg, "ShardNo", 7)
 
 	if err := svc.ProcessSeckillOrder(msg); err != nil {
 		t.Fatalf("ProcessSeckillOrder() error = %v", err)
@@ -159,6 +204,9 @@ func TestProcessSeckillOrderUsesTransactionalPersistence(t *testing.T) {
 	}
 	if txManager.last.ConsumerName != seckillOrderConsumerName {
 		t.Fatalf("expected consumer name %s, got %s", seckillOrderConsumerName, txManager.last.ConsumerName)
+	}
+	if got := getIntFieldOnStruct(t, txManager.last, "ShardNo"); got != 7 {
+		t.Fatalf("expected shard no 7, got %d", got)
 	}
 	if seckillRPC.updateCalls != 0 {
 		t.Fatalf("expected no seckill hot status update before payment, got %d", seckillRPC.updateCalls)

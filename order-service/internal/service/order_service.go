@@ -28,7 +28,7 @@ const seckillOrderConsumerName = "order-service.seckill-order"
 
 type seckillStatusWriter interface {
 	UpdateOrderStatus(ctx context.Context, orderId, status string, allowRecover bool) error
-	CompensateFailedOrder(ctx context.Context, orderId string, seckillProductId, userId, quantity int64, reason string) (*seckill.CompensateFailedOrderResponse, error)
+	CompensateFailedOrder(ctx context.Context, orderId string, seckillProductId, userId, quantity int64, reason string, shardNo int32) (*seckill.CompensateFailedOrderResponse, error)
 }
 
 func NewOrderService(orderModel model.OrderModel, seckillOrderModel model.SeckillOrderModel, txManager model.SeckillOrderTxManager) *OrderService {
@@ -92,6 +92,7 @@ func (s *OrderService) ProcessSeckillOrder(msg *mq.SeckillOrderMessage) error {
 		Quantity:         msg.Quantity,
 		Amount:           msg.Amount,
 		SeckillPrice:     msg.SeckillPrice,
+		ShardNo:          msg.ShardNo,
 	})
 	if err != nil {
 		logger.Errorf("事务化持久化秒杀订单失败: orderId=%s, messageId=%s, err=%v", msg.OrderId, msg.MessageId, err)
@@ -152,6 +153,7 @@ func (s *OrderService) ProcessOrderTimeout(msg *mq.SeckillOrderMessage) error {
 		msg.UserId,
 		msg.Quantity,
 		"timeout_not_found_in_db",
+		msg.ShardNo,
 	)
 	if rpcErr != nil {
 		logger.Errorf("failed compensation rpc error: orderId=%s, err=%v", msg.OrderId, rpcErr)

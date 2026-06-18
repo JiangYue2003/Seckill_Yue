@@ -75,11 +75,12 @@ message ReservationInfo {
     int64 product_id = 5;
     int64 quantity = 6;
     int64 amount = 7;
-    common.ReservationStatus status = 8;
-    string reason = 9;
-    int64 expire_at = 10;
-    int64 created_at = 11;
-    int64 updated_at = 12;
+    int32 shard_no = 8;
+    common.ReservationStatus status = 9;
+    string reason = 10;
+    int64 expire_at = 11;
+    int64 created_at = 12;
+    int64 updated_at = 13;
 }
 
 message GetReservationRequest {
@@ -135,6 +136,7 @@ message CompensateFailedOrderRequest {
     int64 user_id = 3;             // 用户ID [required]
     int64 quantity = 4;            // 回补数量 [required]
     string reason = 5;             // 失败原因 [optional]
+    int32 shard_no = 6;            // 原始库存分片号 [required]
 }
 
 message CompensateFailedOrderResponse {

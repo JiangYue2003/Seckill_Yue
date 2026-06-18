@@ -10,6 +10,7 @@ type Order struct {
 	Quantity      int    `gorm:"not null;default:1" json:"quantity"`
 	Amount        int64  `gorm:"not null" json:"amount"`
 	SeckillPrice  int64  `gorm:"default:0" json:"seckill_price"`
+	ShardNo       int32  `gorm:"column:shard_no;not null;default:0;index" json:"shard_no"`
 	OrderType     int32  `gorm:"not null;default:0" json:"order_type"`
 	Status        int32  `gorm:"not null;default:0;index" json:"status"`
 	PayStatus     int32  `gorm:"column:pay_status;not null;default:0;index" json:"pay_status"`

@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func assertPayloadHasShardNo(t *testing.T, payloadJSON string) {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if _, ok := payload["shard_no"]; !ok {
+		t.Fatalf("expected key %q in payload, got %v", "shard_no", payload)
+	}
+}
+
 func TestBuildReservationCreatedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 	payloadJSON, err := BuildReservationCreatedPayload(ReservationCreatedInput{
 		EventID:          "evt-reservation-created-R1",
@@ -64,6 +76,7 @@ func TestBuildReservationCreatedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 	if got := payload["aggregate_type"]; got != "reservation" {
 		t.Fatalf("expected aggregate_type=reservation, got %v", got)
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }
 
 func TestBuildOrderCreatedPayloadIncludesUnifiedEnvelope(t *testing.T) {
@@ -125,6 +138,7 @@ func TestBuildOrderCreatedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 	if got := payload["aggregate_type"]; got != "order" {
 		t.Fatalf("expected aggregate_type=order, got %v", got)
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }
 
 func TestBuildPaymentSucceededPayloadIncludesUnifiedEnvelope(t *testing.T) {
@@ -192,6 +206,7 @@ func TestBuildPaymentSucceededPayloadIncludesUnifiedEnvelope(t *testing.T) {
 	if got := payload["aggregate_type"]; got != "payment" {
 		t.Fatalf("expected aggregate_type=payment, got %v", got)
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }
 
 func TestBuildOrderCompletedPayloadIncludesUnifiedEnvelope(t *testing.T) {
@@ -257,6 +272,7 @@ func TestBuildOrderCompletedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 	if got := payload["aggregate_type"]; got != "order" {
 		t.Fatalf("expected aggregate_type=order, got %v", got)
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }
 
 func TestBuildReservationReleasedPayloadIncludesUnifiedEnvelope(t *testing.T) {
@@ -299,6 +315,7 @@ func TestBuildReservationReleasedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 			t.Fatalf("expected key %q in payload, got %v", key, payload)
 		}
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }
 
 func TestBuildReservationAdvancedPayloadIncludesUnifiedEnvelope(t *testing.T) {
@@ -342,6 +359,7 @@ func TestBuildReservationAdvancedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 			t.Fatalf("expected key %q in payload, got %v", key, payload)
 		}
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }
 
 func TestBuildPaymentRequestedPayloadIncludesUnifiedEnvelope(t *testing.T) {
@@ -384,4 +402,5 @@ func TestBuildPaymentRequestedPayloadIncludesUnifiedEnvelope(t *testing.T) {
 			t.Fatalf("expected key %q in payload, got %v", key, payload)
 		}
 	}
+	assertPayloadHasShardNo(t, payloadJSON)
 }

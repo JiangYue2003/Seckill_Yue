@@ -71,6 +71,12 @@ func (l *UpdateSeckillProductLogic) UpdateSeckillProduct(in *product.UpdateSecki
 		l.Logger.Errorf("更新秒杀商品失败: %v", err)
 		return nil, errors.New("更新秒杀商品失败，请稍后重试")
 	}
+	if in.SeckillStock >= 0 {
+		if err := l.svcCtx.SeckillProductModel.SyncStockShards(l.ctx, seckillProduct.ID, seckillProduct.SeckillStock); err != nil {
+			l.Logger.Errorf("同步秒杀库存分片事实失败: seckillProductId=%d, err=%v", seckillProduct.ID, err)
+			return nil, errors.New("更新秒杀商品失败，请稍后重试")
+		}
+	}
 
 	// ========== 同步变更到 Redis（供 Seckill-Service 使用）==========
 	now := time.Now().Unix()
@@ -91,9 +97,15 @@ func (l *UpdateSeckillProductLogic) UpdateSeckillProduct(in *product.UpdateSecki
 		}
 
 		// 如果秒杀价格变更，同步商品信息
-		if in.SeckillPrice > 0 {
+		if in.SeckillPrice > 0 || in.StartTime > 0 || in.EndTime > 0 {
 			if redisErr := l.svcCtx.SeckillRedis.UpdateSeckillInfo(
-				l.ctx, seckillProduct.ID, seckillProduct.ProductId, seckillProduct.SeckillPrice, ttlSeconds,
+				l.ctx,
+				seckillProduct.ID,
+				seckillProduct.ProductId,
+				seckillProduct.SeckillPrice,
+				seckillProduct.StartTime,
+				seckillProduct.EndTime,
+				ttlSeconds,
 			); redisErr != nil {
 				l.Logger.Errorf("同步秒杀价格到 Redis 失败: seckillProductId=%d, err=%v", seckillProduct.ID, redisErr)
 			}

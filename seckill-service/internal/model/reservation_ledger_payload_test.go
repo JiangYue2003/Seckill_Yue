@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"regexp"
+	"reflect"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -66,6 +67,29 @@ func newReservationLedgerForMock(t *testing.T) (*reservationLedger, sqlmock.Sqlm
 	return &reservationLedger{db: gdb}, mock, cleanup
 }
 
+func setIntFieldForTest(t *testing.T, target any, field string, value int64) {
+	t.Helper()
+
+	rv := reflect.ValueOf(target)
+	if rv.Kind() != reflect.Ptr || rv.IsNil() {
+		t.Fatalf("target must be non-nil pointer, got %T", target)
+	}
+	rv = rv.Elem()
+	fv := rv.FieldByName(field)
+	if !fv.IsValid() {
+		t.Fatalf("expected field %q on %T", field, target)
+	}
+	if !fv.CanSet() {
+		t.Fatalf("field %q on %T is not settable", field, target)
+	}
+	switch fv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fv.SetInt(value)
+	default:
+		t.Fatalf("field %q on %T is not int kind, got %s", field, target, fv.Kind())
+	}
+}
+
 func TestPersistReservationWritesReservationCreatedOutboxPayload(t *testing.T) {
 	ledger, mock, cleanup := newReservationLedgerForMock(t)
 	defer cleanup()
@@ -80,6 +104,7 @@ func TestPersistReservationWritesReservationCreatedOutboxPayload(t *testing.T) {
 			2001,
 			1,
 			9900,
+			int64(3),
 			0,
 			"gateway",
 			"reservation.created",
@@ -102,6 +127,7 @@ func TestPersistReservationWritesReservationCreatedOutboxPayload(t *testing.T) {
 				"reservation_id":     "R1",
 				"order_id":           "O1",
 				"seckill_product_id": float64(101),
+				"shard_no":           float64(3),
 			},
 			0, 0, 0, "",
 			sqlmock.AnyArg(), sqlmock.AnyArg(),
@@ -120,7 +146,7 @@ func TestPersistReservationWritesReservationCreatedOutboxPayload(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	mock.ExpectCommit()
 
-	got, err := ledger.PersistReservation(context.Background(), &PersistReservationInput{
+	in := &PersistReservationInput{
 		ReservationID:    "R1",
 		OrderID:          "O1",
 		UserID:           1001,
@@ -133,7 +159,10 @@ func TestPersistReservationWritesReservationCreatedOutboxPayload(t *testing.T) {
 		Reason:           "reservation.created",
 		RedisOrderKey:    "redis-order-key",
 		ExpireAt:         1710000300,
-	})
+	}
+	setIntFieldForTest(t, in, "ShardNo", 3)
+
+	got, err := ledger.PersistReservation(context.Background(), in)
 	if err != nil {
 		t.Fatalf("PersistReservation() error = %v", err)
 	}
@@ -153,8 +182,8 @@ func TestReleaseReservationWritesReservationReleasedOutboxPayload(t *testing.T) 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `seckill_reservations` WHERE reservation_id = ? ORDER BY `seckill_reservations`.`reservation_id` LIMIT ?")).
 		WithArgs("R2", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"reservation_id", "order_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount", "status", "source", "reason", "redis_order_key", "expire_at", "created_at", "updated_at",
-		}).AddRow("R2", "O2", 1002, 102, 2002, 1, 10900, 0, "gateway", "reservation.created", "redis-key", 1710000400, 1710000000, 1710000000))
+			"reservation_id", "order_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount", "shard_no", "status", "source", "reason", "redis_order_key", "expire_at", "created_at", "updated_at",
+		}).AddRow("R2", "O2", 1002, 102, 2002, 1, 10900, 4, 0, "gateway", "reservation.created", "redis-key", 1710000400, 1710000000, 1710000000))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE `seckill_reservations` SET")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `order_status_logs`")).
@@ -174,6 +203,7 @@ func TestReleaseReservationWritesReservationReleasedOutboxPayload(t *testing.T) 
 				"order_id":           "O2",
 				"status":             float64(6),
 				"from_status":        float64(0),
+				"shard_no":           float64(4),
 			},
 			0, 0, 0, "",
 			sqlmock.AnyArg(), sqlmock.AnyArg(),
@@ -206,8 +236,8 @@ func TestAdvanceReservationWritesReservationAdvancedOutboxPayload(t *testing.T) 
 	mock.ExpectQuery(regexp.QuoteMeta("SELECT * FROM `seckill_reservations` WHERE order_id = ? ORDER BY `seckill_reservations`.`reservation_id` LIMIT ?")).
 		WithArgs("O3", 1).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"reservation_id", "order_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount", "status", "source", "reason", "redis_order_key", "expire_at", "created_at", "updated_at",
-		}).AddRow("R3", "O3", 1003, 103, 2003, 1, 11900, 3, "gateway", "payment.requested", "redis-key", 1710000500, 1710000000, 1710000000))
+			"reservation_id", "order_id", "user_id", "seckill_product_id", "product_id", "quantity", "amount", "shard_no", "status", "source", "reason", "redis_order_key", "expire_at", "created_at", "updated_at",
+		}).AddRow("R3", "O3", 1003, 103, 2003, 1, 11900, 5, 3, "gateway", "payment.requested", "redis-key", 1710000500, 1710000000, 1710000000))
 	mock.ExpectExec(regexp.QuoteMeta("UPDATE `seckill_reservations` SET")).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO `order_status_logs`")).
@@ -228,6 +258,7 @@ func TestAdvanceReservationWritesReservationAdvancedOutboxPayload(t *testing.T) 
 				"payment_id":         "P3",
 				"status":             float64(5),
 				"from_status":        float64(3),
+				"shard_no":           float64(5),
 			},
 			0, 0, 0, "",
 			sqlmock.AnyArg(), sqlmock.AnyArg(),

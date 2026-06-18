@@ -8,6 +8,7 @@ type SeckillOrder struct {
 	OrderId          string `gorm:"type:varchar(64);not null;uniqueIndex:uk_seckill_order_id;index" json:"order_id"`
 	ReservationId    string `gorm:"column:reservation_id;type:varchar(64);index" json:"reservation_id"`
 	Quantity         int    `gorm:"not null;default:1" json:"quantity"`
+	ShardNo          int32  `gorm:"column:shard_no;not null;default:0;index" json:"shard_no"`
 	Status           int32  `gorm:"not null;default:0;index" json:"status"`
 	CreatedAt        int64  `gorm:"column:created_at" json:"created_at"`
 }

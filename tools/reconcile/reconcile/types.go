@@ -83,6 +83,11 @@ const (
 	AnomalyReservationProductMismatch             = "reservation_product_mismatch"
 	AnomalyReservationQuantityMismatch            = "reservation_quantity_mismatch"
 	AnomalyReservationAmountMismatch              = "reservation_amount_mismatch"
+	AnomalyOrderShardMissing                      = "order_shard_missing"
+	AnomalySeckillOrderShardMissing               = "seckill_order_shard_missing"
+	AnomalyReservationShardMissing                = "reservation_shard_missing"
+	AnomalyShardMismatch                          = "shard_mismatch"
+	AnomalyCompensationShardMissing               = "compensation_shard_missing"
 	AnomalyReservationNotConsumedOnPaymentSuccess = "reservation_not_consumed_on_payment_success"
 	AnomalyReservationMissingOrderCreated         = "reservation_missing_order_created"
 	AnomalyPaymentMissing                         = "payment_missing"
@@ -125,17 +130,20 @@ type OrderRow struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	ShardNo          int32
 	Status           int32
 	PayStatus        int32
 	CreatedAt        int64
 	SeckillProductID int64
 	SeckillQuantity  int64
+	SeckillShardNo   int32
 
 	ReservationFound     bool
 	ReservationUserID    int64
 	ReservationProductID int64
 	ReservationQuantity  int64
 	ReservationAmount    int64
+	ReservationShardNo   int32
 	ReservationStatus    int32
 
 	PaymentFound  bool
@@ -181,7 +189,7 @@ type Store interface {
 
 type SeckillClient interface {
 	UpdateOrderStatus(ctx context.Context, orderID, status string, allowRecover bool) error
-	CompensateFailedOrder(ctx context.Context, orderID string, seckillProductID, userID, quantity int64, reason string) (string, error)
+	CompensateFailedOrder(ctx context.Context, orderID string, seckillProductID, userID, quantity int64, reason string, shardNo int32) (string, error)
 	AdvanceReservation(ctx context.Context, orderID string, targetStatus int32, reason string, allowRecover bool) error
 }
 

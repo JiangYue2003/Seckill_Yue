@@ -23,6 +23,7 @@ type PersistReservationInput struct {
 	Quantity         int64
 	Amount           int64
 	SeckillPrice     int64
+	ShardNo          int32
 	Source           string
 	Reason           string
 	RedisOrderKey    string
@@ -67,6 +68,40 @@ type reservationLedger struct {
 	db *gorm.DB
 }
 
+type mySQLPoolConfig struct {
+	MaxIdleConns    int
+	MaxOpenConns    int
+	ConnMaxLifetime time.Duration
+}
+
+func normalizeMySQLPoolConfig(c config.Config) mySQLPoolConfig {
+	pool := mySQLPoolConfig{
+		MaxIdleConns:    12,
+		MaxOpenConns:    48,
+		ConnMaxLifetime: time.Hour,
+	}
+
+	if c.MySQL.MaxIdleConns > 0 {
+		pool.MaxIdleConns = c.MySQL.MaxIdleConns
+	}
+	if c.MySQL.MaxOpenConns > 0 {
+		pool.MaxOpenConns = c.MySQL.MaxOpenConns
+	}
+	if c.MySQL.ConnMaxLifetimeSeconds > 0 {
+		pool.ConnMaxLifetime = time.Duration(c.MySQL.ConnMaxLifetimeSeconds) * time.Second
+	}
+	if pool.MaxOpenConns < 1 {
+		pool.MaxOpenConns = 1
+	}
+	if pool.MaxIdleConns < 1 {
+		pool.MaxIdleConns = 1
+	}
+	if pool.MaxIdleConns > pool.MaxOpenConns {
+		pool.MaxIdleConns = pool.MaxOpenConns
+	}
+	return pool
+}
+
 func NewDB(c config.Config) (*gorm.DB, error) {
 	db, err := gorm.Open(mysql.Open(c.MySQL.DataSource), &gorm.Config{
 		Logger: newGormLogger(),
@@ -79,9 +114,10 @@ func NewDB(c config.Config) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database instance: %w", err)
 	}
-	sqlDB.SetMaxIdleConns(20)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(time.Hour)
+	pool := normalizeMySQLPoolConfig(c)
+	sqlDB.SetMaxIdleConns(pool.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(pool.MaxOpenConns)
+	sqlDB.SetConnMaxLifetime(pool.ConnMaxLifetime)
 
 	return db, nil
 }
@@ -117,6 +153,7 @@ func (m *reservationLedger) PersistReservation(ctx context.Context, in *PersistR
 			ProductId:        in.ProductID,
 			Quantity:         int(in.Quantity),
 			Amount:           in.Amount,
+			ShardNo:          in.ShardNo,
 			Status:           entity.ReservationStatusReserved,
 			Source:           in.Source,
 			Reason:           in.Reason,
@@ -149,6 +186,7 @@ func (m *reservationLedger) PersistReservation(ctx context.Context, in *PersistR
 			Quantity:         in.Quantity,
 			SeckillPrice:     in.SeckillPrice,
 			Amount:           in.Amount,
+			ShardNo:          in.ShardNo,
 			Status:           entity.ReservationStatusReserved,
 			ExpireAt:         in.ExpireAt,
 		})
@@ -299,6 +337,7 @@ func (m *reservationLedger) ReleaseReservation(ctx context.Context, in *ReleaseR
 			ProductID:        reservation.ProductId,
 			Quantity:         int64(reservation.Quantity),
 			Amount:           reservation.Amount,
+			ShardNo:          reservation.ShardNo,
 			FromStatus:       fromStatus,
 			Status:           in.TargetStatus,
 			Reason:           in.Reason,
@@ -399,6 +438,7 @@ func (m *reservationLedger) AdvanceReservation(ctx context.Context, in *AdvanceR
 			ProductID:        reservation.ProductId,
 			Quantity:         int64(reservation.Quantity),
 			Amount:           reservation.Amount,
+			ShardNo:          reservation.ShardNo,
 			FromStatus:       fromStatus,
 			Status:           in.TargetStatus,
 			Reason:           in.Reason,

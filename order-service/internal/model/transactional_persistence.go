@@ -12,6 +12,7 @@ type PersistSeckillOrderInput struct {
 	Quantity         int64
 	Amount           int64
 	SeckillPrice     int64
+	ShardNo          int32
 }
 
 type PersistSeckillOrderResult struct {

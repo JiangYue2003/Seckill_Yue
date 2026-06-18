@@ -160,6 +160,7 @@ func reservationToProto(reservation *entity.SeckillReservation) *seckill.Reserva
 		ProductId:     reservation.ProductId,
 		Quantity:      int64(reservation.Quantity),
 		Amount:        reservation.Amount,
+		ShardNo:       reservation.ShardNo,
 		Status:        toProtoReservationStatus(reservation.Status),
 		Reason:        reservation.Reason,
 		ExpireAt:      reservation.ExpireAt,

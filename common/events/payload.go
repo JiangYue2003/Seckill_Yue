@@ -30,6 +30,7 @@ type ReservationCreatedInput struct {
 	Quantity         int64
 	SeckillPrice     int64
 	Amount           int64
+	ShardNo          int32
 	Status           int32
 	ExpireAt         int64
 }
@@ -50,6 +51,7 @@ type OrderCreatedInput struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	ShardNo          int32
 	Status           int32
 	OrderType        int32
 	PayStatus        int32
@@ -72,6 +74,7 @@ type PaymentSucceededInput struct {
 	ProductID         int64
 	Quantity          int64
 	Amount            int64
+	ShardNo           int32
 	Status            int32
 	Channel           string
 	ThirdPartyTradeNo string
@@ -96,6 +99,7 @@ type OrderCompletedInput struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	ShardNo          int32
 	Status           int32
 	OrderType        int32
 	PayStatus        int32
@@ -118,6 +122,7 @@ type ReservationReleasedInput struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	ShardNo          int32
 	FromStatus       int32
 	Status           int32
 	Reason           string
@@ -140,6 +145,7 @@ type ReservationAdvancedInput struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	ShardNo          int32
 	FromStatus       int32
 	Status           int32
 	Reason           string
@@ -162,6 +168,7 @@ type PaymentRequestedInput struct {
 	ProductID        int64
 	Quantity         int64
 	Amount           int64
+	ShardNo          int32
 	Status           int32
 	Channel          string
 }
@@ -185,6 +192,7 @@ func BuildReservationCreatedPayload(in ReservationCreatedInput) (string, error) 
 		"quantity":           in.Quantity,
 		"seckill_price":      in.SeckillPrice,
 		"amount":             in.Amount,
+		"shard_no":           in.ShardNo,
 		"status":             in.Status,
 		"expire_at":          in.ExpireAt,
 	})
@@ -208,6 +216,7 @@ func BuildOrderCreatedPayload(in OrderCreatedInput) (string, error) {
 		"product_id":         in.ProductID,
 		"quantity":           in.Quantity,
 		"amount":             in.Amount,
+		"shard_no":           in.ShardNo,
 		"status":             in.Status,
 		"order_type":         in.OrderType,
 		"pay_status":         in.PayStatus,
@@ -233,6 +242,7 @@ func BuildPaymentSucceededPayload(in PaymentSucceededInput) (string, error) {
 		"product_id":           in.ProductID,
 		"quantity":             in.Quantity,
 		"amount":               in.Amount,
+		"shard_no":             in.ShardNo,
 		"status":               in.Status,
 		"channel":              in.Channel,
 		"third_party_trade_no": in.ThirdPartyTradeNo,
@@ -260,6 +270,7 @@ func BuildOrderCompletedPayload(in OrderCompletedInput) (string, error) {
 		"product_id":         in.ProductID,
 		"quantity":           in.Quantity,
 		"amount":             in.Amount,
+		"shard_no":           in.ShardNo,
 		"status":             in.Status,
 		"order_type":         in.OrderType,
 		"pay_status":         in.PayStatus,
@@ -285,6 +296,7 @@ func BuildReservationReleasedPayload(in ReservationReleasedInput) (string, error
 		"product_id":         in.ProductID,
 		"quantity":           in.Quantity,
 		"amount":             in.Amount,
+		"shard_no":           in.ShardNo,
 		"from_status":        in.FromStatus,
 		"status":             in.Status,
 		"reason":             in.Reason,
@@ -310,6 +322,7 @@ func BuildReservationAdvancedPayload(in ReservationAdvancedInput) (string, error
 		"product_id":         in.ProductID,
 		"quantity":           in.Quantity,
 		"amount":             in.Amount,
+		"shard_no":           in.ShardNo,
 		"from_status":        in.FromStatus,
 		"status":             in.Status,
 		"reason":             in.Reason,
@@ -335,6 +348,7 @@ func BuildPaymentRequestedPayload(in PaymentRequestedInput) (string, error) {
 		"product_id":         in.ProductID,
 		"quantity":           in.Quantity,
 		"amount":             in.Amount,
+		"shard_no":           in.ShardNo,
 		"status":             in.Status,
 		"channel":            in.Channel,
 	})

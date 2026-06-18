@@ -3,13 +3,14 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 )
 
-// newTestRedis 启动 miniredis 并返回连接到它的 SeckillRedis（single 模式）
 func newTestRedis(t *testing.T) *SeckillRedis {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -23,12 +24,10 @@ func newTestRedis(t *testing.T) *SeckillRedis {
 	return r
 }
 
-// initProduct 初始化一个秒杀商品到 Redis
 func initProduct(t *testing.T, r *SeckillRedis, spid int64, stock int64, startOffset, endOffset int64) {
 	t.Helper()
 	now := time.Now().Unix()
-	err := r.SetSeckillProductInfo(context.Background(), spid, 1001, 9900, "测试商品", now+startOffset, now+endOffset, 3600)
-	if err != nil {
+	if err := r.SetSeckillProductInfo(context.Background(), spid, 1001, 9900, "测试商品", now+startOffset, now+endOffset, 3600); err != nil {
 		t.Fatalf("SetSeckillProductInfo: %v", err)
 	}
 	if err := r.InitStock(context.Background(), spid, stock); err != nil {
@@ -36,139 +35,13 @@ func initProduct(t *testing.T, r *SeckillRedis, spid int64, stock int64, startOf
 	}
 }
 
-// ---- key 格式测试 ----
-
-func TestKeyFormat_HashTag(t *testing.T) {
-	spid := int64(101)
-	tests := []struct {
-		name string
-		key  string
-	}{
-		{"stock", keyStock(spid)},
-		{"user", keyUser(spid, 9527)},
-		{"order", keyOrder(spid, "S101_abc")},
-		{"info", keyInfo(spid)},
-		{"name", keyName(spid)},
-		{"qbucket", keyQBucket(spid, "inst-A")},
-		{"qlease", keyQLease(spid)},
-		{"qlock", keyQReaperLock(spid)},
-	}
-	tag := fmt.Sprintf("{%d}", spid)
-	for _, tc := range tests {
-		if len(tc.key) == 0 {
-			t.Errorf("%s: empty key", tc.name)
-		}
-		if tc.key[:len(tag)] != tag {
-			t.Errorf("%s: key %q does not start with hash tag %q", tc.name, tc.key, tag)
-		}
-	}
-}
-
-// ---- orderId 编码/解码测试 ----
-
-func TestFormatAndParseOrderId(t *testing.T) {
-	cases := []struct {
-		spid  int64
-		rawId string
-	}{
-		{101, "S1234567890"},
-		{999, "S9876543210"},
-		{1, "Sabc"},
-	}
-	for _, c := range cases {
-		encoded := FormatOrderId(c.spid, c.rawId)
-		got := ParseSpidFromOrderId(encoded)
-		if got != c.spid {
-			t.Errorf("spid=%d rawId=%s: encoded=%s parsed=%d", c.spid, c.rawId, encoded, got)
-		}
-	}
-}
-
-func TestParseSpidFromOrderId_OldFormat(t *testing.T) {
-	// 旧格式（不含 spid 编码）应返回 0
-	if got := ParseSpidFromOrderId("S1234567890"); got != 0 {
-		t.Errorf("old format should return 0, got %d", got)
-	}
-}
-
-// ---- NewSeckillRedis 单节点模式 ----
-
-func TestNewSeckillRedis_Single(t *testing.T) {
-	r := newTestRedis(t)
-	if err := r.client.Ping(context.Background()).Err(); err != nil {
-		t.Fatalf("ping failed: %v", err)
-	}
-}
-
-// ---- InitStock / GetStock ----
-
-func TestInitAndGetStock(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	if err := r.InitStock(ctx, 101, 500); err != nil {
-		t.Fatal(err)
-	}
-	stock, err := r.GetStock(ctx, 101)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stock != 500 {
-		t.Errorf("want 500, got %d", stock)
-	}
-}
-
-func TestRollbackStock(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	_ = r.InitStock(ctx, 101, 100)
-	if err := r.RollbackStock(ctx, 101, 5); err != nil {
-		t.Fatal(err)
-	}
-	stock, _ := r.GetStock(ctx, 101)
-	if stock != 105 {
-		t.Errorf("want 105, got %d", stock)
-	}
-}
-
-// ---- SetOrderInfo / GetOrderInfo ----
-
-func TestSetAndGetOrderInfo(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	spid := int64(101)
-	orderId := FormatOrderId(spid, "S9999")
-	info := &OrderInfo{
-		Status:      OrderStatusPending,
-		OrderId:     orderId,
-		ProductId:   1001,
-		Quantity:    1,
-		Amount:      9900,
-		ProductName: "测试商品",
-	}
-	if err := r.SetOrderInfo(ctx, spid, orderId, info, 3600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := r.GetOrderInfo(ctx, orderId)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got == nil {
-		t.Fatal("expected order info, got nil")
-	}
-	if got.Status != OrderStatusPending {
-		t.Errorf("want status %s, got %s", OrderStatusPending, got.Status)
-	}
-}
-
-// ---- DoSeckill 测试 ----
-
-func makeSeckillReq(spid, uid int64, stock int64, startOffset, endOffset int64) *SeckillRequest {
+func makeSeckillReq(spid, uid int64, startOffset, endOffset int64) *SeckillRequest {
 	now := time.Now().Unix()
-	orderId := FormatOrderId(spid, fmt.Sprintf("S%d", now))
+	orderID := FormatOrderId(spid, fmt.Sprintf("S%d_%d", uid, now))
 	return &SeckillRequest{
 		SeckillProductId: spid,
 		UserId:           uid,
-		OrderId:          orderId,
+		OrderId:          orderID,
 		Quantity:         1,
 		TTL:              300,
 		StartTime:        now + startOffset,
@@ -177,94 +50,355 @@ func makeSeckillReq(spid, uid int64, stock int64, startOffset, endOffset int64) 
 	}
 }
 
-func TestDoSeckill_Success(t *testing.T) {
+func TestKeyFormat_HashTag(t *testing.T) {
+	spid := int64(101)
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{"stock_total", keyStock(spid)},
+		{"stock_shard", keyShardStock(spid, 3)},
+		{"stock_meta", keyShardMeta(spid)},
+		{"user", keyUser(spid, 9527)},
+		{"order", keyOrder(spid, "S101_abc")},
+		{"info", keyInfo(spid)},
+		{"name", keyName(spid)},
+	}
+
+	tag := fmt.Sprintf("{%d}", spid)
+	for _, tc := range tests {
+		if tc.key == "" {
+			t.Fatalf("%s: empty key", tc.name)
+		}
+		if !strings.HasPrefix(tc.key, tag) {
+			t.Fatalf("%s: key %q does not start with hash tag %q", tc.name, tc.key, tag)
+		}
+	}
+}
+
+func TestFormatAndParseOrderId(t *testing.T) {
+	cases := []struct {
+		spid  int64
+		rawID string
+	}{
+		{101, "S1234567890"},
+		{999, "S9876543210"},
+		{1, "Sabc"},
+	}
+	for _, tc := range cases {
+		encoded := FormatOrderId(tc.spid, tc.rawID)
+		if got := ParseSpidFromOrderId(encoded); got != tc.spid {
+			t.Fatalf("spid=%d raw=%s encoded=%s parsed=%d", tc.spid, tc.rawID, encoded, got)
+		}
+	}
+}
+
+func TestParseSpidFromOrderId_OldFormat(t *testing.T) {
+	if got := ParseSpidFromOrderId("S1234567890"); got != 0 {
+		t.Fatalf("expected old format to return 0, got %d", got)
+	}
+}
+
+func TestNewSeckillRedis_Single(t *testing.T) {
+	r := newTestRedis(t)
+	if err := r.client.Ping(context.Background()).Err(); err != nil {
+		t.Fatalf("ping failed: %v", err)
+	}
+}
+
+func TestInitStockDistributesAcrossShards(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
 	spid := int64(101)
+
+	if err := r.InitStock(ctx, spid, 50); err != nil {
+		t.Fatal(err)
+	}
+
+	total, err := r.GetStock(ctx, spid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 50 {
+		t.Fatalf("expected total stock 50, got %d", total)
+	}
+
+	meta, err := r.client.Get(ctx, keyShardMeta(spid)).Int64()
+	if err != nil {
+		t.Fatalf("expected shard meta, err=%v", err)
+	}
+	if meta != defaultShardCount {
+		t.Fatalf("expected shard meta %d, got %d", defaultShardCount, meta)
+	}
+
+	var sum int64
+	for shardNo := int32(0); shardNo < defaultShardCount; shardNo++ {
+		got, err := r.client.Get(ctx, keyShardStock(spid, shardNo)).Int64()
+		if err != nil {
+			t.Fatalf("get shard stock failed: shard=%d err=%v", shardNo, err)
+		}
+		sum += got
+	}
+	if sum != 50 {
+		t.Fatalf("expected shard stock sum 50, got %d", sum)
+	}
+}
+
+func TestRollbackStockOnlyUpdatesTotal(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	spid := int64(102)
+
+	if err := r.InitStock(ctx, spid, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RollbackStock(ctx, spid, 5); err != nil {
+		t.Fatal(err)
+	}
+
+	total, _ := r.GetStock(ctx, spid)
+	if total != 105 {
+		t.Fatalf("expected total 105, got %d", total)
+	}
+}
+
+func TestRollbackShardStockUpdatesTotalAndShard(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	spid := int64(103)
+	shardNo := int32(7)
+
+	if err := r.InitStock(ctx, spid, 16); err != nil {
+		t.Fatal(err)
+	}
+	beforeShard, err := r.client.Get(ctx, keyShardStock(spid, shardNo)).Int64()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.RollbackShardStock(ctx, spid, shardNo, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	total, _ := r.GetStock(ctx, spid)
+	if total != 19 {
+		t.Fatalf("expected total 19, got %d", total)
+	}
+	afterShard, err := r.client.Get(ctx, keyShardStock(spid, shardNo)).Int64()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterShard != beforeShard+3 {
+		t.Fatalf("expected shard stock %d, got %d", beforeShard+3, afterShard)
+	}
+}
+
+func TestSetAndGetOrderInfo(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	spid := int64(104)
+	orderID := FormatOrderId(spid, "S9999")
+	info := &OrderInfo{
+		Status:      OrderStatusPending,
+		OrderId:     orderID,
+		ShardNo:     5,
+		ProductId:   1001,
+		Quantity:    1,
+		Amount:      9900,
+		ProductName: "测试商品",
+	}
+	if err := r.SetOrderInfo(ctx, spid, orderID, info, 3600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.GetOrderInfo(ctx, orderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected order info")
+	}
+	if got.Status != OrderStatusPending || got.OrderId != orderID || got.ShardNo != 5 {
+		t.Fatalf("unexpected order info: %+v", got)
+	}
+}
+
+func TestDoSeckill_Success(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	spid := int64(105)
 	initProduct(t, r, spid, 10, -10, 3600)
 
-	req := makeSeckillReq(spid, 9527, 10, -10, 3600)
+	req := makeSeckillReq(spid, 9527, -10, 3600)
 	result, err := r.DoSeckill(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Code != LuaResultSuccess {
-		t.Errorf("want success(%d), got %d", LuaResultSuccess, result.Code)
+		t.Fatalf("expected success, got %+v", result)
 	}
+	if result.ShardNo < 0 || result.ShardNo >= defaultShardCount {
+		t.Fatalf("expected shard in [0,%d), got %d", defaultShardCount, result.ShardNo)
+	}
+
 	stock, _ := r.GetStock(ctx, spid)
 	if stock != 9 {
-		t.Errorf("want stock=9, got %d", stock)
+		t.Fatalf("expected stock 9, got %d", stock)
+	}
+
+	rawStatus, err := r.GetOrderStatus(ctx, req.OrderId)
+	if err != nil {
+		t.Fatalf("GetOrderStatus() err=%v", err)
+	}
+	parts := strings.Split(rawStatus, ":")
+	if len(parts) != 3 {
+		t.Fatalf("expected status:orderId:shardNo, got %q", rawStatus)
+	}
+	if parts[0] != OrderStatusPending || parts[1] != req.OrderId {
+		t.Fatalf("unexpected status payload: %q", rawStatus)
+	}
+	if shardValue, err := strconv.Atoi(parts[2]); err != nil || int32(shardValue) != result.ShardNo {
+		t.Fatalf("expected shard %d in order status, got %q err=%v", result.ShardNo, parts[2], err)
 	}
 }
 
 func TestDoSeckill_StockOut(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
-	spid := int64(102)
+	spid := int64(106)
 	initProduct(t, r, spid, 0, -10, 3600)
 
-	req := makeSeckillReq(spid, 9527, 0, -10, 3600)
+	req := makeSeckillReq(spid, 9527, -10, 3600)
 	result, err := r.DoSeckill(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Code != LuaResultStockNotEnough {
-		t.Errorf("want stock_not_enough(%d), got %d", LuaResultStockNotEnough, result.Code)
+		t.Fatalf("expected stock not enough, got %+v", result)
 	}
 }
 
 func TestDoSeckill_AlreadyBought(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
-	spid := int64(103)
+	spid := int64(107)
 	initProduct(t, r, spid, 10, -10, 3600)
 
-	req := makeSeckillReq(spid, 9527, 10, -10, 3600)
-	r.DoSeckill(ctx, req) // 第一次成功
+	first := makeSeckillReq(spid, 9527, -10, 3600)
+	if _, err := r.DoSeckill(ctx, first); err != nil {
+		t.Fatal(err)
+	}
 
-	req2 := makeSeckillReq(spid, 9527, 10, -10, 3600) // 同一用户再次秒杀
-	result, err := r.DoSeckill(ctx, req2)
+	second := makeSeckillReq(spid, 9527, -10, 3600)
+	result, err := r.DoSeckill(ctx, second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Code != LuaResultAlreadyBought {
-		t.Errorf("want already_bought(%d), got %d", LuaResultAlreadyBought, result.Code)
+		t.Fatalf("expected already bought, got %+v", result)
 	}
 }
 
 func TestDoSeckill_NotStarted(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
-	spid := int64(104)
-	initProduct(t, r, spid, 10, 3600, 7200) // 活动未开始
+	spid := int64(108)
+	initProduct(t, r, spid, 10, 3600, 7200)
 
-	req := makeSeckillReq(spid, 9527, 10, 3600, 7200)
+	req := makeSeckillReq(spid, 9527, 3600, 7200)
 	result, err := r.DoSeckill(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Code != LuaResultNotStarted {
-		t.Errorf("want not_started(%d), got %d", LuaResultNotStarted, result.Code)
+		t.Fatalf("expected not started, got %+v", result)
 	}
 }
 
 func TestDoSeckill_Ended(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
-	spid := int64(105)
-	initProduct(t, r, spid, 10, -7200, -3600) // 活动已结束
+	spid := int64(109)
+	initProduct(t, r, spid, 10, -7200, -3600)
 
-	req := makeSeckillReq(spid, 9527, 10, -7200, -3600)
+	req := makeSeckillReq(spid, 9527, -7200, -3600)
 	result, err := r.DoSeckill(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Code != LuaResultEnded {
-		t.Errorf("want ended(%d), got %d", LuaResultEnded, result.Code)
+		t.Fatalf("expected ended, got %+v", result)
 	}
 }
 
-// ---- CompensateFailedOrder 测试 ----
+func TestDoSeckill_UsesFallbackShard(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	spid := int64(110)
+	if err := r.InitStock(ctx, spid, 16); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetSeckillProductInfo(ctx, spid, 1001, 9900, "测试商品", time.Now().Unix()-10, time.Now().Unix()+3600, 3600); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := shardNoForUser(1)
+	if err := r.client.Set(ctx, keyShardStock(spid, primary), 0, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := makeSeckillReq(spid, 1, -10, 3600)
+	result, err := r.DoSeckill(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Code != LuaResultSuccess {
+		t.Fatalf("expected success with fallback shard, got %+v", result)
+	}
+	if result.ShardNo == primary {
+		t.Fatalf("expected fallback shard, got primary shard %d", primary)
+	}
+}
+
+func TestDoSeckill_TailDrainScansAllShards(t *testing.T) {
+	r := newTestRedis(t)
+	ctx := context.Background()
+	spid := int64(111)
+	if err := r.InitStock(ctx, spid, 16); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetSeckillProductInfo(ctx, spid, 1001, 9900, "测试商品", time.Now().Unix()-10, time.Now().Unix()+3600, 3600); err != nil {
+		t.Fatal(err)
+	}
+
+	primary := shardNoForUser(42)
+	probeOrder := shardProbeOrder(primary)
+	for i := 0; i < defaultProbeShardCount; i++ {
+		if err := r.client.Set(ctx, keyShardStock(spid, probeOrder[i]), 0, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := r.client.Set(ctx, keyStock(spid), defaultTailDrainThreshold, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	fallbackOutsideProbe := probeOrder[defaultProbeShardCount]
+	if err := r.client.Set(ctx, keyShardStock(spid, fallbackOutsideProbe), 1, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := makeSeckillReq(spid, 42, -10, 3600)
+	result, err := r.DoSeckill(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Code != LuaResultSuccess {
+		t.Fatalf("expected tail-drain success, got %+v", result)
+	}
+	if result.ShardNo != fallbackOutsideProbe {
+		t.Fatalf("expected shard %d, got %d", fallbackOutsideProbe, result.ShardNo)
+	}
+}
 
 func TestCompensate_Compensated(t *testing.T) {
 	r := newTestRedis(t)
@@ -272,20 +406,36 @@ func TestCompensate_Compensated(t *testing.T) {
 	spid := int64(201)
 	initProduct(t, r, spid, 10, -10, 3600)
 
-	req := makeSeckillReq(spid, 9527, 10, -10, 3600)
-	r.DoSeckill(ctx, req)
+	req := makeSeckillReq(spid, 9527, -10, 3600)
+	result, err := r.DoSeckill(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	stockBefore, _ := r.GetStock(ctx, spid)
-	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, 86400)
+	shardBefore, err := r.client.Get(ctx, keyShardStock(spid, result.ShardNo)).Int64()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, result.ShardNo, 86400)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if code != CompensateResultCompensated {
-		t.Errorf("want compensated(%d), got %d", CompensateResultCompensated, code)
+		t.Fatalf("expected compensated, got %d", code)
 	}
+
 	stockAfter, _ := r.GetStock(ctx, spid)
 	if stockAfter != stockBefore+1 {
-		t.Errorf("stock should increase by 1: before=%d after=%d", stockBefore, stockAfter)
+		t.Fatalf("expected total stock restored by 1, before=%d after=%d", stockBefore, stockAfter)
+	}
+	shardAfter, err := r.client.Get(ctx, keyShardStock(spid, result.ShardNo)).Int64()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shardAfter != shardBefore+1 {
+		t.Fatalf("expected shard stock restored by 1, before=%d after=%d", shardBefore, shardAfter)
 	}
 }
 
@@ -295,16 +445,21 @@ func TestCompensate_AlreadyFailed(t *testing.T) {
 	spid := int64(202)
 	initProduct(t, r, spid, 10, -10, 3600)
 
-	req := makeSeckillReq(spid, 9527, 10, -10, 3600)
-	r.DoSeckill(ctx, req)
-	r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, 86400) // 第一次
+	req := makeSeckillReq(spid, 9527, -10, 3600)
+	result, err := r.DoSeckill(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, 86400) // 第二次
+	if _, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, result.ShardNo, 86400); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, result.ShardNo, 86400)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if code != CompensateResultAlreadyFailed {
-		t.Errorf("want already_failed(%d), got %d", CompensateResultAlreadyFailed, code)
+		t.Fatalf("expected already failed, got %d", code)
 	}
 }
 
@@ -314,136 +469,42 @@ func TestCompensate_AlreadySuccess(t *testing.T) {
 	spid := int64(203)
 	initProduct(t, r, spid, 10, -10, 3600)
 
-	req := makeSeckillReq(spid, 9527, 10, -10, 3600)
-	r.DoSeckill(ctx, req)
-	// 手动将订单状态设为 success
-	r.SetOrderStatus(ctx, spid, req.OrderId, OrderStatusSuccess, 86400)
+	req := makeSeckillReq(spid, 9527, -10, 3600)
+	result, err := r.DoSeckill(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetOrderStatus(ctx, spid, req.OrderId, OrderStatusSuccess, 86400); err != nil {
+		t.Fatal(err)
+	}
 
-	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, 86400)
+	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, result.ShardNo, 86400)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if code != CompensateResultAlreadySuccess {
-		t.Errorf("want already_success(%d), got %d", CompensateResultAlreadySuccess, code)
+		t.Fatalf("expected already success, got %d", code)
 	}
 }
 
-// ---- EnsureQuota / DoSeckillWithQuota / ReapExpiredQuota 测试 ----
-
-func TestEnsureQuota_Allocates(t *testing.T) {
+func TestCompensate_ShardMismatchFails(t *testing.T) {
 	r := newTestRedis(t)
 	ctx := context.Background()
-	spid := int64(301)
-	_ = r.InitStock(ctx, spid, 1000)
+	spid := int64(204)
+	initProduct(t, r, spid, 10, -10, 3600)
 
-	allocated, bucket, err := r.EnsureQuota(ctx, spid, "inst-A", 200, 30)
+	req := makeSeckillReq(spid, 9527, -10, 3600)
+	result, err := r.DoSeckill(ctx, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allocated != 200 {
-		t.Errorf("want allocated=200, got %d", allocated)
-	}
-	if bucket != 200 {
-		t.Errorf("want bucket=200, got %d", bucket)
-	}
-	stock, _ := r.GetStock(ctx, spid)
-	if stock != 800 {
-		t.Errorf("want global stock=800, got %d", stock)
-	}
-}
 
-func TestEnsureQuota_GlobalEmpty(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	spid := int64(302)
-	_ = r.InitStock(ctx, spid, 0)
-
-	allocated, _, err := r.EnsureQuota(ctx, spid, "inst-A", 200, 30)
-	if err != nil {
-		t.Fatal(err)
+	wrongShard := (result.ShardNo + 1) % defaultShardCount
+	code, _, err := r.CompensateFailedOrder(ctx, req.OrderId, spid, req.UserId, 1, wrongShard, 86400)
+	if err == nil {
+		t.Fatal("expected shard mismatch error")
 	}
-	if allocated != 0 {
-		t.Errorf("want allocated=0, got %d", allocated)
-	}
-}
-
-func TestDoSeckillWithQuota_Success(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	spid := int64(303)
-	initProduct(t, r, spid, 1000, -10, 3600)
-	r.EnsureQuota(ctx, spid, "inst-A", 200, 30)
-
-	req := makeSeckillReq(spid, 9527, 1000, -10, 3600)
-	result, err := r.DoSeckillWithQuota(ctx, req, "inst-A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Code != LuaResultSuccess {
-		t.Errorf("want success(%d), got %d", LuaResultSuccess, result.Code)
-	}
-}
-
-func TestDoSeckillWithQuota_BucketEmpty(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	spid := int64(304)
-	initProduct(t, r, spid, 1000, -10, 3600)
-	// 不分配配额，桶为空
-
-	req := makeSeckillReq(spid, 9527, 1000, -10, 3600)
-	result, err := r.DoSeckillWithQuota(ctx, req, "inst-A")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Code != LuaResultStockNotEnough {
-		t.Errorf("want stock_not_enough(%d), got %d", LuaResultStockNotEnough, result.Code)
-	}
-}
-
-func TestReapExpiredQuota(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-	spid := int64(401)
-	_ = r.InitStock(ctx, spid, 1000)
-
-	// 分配配额，TTL=1s（租约 score = now+1）
-	r.EnsureQuota(ctx, spid, "inst-A", 200, 1)
-
-	// 等待租约真实过期（score < now）
-	time.Sleep(2 * time.Second)
-
-	reclaimed, err := r.ReapExpiredQuotaForProduct(ctx, spid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reclaimed != 200 {
-		t.Errorf("want reclaimed=200, got %d", reclaimed)
-	}
-	stock, _ := r.GetStock(ctx, spid)
-	if stock != 1000 {
-		t.Errorf("want stock restored to 1000, got %d", stock)
-	}
-}
-
-func TestReapAllProducts_UsesLocalStock(t *testing.T) {
-	r := newTestRedis(t)
-	ctx := context.Background()
-
-	// 初始化两个商品，分配配额，TTL=1s
-	for _, spid := range []int64{501, 502} {
-		_ = r.InitStock(ctx, spid, 500)
-		r.EnsureQuota(ctx, spid, "inst-A", 100, 1)
-		r.localStock.Store(spid, nil)
-	}
-
-	time.Sleep(2 * time.Second)
-
-	total, err := r.ReapExpiredQuotaForAllProducts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 200 {
-		t.Errorf("want total reclaimed=200, got %d", total)
+	if code != CompensateResultInvalidStatus {
+		t.Fatalf("expected invalid status code, got %d", code)
 	}
 }
