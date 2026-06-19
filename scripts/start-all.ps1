@@ -6,7 +6,18 @@
 #   - MySQL 8.0+ (port 3306, password root123456)
 #   - Redis      (port 6379)
 #   - RabbitMQ   (port 5672)
+# Default launch profile:
+#   - seckill-service replicas = 2
+#   - order-service replicas   = 2
+# Override with:
+#   .\scripts\start-all.ps1 -SeckillReplicas 1 -OrderReplicas 1
 # ============================================
+
+param(
+    [int]$SeckillReplicas = 2,
+    [int]$OrderReplicas = 2,
+    [switch]$SkipMain
+)
 
 $ErrorActionPreference = "Stop"
 $BASE_DIR = Split-Path -Parent $PSScriptRoot
@@ -14,6 +25,18 @@ $BASE_DIR = Split-Path -Parent $PSScriptRoot
 function Write-ColorOutput {
     param($Message, $Color = "White")
     Write-Host $Message -ForegroundColor $Color
+}
+
+function Get-ReplicaValue {
+    param(
+        [int]$Value,
+        [int]$DefaultValue
+    )
+
+    if ($Value -le 0) {
+        return $DefaultValue
+    }
+    return $Value
 }
 
 function Stop-AllServices {
@@ -53,6 +76,91 @@ function Test-Port {
         Write-ColorOutput "  [!] $Name ($Port) - NOT running" "Red"
         return $false
     }
+}
+
+function New-ServiceInstance {
+    param(
+        [string]$BaseName,
+        [string]$Dir,
+        [string]$ExeName,
+        [int]$BasePort,
+        [int]$BaseMetricsPort,
+        [int]$InstanceNumber
+    )
+
+    $instanceName = $BaseName
+    $port = $BasePort
+    $metricsPort = $BaseMetricsPort
+    $args = @()
+
+    if ($InstanceNumber -gt 1) {
+        $instanceName = "$BaseName-$InstanceNumber"
+        $port = Get-ReplicaPort -BasePort $BasePort -InstanceNumber $InstanceNumber
+        $metricsPort = Get-ReplicaPort -BasePort $BaseMetricsPort -InstanceNumber $InstanceNumber
+        $args += "--port=$port"
+        $args += "--metrics-port=$metricsPort"
+    }
+
+    [PSCustomObject]@{
+        Name        = $instanceName
+        BaseName    = $BaseName
+        Dir         = $Dir
+        ExeName     = $ExeName
+        Port        = $port
+        MetricsPort = $metricsPort
+        Args        = $args
+    }
+}
+
+function Get-ReplicaPort {
+    param(
+        [int]$BasePort,
+        [int]$InstanceNumber
+    )
+
+    if ($InstanceNumber -le 1) {
+        return $BasePort
+    }
+
+    return $BasePort + (10000 * ($InstanceNumber - 1))
+}
+
+function Add-ServiceReplicas {
+    param(
+        [System.Collections.ArrayList]$Plan,
+        [string]$BaseName,
+        [string]$Dir,
+        [string]$ExeName,
+        [int]$BasePort,
+        [int]$BaseMetricsPort,
+        [int]$Replicas
+    )
+
+    for ($instance = 1; $instance -le $Replicas; $instance++) {
+        [void]$Plan.Add((New-ServiceInstance `
+            -BaseName $BaseName `
+            -Dir $Dir `
+            -ExeName $ExeName `
+            -BasePort $BasePort `
+            -BaseMetricsPort $BaseMetricsPort `
+            -InstanceNumber $instance))
+    }
+}
+
+function Get-ServiceLaunchPlan {
+    param(
+        [int]$SeckillReplicas = 2,
+        [int]$OrderReplicas = 2
+    )
+
+    $plan = [System.Collections.ArrayList]::new()
+
+    Add-ServiceReplicas -Plan $plan -BaseName "user-service" -Dir (Join-Path $BASE_DIR "user-service") -ExeName "user-service.exe" -BasePort 9081 -BaseMetricsPort 9181 -Replicas 1
+    Add-ServiceReplicas -Plan $plan -BaseName "product-service" -Dir (Join-Path $BASE_DIR "product-service") -ExeName "product-service.exe" -BasePort 9082 -BaseMetricsPort 9182 -Replicas 1
+    Add-ServiceReplicas -Plan $plan -BaseName "seckill-service" -Dir (Join-Path $BASE_DIR "seckill-service") -ExeName "seckill-service.exe" -BasePort 9083 -BaseMetricsPort 9183 -Replicas (Get-ReplicaValue -Value $SeckillReplicas -DefaultValue 1)
+    Add-ServiceReplicas -Plan $plan -BaseName "order-service" -Dir (Join-Path $BASE_DIR "order-service") -ExeName "order-service.exe" -BasePort 9084 -BaseMetricsPort 9184 -Replicas (Get-ReplicaValue -Value $OrderReplicas -DefaultValue 1)
+
+    return $plan
 }
 
 function Test-BuildRequired {
@@ -97,7 +205,8 @@ function Start-ServiceProcess {
         $Name,
         $Dir,
         $ExeName,
-        $Port
+        $Port,
+        [string[]]$ArgumentList = @()
     )
 
     $runtimeLogDir = Join-Path $BASE_DIR "logs\\runtime"
@@ -126,6 +235,7 @@ function Start-ServiceProcess {
 
     Write-ColorOutput "  [>] Starting $Name ..." "Cyan"
     $proc = Start-Process -FilePath $exePath `
+        -ArgumentList $ArgumentList `
         -WorkingDirectory $Dir `
         -NoNewWindow `
         -PassThru `
@@ -146,107 +256,99 @@ function Start-ServiceProcess {
     }
 }
 
-# ============================================
-# MAIN
-# ============================================
+function Invoke-Main {
+    Write-ColorOutput "`n============================================" "White"
+    Write-ColorOutput "    Seckill System - One-Click Start" "Cyan"
+    Write-ColorOutput "============================================`n" "White"
 
-Write-ColorOutput "`n============================================" "White"
-Write-ColorOutput "    Seckill System - One-Click Start" "Cyan"
-Write-ColorOutput "============================================`n" "White"
+    Stop-AllServices
 
-Stop-AllServices
+    Write-ColorOutput "[CHECK] Infrastructure...`n" "White"
 
-Write-ColorOutput "[CHECK] Infrastructure...`n" "White"
+    $infraPorts = @(
+        @{ Port = 2379; Name = "Etcd" },
+        @{ Port = 3306; Name = "MySQL" },
+        @{ Port = 6379; Name = "Redis" },
+        @{ Port = 5672; Name = "RabbitMQ" }
+    )
 
-$infraPorts = @(
-    @{ Port = 2379; Name = "Etcd" },
-    @{ Port = 3306; Name = "MySQL" },
-    @{ Port = 6379; Name = "Redis" },
-    @{ Port = 5672; Name = "RabbitMQ" }
-)
-
-$infraOk = $true
-foreach ($infra in $infraPorts) {
-    $ok = Test-Port -Port $infra.Port -Name $infra.Name
-    if (-not $ok) { $infraOk = $false }
-}
-
-if (-not $infraOk) {
-    Write-ColorOutput "`n[WARN] Some infrastructure not running. Please start:" "DarkYellow"
-    Write-ColorOutput "   - Etcd      localhost:2379" "DarkYellow"
-    Write-ColorOutput "   - MySQL     localhost:3306" "DarkYellow"
-    Write-ColorOutput "   - Redis     localhost:6379" "DarkYellow"
-    Write-ColorOutput "   - RabbitMQ   localhost:5672`n" "DarkYellow"
-    $cont = Read-Host "Continue launching RPC services? (y/N)"
-    if ($cont -ne "y" -and $cont -ne "Y") {
-        Write-ColorOutput "Cancelled." "Gray"
-        exit 0
+    $infraOk = $true
+    foreach ($infra in $infraPorts) {
+        $ok = Test-Port -Port $infra.Port -Name $infra.Name
+        if (-not $ok) { $infraOk = $false }
     }
-}
 
-Write-ColorOutput "`n[START] Launching RPC services...`n" "White"
-
-$services = @(
-    @{ Name = "user-service";    Dir = Join-Path $BASE_DIR "user-service";    ExeName = "user-service.exe";    Port = 9081 },
-    @{ Name = "product-service"; Dir = Join-Path $BASE_DIR "product-service"; ExeName = "product-service.exe"; Port = 9082 },
-    @{ Name = "seckill-service"; Dir = Join-Path $BASE_DIR "seckill-service"; ExeName = "seckill-service.exe"; Port = 9083 },
-    @{ Name = "order-service";  Dir = Join-Path $BASE_DIR "order-service";   ExeName = "order-service.exe";   Port = 9084 }
-)
-
-$runningProcesses = @()
-foreach ($svc in $services) {
-    $proc = Start-ServiceProcess -Name $svc.Name -Dir $svc.Dir -ExeName $svc.ExeName -Port $svc.Port
-    if ($proc) { $runningProcesses += $proc }
-    Start-Sleep -Milliseconds 300
-}
-
-Write-ColorOutput "`n[START] Launching Gateway...`n" "White"
-
-$gatewayProc = Start-ServiceProcess -Name "gateway" -Dir (Join-Path $BASE_DIR "gateway") -ExeName "gateway.exe" -Port 8888
-if ($gatewayProc) { $runningProcesses += $gatewayProc }
-
-# ============================================
-# SUMMARY
-# ============================================
-
-Write-ColorOutput "`n============================================" "White"
-Write-ColorOutput "         All Services Started" "Green"
-Write-ColorOutput "============================================" "White"
-
-Write-ColorOutput "`nService Ports:" "White"
-Write-ColorOutput "  Gateway   HTTP  -> http://localhost:8888" "Cyan"
-Write-ColorOutput "  User      RPC   -> etcd: user.rpc" "Cyan"
-Write-ColorOutput "  Product   RPC   -> etcd: product.rpc" "Cyan"
-Write-ColorOutput "  Seckill   RPC   -> etcd: seckill.rpc" "Cyan"
-Write-ColorOutput "  Order     RPC   -> etcd: order.rpc" "Cyan"
-Write-ColorOutput "  Etcd            -> localhost:2379" "Cyan"
-Write-ColorOutput "  Redis           -> localhost:6379" "Cyan"
-Write-ColorOutput "  RabbitMQ       -> localhost:5672" "Cyan"
-Write-ColorOutput "  MySQL          -> localhost:3306`n" "Cyan"
-
-Write-ColorOutput "Running processes ($($runningProcesses.Count)):" "White"
-foreach ($p in $runningProcesses) {
-    Write-ColorOutput "  [$($p.Id)] $($p.ProcessName)" "Gray"
-}
-
-Write-ColorOutput "`nPress Ctrl+C to stop all services.`n" "DarkGray"
-
-try {
-    while ($true) {
-        Start-Sleep -Seconds 3
-        $exited = $runningProcesses | Where-Object { $_.HasExited }
-        if ($exited) {
-            Write-ColorOutput "`n[!] Process exited:" "DarkYellow"
-            foreach ($e in $exited) {
-                Write-ColorOutput "    $($e.ProcessName) (PID: $($e.Id)) exited with code $($e.ExitCode)" "Red"
-                $runningProcesses = @($runningProcesses | Where-Object { $_ -ne $e })
-            }
-            if ($runningProcesses.Count -eq 0) {
-                Write-ColorOutput "`nAll services stopped." "Yellow"
-                break
-            }
+    if (-not $infraOk) {
+        Write-ColorOutput "`n[WARN] Some infrastructure not running. Please start:" "DarkYellow"
+        Write-ColorOutput "   - Etcd      localhost:2379" "DarkYellow"
+        Write-ColorOutput "   - MySQL     localhost:3306" "DarkYellow"
+        Write-ColorOutput "   - Redis     localhost:6379" "DarkYellow"
+        Write-ColorOutput "   - RabbitMQ  localhost:5672`n" "DarkYellow"
+        $cont = Read-Host "Continue launching RPC services? (y/N)"
+        if ($cont -ne "y" -and $cont -ne "Y") {
+            Write-ColorOutput "Cancelled." "Gray"
+            exit 0
         }
     }
-} finally {
-    Stop-AllServices
+
+    Write-ColorOutput "`n[START] Launching RPC services...`n" "White"
+
+    $services = Get-ServiceLaunchPlan -SeckillReplicas $SeckillReplicas -OrderReplicas $OrderReplicas
+
+    $runningProcesses = @()
+    foreach ($svc in $services) {
+        $proc = Start-ServiceProcess -Name $svc.Name -Dir $svc.Dir -ExeName $svc.ExeName -Port $svc.Port -ArgumentList $svc.Args
+        if ($proc) { $runningProcesses += $proc }
+        Start-Sleep -Milliseconds 300
+    }
+
+    Write-ColorOutput "`n[START] Launching Gateway...`n" "White"
+
+    $gatewayProc = Start-ServiceProcess -Name "gateway" -Dir (Join-Path $BASE_DIR "gateway") -ExeName "gateway.exe" -Port 8888
+    if ($gatewayProc) { $runningProcesses += $gatewayProc }
+
+    Write-ColorOutput "`n============================================" "White"
+    Write-ColorOutput "         All Services Started" "Green"
+    Write-ColorOutput "============================================" "White"
+
+    Write-ColorOutput "`nService Ports:" "White"
+    Write-ColorOutput "  Gateway   HTTP  -> http://localhost:8888" "Cyan"
+    foreach ($svc in $services) {
+        Write-ColorOutput ("  {0,-17} -> {1}" -f $svc.Name, "127.0.0.1:$($svc.Port)") "Cyan"
+    }
+    Write-ColorOutput "  Etcd             -> localhost:2379" "Cyan"
+    Write-ColorOutput "  Redis            -> localhost:6379" "Cyan"
+    Write-ColorOutput "  RabbitMQ         -> localhost:5672" "Cyan"
+    Write-ColorOutput "  MySQL            -> localhost:3306`n" "Cyan"
+
+    Write-ColorOutput "Running processes ($($runningProcesses.Count)):" "White"
+    foreach ($p in $runningProcesses) {
+        Write-ColorOutput "  [$($p.Id)] $($p.ProcessName)" "Gray"
+    }
+
+    Write-ColorOutput "`nPress Ctrl+C to stop all services.`n" "DarkGray"
+
+    try {
+        while ($true) {
+            Start-Sleep -Seconds 3
+            $exited = $runningProcesses | Where-Object { $_.HasExited }
+            if ($exited) {
+                Write-ColorOutput "`n[!] Process exited:" "DarkYellow"
+                foreach ($e in $exited) {
+                    Write-ColorOutput "    $($e.ProcessName) (PID: $($e.Id)) exited with code $($e.ExitCode)" "Red"
+                    $runningProcesses = @($runningProcesses | Where-Object { $_ -ne $e })
+                }
+                if ($runningProcesses.Count -eq 0) {
+                    Write-ColorOutput "`nAll services stopped." "Yellow"
+                    break
+                }
+            }
+        }
+    } finally {
+        Stop-AllServices
+    }
+}
+
+if (-not $SkipMain) {
+    Invoke-Main
 }

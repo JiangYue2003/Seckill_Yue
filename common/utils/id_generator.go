@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -126,14 +127,49 @@ func GenerateOrderId(prefix string) string {
 }
 
 // GetSnowflake 获取全局雪花算法实例（线程安全）
-// 注意：生产环境应使用单例模式，避免重复创建
+// 注意：生产环境应在进程启动时调用 InitSnowflake 注入实例唯一 workerId。
 var globalSnowflake *Snowflake
-var snowflakeOnce sync.Once
+var snowflakeMu sync.Mutex
+
+// InitSnowflake 初始化全局雪花算法实例。
+// 同一进程内重复使用相同 workerId 初始化是幂等的；若尝试切换为不同 workerId，则返回错误。
+func InitSnowflake(workerId int64) error {
+	sf, err := NewSnowflake(workerId)
+	if err != nil {
+		return err
+	}
+
+	snowflakeMu.Lock()
+	defer snowflakeMu.Unlock()
+
+	if globalSnowflake != nil {
+		if globalSnowflake.workerId == workerId {
+			return nil
+		}
+		return fmt.Errorf("snowflake already initialized with workerId=%d", globalSnowflake.workerId)
+	}
+
+	globalSnowflake = sf
+	return nil
+}
+
+// WorkerIDFromPort derives a stable workerId from a service listen port.
+// This keeps single-host multi-instance deployments unique without extra config.
+func WorkerIDFromPort(port int) (int64, error) {
+	if port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("invalid port: %d", port)
+	}
+	return int64(port % (maxWorkerId + 1)), nil
+}
 
 func GetSnowflake() *Snowflake {
-	snowflakeOnce.Do(func() {
-		globalSnowflake, _ = NewSnowflake(0)
-	})
+	snowflakeMu.Lock()
+	defer snowflakeMu.Unlock()
+
+	if globalSnowflake == nil {
+		globalSnowflake = NewSnowflakeDefault()
+	}
+
 	return globalSnowflake
 }
 

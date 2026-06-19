@@ -12,6 +12,7 @@ import (
 
 	"seckill-mall/common/logutil"
 	"seckill-mall/common/order"
+	"seckill-mall/common/utils"
 	"seckill-mall/order-service/internal/config"
 	"seckill-mall/order-service/internal/server"
 	"seckill-mall/order-service/internal/svc"
@@ -27,6 +28,7 @@ import (
 var configFile = flag.String("f", "etc/order.yaml", "the config file")
 var port = flag.Int("port", 0, "override rpc listen port, e.g. --port=19084")
 var metricsPort = flag.Int("metrics-port", 0, "override prometheus port, e.g. --metrics-port=19184")
+var workerID = flag.Int64("worker-id", -1, "override snowflake worker id, e.g. --worker-id=124")
 
 func main() {
 	flag.Parse()
@@ -34,6 +36,7 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c)
 	overridePorts(&c)
+	initSnowflakeWorker(c.ListenOn)
 	logx.MustSetup(c.Log)
 	defer logx.Close()
 	logutil.SetupInstanceFields(c.Log.ServiceName, *port)
@@ -117,4 +120,26 @@ func replacePort(addr string, newPort int) (string, error) {
 		return "", err
 	}
 	return net.JoinHostPort(host, strconv.Itoa(newPort)), nil
+}
+
+func initSnowflakeWorker(listenOn string) {
+	resolvedWorkerID := *workerID
+	if resolvedWorkerID < 0 {
+		_, portStr, err := net.SplitHostPort(listenOn)
+		if err != nil {
+			panic(fmt.Sprintf("invalid ListenOn for worker id derivation: %v", err))
+		}
+		listenPort, err := strconv.Atoi(portStr)
+		if err != nil {
+			panic(fmt.Sprintf("invalid listen port for worker id derivation: %v", err))
+		}
+		resolvedWorkerID, err = utils.WorkerIDFromPort(listenPort)
+		if err != nil {
+			panic(fmt.Sprintf("derive worker id failed: %v", err))
+		}
+	}
+
+	if err := utils.InitSnowflake(resolvedWorkerID); err != nil {
+		panic(fmt.Sprintf("init snowflake failed: %v", err))
+	}
 }

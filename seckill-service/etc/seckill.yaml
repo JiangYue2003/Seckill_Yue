@@ -31,6 +31,9 @@ Prometheus:
 
 MySQL:
   DataSource: root:Zz123456@tcp(localhost:3306)/seckill_mall?charset=utf8mb4&parseTime=True&loc=Local
+  MaxIdleConns: 12
+  MaxOpenConns: 48
+  ConnMaxLifetimeSeconds: 3600
 
 Redis:
   Host: localhost:6379

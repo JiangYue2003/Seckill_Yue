@@ -8,7 +8,10 @@ type Config struct {
 	zrpc.RpcServerConf
 
 	MySQL struct {
-		DataSource string
+		DataSource             string
+		MaxIdleConns           int   `json:",optional"`
+		MaxOpenConns           int   `json:",optional"`
+		ConnMaxLifetimeSeconds int64 `json:",optional"`
 	}
 
 	// Redis 配置
