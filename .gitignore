@@ -69,3 +69,5 @@ temp/
 .codex
 .cursor
 .gocache
+/scripts/start-all.tests.ps1
+/Typora_Hook_Log.txt
