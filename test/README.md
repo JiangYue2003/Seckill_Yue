@@ -1,110 +1,98 @@
-# 秒杀系统测试
+# 测试目录说明
 
-本目录包含秒杀系统的功能测试和性能测试代码。
+本目录下的工具已经分成两类：
 
-## 目录结构
+- 当前主验证路径：围绕 `seckill-service` 直连 `gRPC` 的 benchmark / 回归
+- 兼容或对比工具：保留 `gateway`、老式 Redis 夹具、HTTP 冒烟脚本
 
-```
-test/
-├── seckill-functional-test/   # 功能测试
-│   ├── main.go               # 入口文件
-│   ├── test_cases.go         # 测试用例
-│   └── go.mod                # 依赖管理
-│
-└── seckill-benchmark-test/   # 性能测试
-    ├── main.go               # 入口文件
-    ├── metrics.go            # 指标收集
-    └── go.mod                # 依赖管理
+不要默认所有测试工具都已经和“物理库存分片 + RabbitMQ 单轨 + 直接 gRPC 基准”完全同步。
 
-scripts/
-├── init-test-data.sh         # 初始化测试数据
-└── cleanup-test-data.sh       # 清理测试数据
-```
+## 1. 推荐使用顺序
 
-## 前置条件
+### 1.1 首选：秒杀核心吞吐
 
-运行测试前请确保以下服务已启动：
+目录：`test/seckill-benchmark-test`
 
-1. **Redis** - `localhost:6379`
-2. **RabbitMQ** - `localhost:5672`
-3. **MySQL** - `localhost:3306`
-4. **etcd** - `localhost:2379`
-5. **秒杀微服务**:
-   - seckill-service (端口 8083)
-   - order-service (端口 8084)
-   - product-service (端口 8082)
+这是当前最应该使用的性能测试工具，直接打：
 
-## 快速开始
+`client -> seckill-service (gRPC)`
 
-### 1. 初始化测试数据
+如果你通过 `scripts/start-all.ps1` 以默认副本启动，推荐：
 
-```bash
-# 使用默认 Redis 配置
-bash scripts/init-test-data.sh
-
-# 或指定 Redis 地址
-REDIS_HOST=localhost:6379 bash scripts/init-test-data.sh
+```powershell
+cd test\seckill-benchmark-test
+go run . --targets="127.0.0.1:9083,127.0.0.1:19083" --pool-size=128 --mode=burst --ideal
 ```
 
-### 2. 运行功能测试
+### 1.2 其次：评估 gateway 开销
 
-```bash
-cd test/seckill-functional-test
-go mod tidy
+目录：
+
+- `test/gateway-benchmark-test`
+- `test/k6-seckill-test`
+
+这些工具主要回答：
+
+- JWT 鉴权带来多少开销
+- `gateway -> seckill-service` 半链路吞吐是多少
+
+它们是对比链路，不是当前主基准口径。
+
+### 1.3 兼容/历史工具
+
+目录：
+
+- `test/seckill-functional-test`
+- `test/seckill-data-tools`
+- `test/test-e2e`
+
+这些工具仍有价值，但其中一部分夹具仍直接写旧兼容 Redis key，更适合冒烟或历史回归，不适合作为“当前分片库存架构”的唯一验证依据。
+
+## 2. 前置条件
+
+运行大多数测试前，请确保以下依赖已启动：
+
+| 组件 | 默认地址 |
+|---|---|
+| `Redis` | `127.0.0.1:6379` |
+| `RabbitMQ` | `127.0.0.1:5672` |
+| `MySQL` | `127.0.0.1:3306` |
+| `etcd` | `127.0.0.1:2379` |
+| `seckill-service` | `127.0.0.1:9083` |
+| `order-service` | `127.0.0.1:9084` |
+| `product-service` | `127.0.0.1:9082` |
+| `gateway` | `127.0.0.1:8888` |
+
+如果用默认 `start-all.ps1`，还会额外有：
+
+- `seckill-service-2`: `127.0.0.1:19083`
+- `order-service-2`: `127.0.0.1:19084`
+
+## 3. 快速入口
+
+### 3.1 秒杀核心 benchmark
+
+```powershell
+cd test\seckill-benchmark-test
 go run .
 ```
 
-### 3. 运行性能测试
+### 3.2 Gateway 半链路 benchmark
 
-```bash
-cd test/seckill-benchmark-test
-go mod tidy
+```powershell
+cd test\gateway-benchmark-test
+go run . --gateway-targets=http://127.0.0.1:8888
+```
+
+### 3.3 功能测试
+
+```powershell
+cd test\seckill-functional-test
 go run .
 ```
 
-### 4. 清理测试数据
+## 4. 现状提醒
 
-```bash
-bash scripts/cleanup-test-data.sh
-```
-
-## 功能测试用例
-
-| 用例编号 | 用例名称 | 测试内容 |
-|---------|---------|---------|
-| TC-01 | 秒杀成功 | 验证单用户秒杀能成功获取订单 |
-| TC-02 | 库存不足 | 验证库存耗尽后返回 SOLD_OUT |
-| TC-03 | 用户防重 | 验证同一用户不能重复秒杀 |
-| TC-04 | 订单状态查询 | 验证订单状态轮询功能 |
-| TC-05 | 查询不存在的订单 | 验证错误处理 |
-
-## 性能测试场景
-
-| 场景 | 用户数 | 库存 | 说明 |
-|-----|-------|------|-----|
-| 基准测试 | 100 | 50 | 验证基础并发能力 |
-| 极限压测 | 500 | 200 | 验证高并发处理 |
-| 热点测试 | 1000 | 500 | 验证极限并发 |
-
-## 性能指标说明
-
-| 指标 | 说明 |
-|-----|------|
-| QPS | 每秒处理的请求数 |
-| TPS | 每秒成功的订单数 |
-| 成功率 | 成功订单数 / 总请求数 |
-| P50/P95/P99 | 响应时间百分位数 |
-| 超卖率 | 实际售出数 / 初始库存 |
-
-## 预期测试结果
-
-### 功能测试
-
-- TC-01 ~ TC-05 应全部通过 (PASS)
-- TC-04 可能显示 WARN（如果 order-service 未启动）
-
-### 性能测试
-
-- 成功率应接近 (库存数/请求数) × 100%
-- 超卖率应 ≤ 100%（理想情况为 100%）
-- P99 延迟应 < 100ms（取决于网络和系统性能）
+- `seckill-benchmark-test` 是当前性能测试主路径
+- `gateway-benchmark-test` 和 `k6` 更适合做入口链路对比
+- `seckill-functional-test`、`seckill-data-tools`、`test-e2e` 仍包含旧兼容 Redis 夹具思路，文档和结果都要结合代码理解

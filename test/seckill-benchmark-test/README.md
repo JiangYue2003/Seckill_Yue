@@ -6,6 +6,8 @@
 
 压测结果只统计同步返回，不经过 `gateway`，也不等待 RabbitMQ 异步建单、超时检查或最终订单落库完成。
 
+这是当前仓库下推荐的主性能基准工具。
+
 ## 支持两种模式
 
 ### `legacy`
@@ -19,7 +21,7 @@
 适合：
 
 - 和旧 benchmark 历史结果做横向对比
-- 评估“某个并发度下跑完一批请求要多久”
+- 评估某个并发度下跑完一批请求要多久
 
 ### `burst`
 
@@ -46,6 +48,10 @@
 - `seckill-service`: `127.0.0.1:9083`
 - `Redis`: `localhost:6379`
 - `MySQL`: `root:Zz123456@tcp(localhost:3306)/seckill_mall?...`
+
+如果你使用默认 `scripts/start-all.ps1` 启动服务，通常还应该把第二个秒杀实例一起带上：
+
+- `seckill-service-2`: `127.0.0.1:19083`
 
 ## 快速开始
 
@@ -118,6 +124,7 @@ go run . --targets="127.0.0.1:9083,127.0.0.1:19083" --pool-size=128 --mode=burst
 
 - 这个工具的目标是同步入口压测，不保证把异步链路完全清空
 - 如果你要做严格的多轮对比，建议压测前额外执行一次 [`test/cleanup_benchmark_data.sql`](/abs/path/F:/sec1.1/test/cleanup_benchmark_data.sql)
+- 如果你要测 `gateway` 的 JWT/HTTP 开销，请改用 `test/gateway-benchmark-test`
 
 ## 结果理解
 
