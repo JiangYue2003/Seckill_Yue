@@ -13,6 +13,11 @@ import (
 
 const defaultShardCount = 16
 
+const (
+	metaFieldTotalSlots = "total_slots"
+	metaFieldSoldOut    = "is_sold_out"
+)
+
 // SeckillRedis 秒杀相关 Redis 操作封装
 type SeckillRedis struct {
 	client redis.UniversalClient
@@ -52,15 +57,18 @@ func NewSeckillRedis(cfg ClientConfig) (*SeckillRedis, error) {
 	return &SeckillRedis{client: client}, nil
 }
 
-// ---- key 构造函数（hash tag 格式，兼容 Redis Cluster）----
+// ---- key 构造函数（控制面同槽，库存分片物理散列）----
 
-func keyStock(spid int64) string { return fmt.Sprintf("{%d}:sk:stock:total", spid) }
-func keyShardStock(spid int64, shardNo int32) string {
-	return fmt.Sprintf("{%d}:sk:stock:%d", spid, shardNo)
-}
+func keyStock(spid int64) string     { return fmt.Sprintf("{%d}:sk:stock:total", spid) }
 func keyShardMeta(spid int64) string { return fmt.Sprintf("{%d}:sk:stock:meta", spid) }
-func keyInfo(spid int64) string      { return fmt.Sprintf("{%d}:sk:info", spid) }
-func keyName(spid int64) string      { return fmt.Sprintf("{%d}:sk:name", spid) }
+func keyShardState(spid int64) string {
+	return fmt.Sprintf("{%d}:sk:stock:state", spid)
+}
+func keyShardStock(spid int64, shardNo int32) string {
+	return fmt.Sprintf("{%d:slot:%d}:sk:stock", spid, shardNo)
+}
+func keyInfo(spid int64) string { return fmt.Sprintf("{%d}:sk:info", spid) }
+func keyName(spid int64) string { return fmt.Sprintf("{%d}:sk:name", spid) }
 
 const (
 	KeyPrefixProductDetail = "product:detail:" // 商品详情缓存 key 前缀（不参与 Lua，无需 hash tag）
@@ -74,33 +82,13 @@ const (
 func (r *SeckillRedis) InitSeckillProduct(ctx context.Context, seckillProductId, productId, seckillPrice int64, productName string, seckillStock int64, startTime, endTime int64, ttlSeconds int64) error {
 	ttl := time.Duration(ttlSeconds) * time.Second
 
-	pipe := r.client.TxPipeline()
-	pipe.Set(ctx, keyStock(seckillProductId), seckillStock, ttl)
-	pipe.Set(ctx, keyShardMeta(seckillProductId), defaultShardCount, ttl)
-	for shardNo, shardStock := range splitStockIntoShards(seckillStock) {
-		pipe.Set(ctx, keyShardStock(seckillProductId, int32(shardNo)), shardStock, ttl)
-	}
-	infoValue := fmt.Sprintf("%d:%d:%d:%d", productId, seckillPrice, startTime, endTime)
-	pipe.Set(ctx, keyInfo(seckillProductId), infoValue, ttl)
-	pipe.Set(ctx, keyName(seckillProductId), productName, ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("设置秒杀商品到 Redis 失败: %w", err)
-	}
-
-	return nil
+	return r.writeSeckillProduct(ctx, seckillProductId, productId, seckillPrice, productName, seckillStock, startTime, endTime, ttl)
 }
 
 // UpdateSeckillStock 更新秒杀库存
 func (r *SeckillRedis) UpdateSeckillStock(ctx context.Context, seckillProductId, stock int64, ttlSeconds int64) error {
 	ttl := time.Duration(ttlSeconds) * time.Second
-	pipe := r.client.TxPipeline()
-	pipe.Set(ctx, keyStock(seckillProductId), stock, ttl)
-	pipe.Set(ctx, keyShardMeta(seckillProductId), defaultShardCount, ttl)
-	for shardNo, shardStock := range splitStockIntoShards(stock) {
-		pipe.Set(ctx, keyShardStock(seckillProductId, int32(shardNo)), shardStock, ttl)
-	}
-	_, err := pipe.Exec(ctx)
-	return err
+	return r.writeSeckillProduct(ctx, seckillProductId, 0, 0, "", stock, 0, 0, ttl)
 }
 
 // UpdateSeckillInfo 更新秒杀商品信息
@@ -114,13 +102,19 @@ func (r *SeckillRedis) DeleteSeckillProduct(ctx context.Context, seckillProductI
 	keys := []string{
 		keyStock(seckillProductId),
 		keyShardMeta(seckillProductId),
+		keyShardState(seckillProductId),
 		keyInfo(seckillProductId),
 		keyName(seckillProductId),
 	}
 	for shardNo := int32(0); shardNo < defaultShardCount; shardNo++ {
 		keys = append(keys, keyShardStock(seckillProductId, shardNo))
 	}
-	return r.client.Del(ctx, keys...).Err()
+	for _, key := range keys {
+		if err := r.client.Del(ctx, key).Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetProductCache 读商品缓存
@@ -174,6 +168,57 @@ func splitStockIntoShards(total int64) []int64 {
 		}
 	}
 	return shards
+}
+
+func (r *SeckillRedis) writeSeckillProduct(ctx context.Context, seckillProductID, productID, seckillPrice int64, productName string, stock, startTime, endTime int64, ttl time.Duration) error {
+	infoValue := ""
+	if productID > 0 || seckillPrice > 0 || startTime > 0 || endTime > 0 {
+		infoValue = fmt.Sprintf("%d:%d:%d:%d", productID, seckillPrice, startTime, endTime)
+	}
+
+	shards := splitStockIntoShards(stock)
+
+	ctrlPipe := r.client.Pipeline()
+	ctrlPipe.Set(ctx, keyStock(seckillProductID), stock, ttl)
+	ctrlPipe.HSet(ctx, keyShardMeta(seckillProductID),
+		metaFieldTotalSlots, defaultShardCount,
+		metaFieldSoldOut, boolToInt64(stock <= 0),
+	)
+	ctrlPipe.Expire(ctx, keyShardMeta(seckillProductID), ttl)
+
+	statePairs := make([]interface{}, 0, defaultShardCount*2)
+	for shardNo, shardStock := range shards {
+		statePairs = append(statePairs, fmt.Sprintf("%d", shardNo), boolToInt64(shardStock > 0))
+	}
+	ctrlPipe.Del(ctx, keyShardState(seckillProductID))
+	if len(statePairs) > 0 {
+		ctrlPipe.HSet(ctx, keyShardState(seckillProductID), statePairs...)
+	}
+	ctrlPipe.Expire(ctx, keyShardState(seckillProductID), ttl)
+	if infoValue != "" {
+		ctrlPipe.Set(ctx, keyInfo(seckillProductID), infoValue, ttl)
+	}
+	if productName != "" {
+		ctrlPipe.Set(ctx, keyName(seckillProductID), productName, ttl)
+	}
+	if _, err := ctrlPipe.Exec(ctx); err != nil {
+		return fmt.Errorf("write control plane failed: %w", err)
+	}
+
+	for shardNo, shardStock := range shards {
+		if err := r.client.Set(ctx, keyShardStock(seckillProductID, int32(shardNo)), shardStock, ttl).Err(); err != nil {
+			return fmt.Errorf("write shard stock failed: shard=%d err=%w", shardNo, err)
+		}
+	}
+
+	return nil
+}
+
+func boolToInt64(ok bool) int64 {
+	if ok {
+		return 1
+	}
+	return 0
 }
 
 func parseInfoValue(value string) (productID, seckillPrice, startTime, endTime int64) {

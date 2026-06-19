@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -38,12 +39,19 @@ func TestInitSeckillProductCreatesTotalAndShardStocks(t *testing.T) {
 		t.Fatalf("expected total stock 50, got %d", total)
 	}
 
-	meta, err := r.client.Get(ctx, keyShardMeta(spid)).Int64()
+	meta, err := r.client.HGet(ctx, keyShardMeta(spid), metaFieldTotalSlots).Int64()
 	if err != nil {
 		t.Fatalf("get shard meta error = %v", err)
 	}
 	if meta != defaultShardCount {
 		t.Fatalf("expected shard meta %d, got %d", defaultShardCount, meta)
+	}
+	soldOut, err := r.client.HGet(ctx, keyShardMeta(spid), metaFieldSoldOut).Int64()
+	if err != nil {
+		t.Fatalf("get sold_out flag error = %v", err)
+	}
+	if soldOut != 0 {
+		t.Fatalf("expected sold_out=0, got %d", soldOut)
 	}
 
 	var sum int64
@@ -53,6 +61,18 @@ func TestInitSeckillProductCreatesTotalAndShardStocks(t *testing.T) {
 			t.Fatalf("get shard stock error: shard=%d err=%v", shardNo, err)
 		}
 		sum += value
+
+		state, stateErr := r.client.HGet(ctx, keyShardState(spid), fmt.Sprintf("%d", shardNo)).Int64()
+		if stateErr != nil {
+			t.Fatalf("get shard state error: shard=%d err=%v", shardNo, stateErr)
+		}
+		wantState := int64(0)
+		if value > 0 {
+			wantState = 1
+		}
+		if state != wantState {
+			t.Fatalf("expected shard state %d for shard=%d, got %d", wantState, shardNo, state)
+		}
 	}
 	if sum != 50 {
 		t.Fatalf("expected shard stock sum 50, got %d", sum)
@@ -93,6 +113,60 @@ func TestUpdateSeckillStockRebuildsShardDistribution(t *testing.T) {
 	}
 }
 
+func TestUpdateSeckillStockMarksSoldOutWhenZero(t *testing.T) {
+	r, _ := newTestSeckillRedis(t)
+	ctx := context.Background()
+	spid := int64(9105)
+
+	if err := r.InitSeckillProduct(ctx, spid, 1001, 9900, "test", 16, 100, 200, 3600); err != nil {
+		t.Fatalf("InitSeckillProduct() error = %v", err)
+	}
+	if err := r.UpdateSeckillStock(ctx, spid, 0, 3600); err != nil {
+		t.Fatalf("UpdateSeckillStock() error = %v", err)
+	}
+
+	soldOut, err := r.client.HGet(ctx, keyShardMeta(spid), metaFieldSoldOut).Int64()
+	if err != nil {
+		t.Fatalf("get sold_out flag error = %v", err)
+	}
+	if soldOut != 1 {
+		t.Fatalf("expected sold_out=1, got %d", soldOut)
+	}
+
+	for shardNo := int32(0); shardNo < defaultShardCount; shardNo++ {
+		state, stateErr := r.client.HGet(ctx, keyShardState(spid), fmt.Sprintf("%d", shardNo)).Int64()
+		if stateErr != nil {
+			t.Fatalf("get shard state error: shard=%d err=%v", shardNo, stateErr)
+		}
+		if state != 0 {
+			t.Fatalf("expected shard=%d state=0, got %d", shardNo, state)
+		}
+	}
+}
+
+func TestShardStockKeysUseDistinctPhysicalHashTags(t *testing.T) {
+	spid := int64(9106)
+
+	controlTag := hashTagOf(keyStock(spid))
+	metaTag := hashTagOf(keyShardMeta(spid))
+	stateTag := hashTagOf(keyShardState(spid))
+	shard0Tag := hashTagOf(keyShardStock(spid, 0))
+	shard1Tag := hashTagOf(keyShardStock(spid, 1))
+
+	if controlTag == "" || metaTag == "" || stateTag == "" || shard0Tag == "" || shard1Tag == "" {
+		t.Fatalf("expected all redis keys to contain hash tags")
+	}
+	if controlTag != metaTag || controlTag != stateTag {
+		t.Fatalf("expected control plane keys to share one hash tag, got stock=%q meta=%q state=%q", controlTag, metaTag, stateTag)
+	}
+	if shard0Tag == controlTag {
+		t.Fatalf("expected physical shard key to use a different hash tag from control plane, got %q", shard0Tag)
+	}
+	if shard0Tag == shard1Tag {
+		t.Fatalf("expected physical shard keys to be distributed across tags, got shard0=%q shard1=%q", shard0Tag, shard1Tag)
+	}
+}
+
 func TestDeleteSeckillProductRemovesShardKeys(t *testing.T) {
 	r, _ := newTestSeckillRedis(t)
 	ctx := context.Background()
@@ -110,6 +184,7 @@ func TestDeleteSeckillProductRemovesShardKeys(t *testing.T) {
 		keyInfo(spid),
 		keyName(spid),
 		keyShardMeta(spid),
+		keyShardState(spid),
 	}
 	for shardNo := int32(0); shardNo < defaultShardCount; shardNo++ {
 		keys = append(keys, keyShardStock(spid, shardNo))
@@ -141,4 +216,16 @@ func TestUpdateSeckillInfoKeepsInfoFormatWithTimeRange(t *testing.T) {
 	if value != expected {
 		t.Fatalf("expected info %q, got %q", expected, value)
 	}
+}
+
+func hashTagOf(key string) string {
+	start := strings.IndexByte(key, '{')
+	if start < 0 {
+		return ""
+	}
+	end := strings.IndexByte(key[start+1:], '}')
+	if end < 0 {
+		return ""
+	}
+	return key[start+1 : start+1+end]
 }

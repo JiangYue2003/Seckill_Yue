@@ -36,16 +36,169 @@ const (
 )
 
 const (
+	metaFieldTotalSlots = "total_slots"
+	metaFieldSoldOut    = "is_sold_out"
+)
+
+const (
+	shardReserveResultNoStock         = 0
+	shardReserveResultSuccess         = 1
+	shardReserveResultAlreadyReserved = 2
+)
+
+const (
+	finalizeReserveResultClaimMissing  = 0
+	finalizeReserveResultSuccess       = 1
+	finalizeReserveResultAlreadyDone   = 2
+	finalizeReserveResultStockMismatch = 3
+)
+
+const (
 	defaultShardCount         = 16
 	defaultProbeShardCount    = 4
 	defaultTailDrainThreshold = 32
-	defaultPoolSize      = 256
-	defaultMinIdleConns  = 32
-	defaultDialTimeoutMs = 200
-	defaultRWTimeoutMs   = 200
-	defaultPoolTimeoutMs = 200
-	defaultScanCount     = 500
+	defaultPoolSize           = 256
+	defaultMinIdleConns       = 32
+	defaultDialTimeoutMs      = 200
+	defaultRWTimeoutMs        = 200
+	defaultPoolTimeoutMs      = 200
+	defaultScanCount          = 500
 )
+
+var reserveShardScript = redis.NewScript(`
+local stockKey = KEYS[1]
+local reserveKey = KEYS[2]
+
+local quantity = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+
+if redis.call('EXISTS', reserveKey) == 1 then
+	local current = tonumber(redis.call('GET', stockKey) or '0')
+	return { 2, current }
+end
+
+local current = tonumber(redis.call('GET', stockKey) or '0')
+if current < quantity then
+	return { 0, current }
+end
+
+local left = redis.call('DECRBY', stockKey, quantity)
+redis.call('SET', reserveKey, quantity, 'EX', ttl)
+return { 1, left }
+`)
+
+var releaseShardReserveScript = redis.NewScript(`
+local stockKey = KEYS[1]
+local reserveKey = KEYS[2]
+
+local quantity = tonumber(ARGV[1])
+
+if redis.call('EXISTS', reserveKey) == 0 then
+	local current = tonumber(redis.call('GET', stockKey) or '0')
+	return { 1, current }
+end
+
+redis.call('DEL', reserveKey)
+local left = redis.call('INCRBY', stockKey, quantity)
+return { 0, left }
+`)
+
+var finalizeReserveScript = redis.NewScript(`
+local totalKey = KEYS[1]
+local metaKey = KEYS[2]
+local stateKey = KEYS[3]
+local userKey = KEYS[4]
+local orderKey = KEYS[5]
+
+local quantity = tonumber(ARGV[1])
+local orderId = ARGV[2]
+local shardNo = ARGV[3]
+local orderTTL = tonumber(ARGV[4])
+local shardEmpty = ARGV[5]
+
+local currentUserOrder = redis.call('GET', userKey)
+if not currentUserOrder or currentUserOrder ~= orderId then
+	local total = tonumber(redis.call('GET', totalKey) or '0')
+	return { 0, total }
+end
+
+if redis.call('EXISTS', orderKey) == 1 then
+	local total = tonumber(redis.call('GET', totalKey) or '0')
+	return { 2, total }
+end
+
+local total = tonumber(redis.call('GET', totalKey) or '0')
+if total < quantity then
+	return { 3, total }
+end
+
+local totalLeft = redis.call('DECRBY', totalKey, quantity)
+redis.call('SET', orderKey, 'pending:' .. orderId .. ':' .. shardNo, 'EX', orderTTL)
+if shardEmpty == '1' then
+	redis.call('HSET', stateKey, shardNo, 0)
+else
+	redis.call('HSET', stateKey, shardNo, 1)
+end
+if totalLeft <= 0 then
+	redis.call('SET', totalKey, 0)
+	redis.call('HSET', metaKey, 'is_sold_out', 1)
+else
+	redis.call('HSET', metaKey, 'is_sold_out', 0)
+end
+return { 1, totalLeft }
+`)
+
+var releaseClaimScript = redis.NewScript(`
+local userKey = KEYS[1]
+local orderId = ARGV[1]
+
+if redis.call('GET', userKey) ~= orderId then
+	return 0
+end
+return redis.call('DEL', userKey)
+`)
+
+var compensateControlScript = redis.NewScript(`
+local totalKey = KEYS[1]
+local metaKey = KEYS[2]
+local stateKey = KEYS[3]
+local userKey = KEYS[4]
+local orderKey = KEYS[5]
+
+local quantity = tonumber(ARGV[1])
+local orderId = ARGV[2]
+local shardNo = ARGV[3]
+local orderTTL = tonumber(ARGV[4])
+
+local current = redis.call('GET', orderKey)
+if not current then
+	local total = tonumber(redis.call('GET', totalKey) or '0')
+	return { -1, total }
+end
+
+local status = string.match(current, '^([^:]+)')
+if status == 'failed' then
+	local total = tonumber(redis.call('GET', totalKey) or '0')
+	return { 1, total }
+end
+if status == 'success' then
+	local total = tonumber(redis.call('GET', totalKey) or '0')
+	return { 2, total }
+end
+if status ~= 'pending' then
+	local total = tonumber(redis.call('GET', totalKey) or '0')
+	return { 3, total }
+end
+
+local totalLeft = redis.call('INCRBY', totalKey, quantity)
+redis.call('SET', orderKey, 'failed:' .. orderId .. ':' .. shardNo, 'EX', orderTTL)
+redis.call('HSET', stateKey, shardNo, 1)
+redis.call('HSET', metaKey, 'is_sold_out', 0)
+if redis.call('GET', userKey) == orderId then
+	redis.call('DEL', userKey)
+end
+return { 0, totalLeft }
+`)
 
 type ClientConfig struct {
 	Mode           string   // "single"(默认) | "cluster" | "sentinel"
@@ -185,10 +338,6 @@ type SeckillResult struct {
 
 // DoSeckill 执行秒杀（原子性操作）
 func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*SeckillResult, error) {
-	userKey := keyUser(req.SeckillProductId, req.UserId)
-	orderKey := keyOrder(req.SeckillProductId, req.OrderId)
-	totalKey := keyStock(req.SeckillProductId)
-
 	nowUnix := time.Now().Unix()
 	if req.StartTime > 0 && nowUnix < req.StartTime {
 		stock, _ := r.GetStock(ctx, req.SeckillProductId)
@@ -199,13 +348,15 @@ func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*Sec
 		return &SeckillResult{Code: LuaResultEnded, Stock: stock}, nil
 	}
 
-	exists, err := r.client.Exists(ctx, userKey).Result()
-	if err != nil {
-		return nil, fmt.Errorf("check user key failed: %w", err)
+	return r.runDoSeckillScript(ctx, req)
+}
+
+func (r *SeckillRedis) runDoSeckillScript(ctx context.Context, req *SeckillRequest) (*SeckillResult, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("redis client is nil")
 	}
-	if exists > 0 {
-		stock, _ := r.GetStock(ctx, req.SeckillProductId)
-		return &SeckillResult{Code: LuaResultAlreadyBought, Stock: stock}, nil
+	if req == nil {
+		return nil, fmt.Errorf("seckill request is nil")
 	}
 
 	totalStock, err := r.GetStock(ctx, req.SeckillProductId)
@@ -213,84 +364,104 @@ func (r *SeckillRedis) DoSeckill(ctx context.Context, req *SeckillRequest) (*Sec
 		return nil, err
 	}
 	if totalStock < req.Quantity {
-		return &SeckillResult{Code: LuaResultStockNotEnough, Stock: totalStock}, nil
+		return &SeckillResult{Code: LuaResultStockNotEnough, Stock: totalStock, ShardNo: -1}, nil
 	}
 
-	primary := shardNoForUser(req.UserId)
-	probeOrder := shardProbeOrder(primary)
-	probeLimit := defaultProbeShardCount
-	if totalStock <= defaultTailDrainThreshold {
-		probeLimit = defaultShardCount
-	}
-	if probeLimit > len(probeOrder) {
-		probeLimit = len(probeOrder)
-	}
-
-	for _, shardNo := range probeOrder[:probeLimit] {
-		pipe := r.client.TxPipeline()
-		shardKey := keyShardStock(req.SeckillProductId, shardNo)
-		decrShard := pipe.DecrBy(ctx, shardKey, req.Quantity)
-		decrTotal := pipe.DecrBy(ctx, totalKey, req.Quantity)
-		setUser := pipe.SetNX(ctx, userKey, req.OrderId, time.Duration(req.TTL)*time.Second)
-		orderValue := fmt.Sprintf("%s:%s:%d", OrderStatusPending, req.OrderId, shardNo)
-		setOrder := pipe.Set(ctx, orderKey, orderValue, time.Duration(req.OrderStatusTTL)*time.Second)
-		_, execErr := pipe.Exec(ctx)
-		if execErr != nil {
-			_ = setUser.Err()
-			_ = setOrder.Err()
-		}
-
-		shardLeft, shardErr := decrShard.Result()
-		totalLeft, totalErr := decrTotal.Result()
-		userSet, userErr := setUser.Result()
-		orderErr := setOrder.Err()
-
-		if execErr == nil && shardErr == nil && totalErr == nil && userErr == nil && orderErr == nil && userSet && shardLeft >= 0 && totalLeft >= 0 {
-			return &SeckillResult{
-				Code:    LuaResultSuccess,
-				Stock:   totalLeft,
-				ShardNo: shardNo,
-			}, nil
-		}
-
-		pipe = r.client.TxPipeline()
-		if userSet {
-			pipe.Del(ctx, userKey)
-		}
-		if orderErr == nil {
-			pipe.Del(ctx, orderKey)
-		}
-		if shardErr == nil {
-			pipe.IncrBy(ctx, shardKey, req.Quantity)
-		}
-		if totalErr == nil {
-			pipe.IncrBy(ctx, totalKey, req.Quantity)
-		}
-		_, _ = pipe.Exec(ctx)
-
-		if userErr == nil && !userSet {
-			stock, _ := r.GetStock(ctx, req.SeckillProductId)
-			return &SeckillResult{Code: LuaResultAlreadyBought, Stock: stock}, nil
-		}
-	}
-
-	stock, err := r.GetStock(ctx, req.SeckillProductId)
+	claimed, err := r.tryClaimUser(ctx, req.SeckillProductId, req.UserId, req.OrderId, req.TTL)
 	if err != nil {
+		return nil, fmt.Errorf("claim user failed: %w", err)
+	}
+	if !claimed {
+		return &SeckillResult{Code: LuaResultAlreadyBought, Stock: totalStock, ShardNo: -1}, nil
+	}
+
+	probeOrder, err := r.shardProbeOrderForProduct(ctx, req.SeckillProductId, req.UserId)
+	if err != nil {
+		_ = r.releaseUserClaim(ctx, req.SeckillProductId, req.UserId, req.OrderId)
 		return nil, err
 	}
-	return &SeckillResult{Code: LuaResultStockNotEnough, Stock: stock}, nil
+
+	for _, shardNo := range probeOrder {
+		code, shardLeft, reserveErr := r.runReserveShardScript(ctx, req.SeckillProductId, shardNo, req.OrderId, req.Quantity, reserveTTLForRequest(req))
+		if reserveErr != nil {
+			_ = r.releaseUserClaim(ctx, req.SeckillProductId, req.UserId, req.OrderId)
+			return nil, fmt.Errorf("reserve shard failed: shard=%d err=%w", shardNo, reserveErr)
+		}
+
+		switch code {
+		case shardReserveResultSuccess, shardReserveResultAlreadyReserved:
+			totalLeft, finalizeCode, finalizeErr := r.finalizeReservedShard(ctx, req, shardNo, shardLeft)
+			if finalizeErr != nil {
+				if _, _, releaseErr := r.releaseReservedShard(ctx, req.SeckillProductId, shardNo, req.OrderId, req.Quantity); releaseErr != nil {
+					return nil, fmt.Errorf("finalize reserve failed: %w; release reserve also failed: %v", finalizeErr, releaseErr)
+				}
+				_ = r.releaseUserClaim(ctx, req.SeckillProductId, req.UserId, req.OrderId)
+				return nil, finalizeErr
+			}
+			switch finalizeCode {
+			case finalizeReserveResultSuccess, finalizeReserveResultAlreadyDone:
+				return &SeckillResult{Code: LuaResultSuccess, Stock: totalLeft, ShardNo: shardNo}, nil
+			case finalizeReserveResultClaimMissing, finalizeReserveResultStockMismatch:
+				if _, _, releaseErr := r.releaseReservedShard(ctx, req.SeckillProductId, shardNo, req.OrderId, req.Quantity); releaseErr != nil {
+					return nil, fmt.Errorf("finalize reserve rejected and release failed: %w", releaseErr)
+				}
+				return &SeckillResult{Code: LuaResultStockNotEnough, Stock: totalLeft, ShardNo: -1}, nil
+			default:
+				return nil, fmt.Errorf("unexpected finalize result: %d", finalizeCode)
+			}
+		case shardReserveResultNoStock:
+			if shardLeft <= 0 {
+				_ = r.markShardState(ctx, req.SeckillProductId, shardNo, false)
+			}
+			continue
+		default:
+			_ = r.releaseUserClaim(ctx, req.SeckillProductId, req.UserId, req.OrderId)
+			return nil, fmt.Errorf("unexpected reserve shard result: %d", code)
+		}
+	}
+
+	stock, stockErr := r.GetStock(ctx, req.SeckillProductId)
+	if stockErr != nil {
+		stock = 0
+	}
+	if releaseErr := r.releaseUserClaim(ctx, req.SeckillProductId, req.UserId, req.OrderId); releaseErr != nil {
+		return nil, releaseErr
+	}
+	if stock <= 0 {
+		_ = r.markSoldOut(ctx, req.SeckillProductId, true)
+	}
+	return &SeckillResult{Code: LuaResultStockNotEnough, Stock: stock, ShardNo: -1}, nil
 }
 
 // InitStock 初始化秒杀库存（活动开始前调用）
 func (r *SeckillRedis) InitStock(ctx context.Context, seckillProductId int64, stock int64) error {
-	pipe := r.client.TxPipeline()
-	pipe.Set(ctx, keyStock(seckillProductId), stock, 0)
-	pipe.Set(ctx, keyShardMeta(seckillProductId), defaultShardCount, 0)
-	for shardNo, shardStock := range splitStockIntoShards(stock) {
-		pipe.Set(ctx, keyShardStock(seckillProductId, int32(shardNo)), shardStock, 0)
+	shards := splitStockIntoShards(stock)
+
+	ctrlPipe := r.client.Pipeline()
+	ctrlPipe.Set(ctx, keyStock(seckillProductId), stock, 0)
+	ctrlPipe.HSet(ctx, keyShardMeta(seckillProductId),
+		metaFieldTotalSlots, defaultShardCount,
+		metaFieldSoldOut, boolToInt64(stock <= 0),
+	)
+
+	statePairs := make([]interface{}, 0, defaultShardCount*2)
+	for shardNo, shardStock := range shards {
+		statePairs = append(statePairs, fmt.Sprintf("%d", shardNo), boolToInt64(shardStock > 0))
 	}
-	_, err := pipe.Exec(ctx)
-	return err
+	ctrlPipe.Del(ctx, keyShardState(seckillProductId))
+	if len(statePairs) > 0 {
+		ctrlPipe.HSet(ctx, keyShardState(seckillProductId), statePairs...)
+	}
+	if _, err := ctrlPipe.Exec(ctx); err != nil {
+		return err
+	}
+
+	for shardNo, shardStock := range shards {
+		if err := r.client.Set(ctx, keyShardStock(seckillProductId, int32(shardNo)), shardStock, 0).Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetStock 获取秒杀库存
@@ -344,11 +515,16 @@ func (r *SeckillRedis) RollbackStock(ctx context.Context, seckillProductId int64
 }
 
 func (r *SeckillRedis) RollbackShardStock(ctx context.Context, seckillProductId int64, shardNo int32, quantity int64) error {
-	pipe := r.client.TxPipeline()
-	pipe.IncrBy(ctx, keyStock(seckillProductId), quantity)
-	pipe.IncrBy(ctx, keyShardStock(seckillProductId, shardNo), quantity)
-	_, err := pipe.Exec(ctx)
-	return err
+	if err := r.client.IncrBy(ctx, keyShardStock(seckillProductId, shardNo), quantity).Err(); err != nil {
+		return err
+	}
+	if err := r.client.IncrBy(ctx, keyStock(seckillProductId), quantity).Err(); err != nil {
+		return err
+	}
+	if err := r.markShardState(ctx, seckillProductId, shardNo, true); err != nil {
+		return err
+	}
+	return r.markSoldOut(ctx, seckillProductId, false)
 }
 
 // DeleteUserKey 删除用户购买记录（秒杀失败时调用）
@@ -429,7 +605,7 @@ func (r *SeckillRedis) LoadAllSeckillProductMeta(ctx context.Context, scanCount 
 	}) error {
 		var cursor uint64
 		for {
-			keys, nextCursor, err := scanner.Scan(ctx, cursor, "{*}:sk:info", scanCount).Result()
+			keys, nextCursor, err := scanner.Scan(ctx, cursor, "*:sk:info", scanCount).Result()
 			if err != nil {
 				return err
 			}
@@ -544,7 +720,9 @@ func (r *SeckillRedis) CompensateFailedOrder(
 	orderKey := keyOrder(seckillProductId, orderId)
 	userKey := keyUser(seckillProductId, userId)
 	totalKey := keyStock(seckillProductId)
-	shardKey := keyShardStock(seckillProductId, shardNo)
+	metaKey := keyShardMeta(seckillProductId)
+	stateKey := keyShardState(seckillProductId)
+	reserveKey := keyShardReserve(seckillProductId, shardNo, orderId)
 
 	info, err := r.GetOrderInfo(ctx, orderId)
 	if err != nil {
@@ -570,21 +748,31 @@ func (r *SeckillRedis) CompensateFailedOrder(
 		return CompensateResultInvalidStatus, stock, nil
 	}
 
-	pipe := r.client.TxPipeline()
-	pipe.Set(ctx, orderKey, fmt.Sprintf("%s:%s:%d", OrderStatusFailed, orderId, shardNo), time.Duration(orderStatusTTL)*time.Second)
-	pipe.IncrBy(ctx, totalKey, quantity)
-	shardStock := pipe.IncrBy(ctx, shardKey, quantity)
-	pipe.Del(ctx, userKey)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, 0, fmt.Errorf("execute compensate failed failed: %w", err)
+	controlResult, err := compensateControlScript.Run(ctx, r.client,
+		[]string{totalKey, metaKey, stateKey, userKey, orderKey},
+		quantity, orderId, shardNo, orderStatusTTL,
+	).Result()
+	if err != nil {
+		return 0, 0, fmt.Errorf("execute compensate control failed: %w", err)
 	}
-	stock, err := shardStock.Result()
+	values, ok := controlResult.([]interface{})
+	if !ok || len(values) != 2 {
+		return 0, 0, fmt.Errorf("invalid compensate control response: %#v", controlResult)
+	}
+	code, err := scriptResultToInt(values[0])
 	if err != nil {
 		return 0, 0, err
 	}
-	totalStock, totalErr := r.GetStock(ctx, seckillProductId)
-	if totalErr != nil {
-		totalStock = stock
+	totalStock, err := scriptResultToInt64(values[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	if code != CompensateResultCompensated {
+		return code, totalStock, nil
+	}
+
+	if _, _, err := r.releaseReservedShardByKey(ctx, seckillProductId, shardNo, reserveKey, quantity); err != nil {
+		return 0, 0, err
 	}
 	return CompensateResultCompensated, totalStock, nil
 }
@@ -730,12 +918,16 @@ func (r *SeckillRedis) IncrLocalStock(seckillProductId int64, quantity int64) {
 // 所有同一商品的 key 使用 {spid} 作为 hash tag，保证落在同一 slot。
 // 单节点 Redis 忽略 hash tag，行为与原来完全一致。
 
-func keyStock(spid int64) string     { return fmt.Sprintf("{%d}:sk:stock:total", spid) }
+func keyStock(spid int64) string { return fmt.Sprintf("{%d}:sk:stock:total", spid) }
 func keyShardStock(spid int64, shardNo int32) string {
-	return fmt.Sprintf("{%d}:sk:stock:%d", spid, shardNo)
+	return fmt.Sprintf("{%d:slot:%d}:sk:stock", spid, shardNo)
 }
-func keyShardMeta(spid int64) string { return fmt.Sprintf("{%d}:sk:stock:meta", spid) }
-func keyUser(spid, uid int64) string { return fmt.Sprintf("{%d}:sk:user:%d", spid, uid) }
+func keyShardReserve(spid int64, shardNo int32, orderId string) string {
+	return fmt.Sprintf("{%d:slot:%d}:sk:reserve:%s", spid, shardNo, orderId)
+}
+func keyShardMeta(spid int64) string  { return fmt.Sprintf("{%d}:sk:stock:meta", spid) }
+func keyShardState(spid int64) string { return fmt.Sprintf("{%d}:sk:stock:state", spid) }
+func keyUser(spid, uid int64) string  { return fmt.Sprintf("{%d}:sk:user:%d", spid, uid) }
 func keyOrder(spid int64, orderId string) string {
 	return fmt.Sprintf("{%d}:sk:order:%s", spid, orderId)
 }
@@ -786,6 +978,39 @@ func parseSpidFromInfoKey(key string) int64 {
 	return spid
 }
 
+func scriptResultToInt(v interface{}) (int, error) {
+	n, err := scriptResultToInt64(v)
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+func scriptResultToInt32(v interface{}) (int32, error) {
+	n, err := scriptResultToInt64(v)
+	if err != nil {
+		return 0, err
+	}
+	return int32(n), nil
+}
+
+func scriptResultToInt64(v interface{}) (int64, error) {
+	switch x := v.(type) {
+	case int64:
+		return x, nil
+	case int:
+		return int64(x), nil
+	case string:
+		return strconv.ParseInt(x, 10, 64)
+	case []byte:
+		return strconv.ParseInt(string(x), 10, 64)
+	case nil:
+		return 0, nil
+	default:
+		return 0, fmt.Errorf("unsupported script result type %T", v)
+	}
+}
+
 func shardNoForUser(userId int64) int32 {
 	if userId < 0 {
 		userId = -userId
@@ -834,6 +1059,189 @@ func splitStockIntoShards(total int64) []int64 {
 	return shards
 }
 
+func (r *SeckillRedis) tryClaimUser(ctx context.Context, seckillProductId, userId int64, orderId string, ttlSeconds int64) (bool, error) {
+	ok, err := r.client.SetNX(ctx, keyUser(seckillProductId, userId), orderId, time.Duration(ttlSeconds)*time.Second).Result()
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
+}
+
+func (r *SeckillRedis) releaseUserClaim(ctx context.Context, seckillProductId, userId int64, orderId string) error {
+	_, err := releaseClaimScript.Run(ctx, r.client, []string{keyUser(seckillProductId, userId)}, orderId).Result()
+	return err
+}
+
+func (r *SeckillRedis) runReserveShardScript(ctx context.Context, seckillProductId int64, shardNo int32, orderId string, quantity, ttlSeconds int64) (int, int64, error) {
+	result, err := reserveShardScript.Run(ctx, r.client,
+		[]string{keyShardStock(seckillProductId, shardNo), keyShardReserve(seckillProductId, shardNo, orderId)},
+		quantity, ttlSeconds,
+	).Result()
+	if err != nil {
+		return 0, 0, err
+	}
+	values, ok := result.([]interface{})
+	if !ok || len(values) != 2 {
+		return 0, 0, fmt.Errorf("invalid reserve shard response: %#v", result)
+	}
+	code, err := scriptResultToInt(values[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	left, err := scriptResultToInt64(values[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return code, left, nil
+}
+
+func (r *SeckillRedis) finalizeReservedShard(ctx context.Context, req *SeckillRequest, shardNo int32, shardLeft int64) (int64, int, error) {
+	result, err := finalizeReserveScript.Run(ctx, r.client,
+		[]string{
+			keyStock(req.SeckillProductId),
+			keyShardMeta(req.SeckillProductId),
+			keyShardState(req.SeckillProductId),
+			keyUser(req.SeckillProductId, req.UserId),
+			keyOrder(req.SeckillProductId, req.OrderId),
+		},
+		req.Quantity,
+		req.OrderId,
+		shardNo,
+		req.OrderStatusTTL,
+		boolToIntString(shardLeft <= 0),
+	).Result()
+	if err != nil {
+		return 0, 0, err
+	}
+	values, ok := result.([]interface{})
+	if !ok || len(values) != 2 {
+		return 0, 0, fmt.Errorf("invalid finalize reserve response: %#v", result)
+	}
+	code, err := scriptResultToInt(values[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	totalLeft, err := scriptResultToInt64(values[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	return totalLeft, code, nil
+}
+
+func (r *SeckillRedis) releaseReservedShard(ctx context.Context, seckillProductId int64, shardNo int32, orderId string, quantity int64) (int, int64, error) {
+	return r.releaseReservedShardByKey(ctx, seckillProductId, shardNo, keyShardReserve(seckillProductId, shardNo, orderId), quantity)
+}
+
+func (r *SeckillRedis) releaseReservedShardByKey(ctx context.Context, seckillProductId int64, shardNo int32, reserveKey string, quantity int64) (int, int64, error) {
+	result, err := releaseShardReserveScript.Run(ctx, r.client,
+		[]string{keyShardStock(seckillProductId, shardNo), reserveKey},
+		quantity,
+	).Result()
+	if err != nil {
+		return 0, 0, err
+	}
+	values, ok := result.([]interface{})
+	if !ok || len(values) != 2 {
+		return 0, 0, fmt.Errorf("invalid release shard reserve response: %#v", result)
+	}
+	code, err := scriptResultToInt(values[0])
+	if err != nil {
+		return 0, 0, err
+	}
+	left, err := scriptResultToInt64(values[1])
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := r.markShardState(ctx, seckillProductId, shardNo, true); err != nil {
+		return 0, 0, err
+	}
+	return code, left, nil
+}
+
+func (r *SeckillRedis) markShardState(ctx context.Context, seckillProductId int64, shardNo int32, available bool) error {
+	return r.client.HSet(ctx, keyShardState(seckillProductId), fmt.Sprintf("%d", shardNo), boolToInt64(available)).Err()
+}
+
+func (r *SeckillRedis) markSoldOut(ctx context.Context, seckillProductId int64, soldOut bool) error {
+	return r.client.HSet(ctx, keyShardMeta(seckillProductId), metaFieldSoldOut, boolToInt64(soldOut)).Err()
+}
+
+func (r *SeckillRedis) shardProbeOrderForProduct(ctx context.Context, seckillProductId, userId int64) ([]int32, error) {
+	primary := shardNoForUser(userId)
+	totalStock, err := r.GetStock(ctx, seckillProductId)
+	if err != nil {
+		return nil, err
+	}
+
+	var states map[string]string
+	states, err = r.client.HGetAll(ctx, keyShardState(seckillProductId)).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	order := make([]int32, 0, defaultShardCount)
+	seen := make(map[int32]struct{}, defaultShardCount)
+	addIfAvailable := func(shardNo int32) {
+		shardNo = shardNo % defaultShardCount
+		if _, ok := seen[shardNo]; ok {
+			return
+		}
+		if states[fmt.Sprintf("%d", shardNo)] == "0" {
+			return
+		}
+		seen[shardNo] = struct{}{}
+		order = append(order, shardNo)
+	}
+	addAny := func(shardNo int32) {
+		shardNo = shardNo % defaultShardCount
+		if _, ok := seen[shardNo]; ok {
+			return
+		}
+		seen[shardNo] = struct{}{}
+		order = append(order, shardNo)
+	}
+
+	probeLimit := defaultProbeShardCount
+	if totalStock <= defaultTailDrainThreshold {
+		probeLimit = defaultShardCount
+	}
+
+	for i := int32(0); i < int32(probeLimit); i++ {
+		addIfAvailable(primary + i)
+	}
+	for shardNo := int32(0); shardNo < defaultShardCount; shardNo++ {
+		addIfAvailable(shardNo)
+	}
+	for shardNo := int32(0); shardNo < defaultShardCount; shardNo++ {
+		addAny(shardNo)
+	}
+
+	return order, nil
+}
+
+func boolToInt64(ok bool) int64 {
+	if ok {
+		return 1
+	}
+	return 0
+}
+
+func boolToIntString(ok bool) string {
+	if ok {
+		return "1"
+	}
+	return "0"
+}
+
+func reserveTTLForRequest(req *SeckillRequest) int64 {
+	if req == nil {
+		return 0
+	}
+	if req.OrderStatusTTL > req.TTL {
+		return req.OrderStatusTTL
+	}
+	return req.TTL
+}
 
 // Close 关闭连接
 func (r *SeckillRedis) Close() error {
